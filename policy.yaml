@@ -1,0 +1,22 @@
+revision: v1
+rules:
+  - id: sandbox-default
+    description: Allow container runs up to five minutes
+    action: container.run
+    effect: allow
+    conditions:
+      maxRuntimeSeconds: 300
+  - id: sandbox-block-privileged
+    description: Block privileged containers
+    action: container.run
+    effect: deny
+    conditions:
+      privileged: true
+  - id: queue-publish
+    description: Restrict queue publishing to approved channels
+    action: queue.publish
+    effect: allow
+    conditions:
+      channels:
+        - tasks
+        - events
