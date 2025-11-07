@@ -1,0 +1,11 @@
+{
+  "defaultAgents": ["BuilderAgent", "UXAgent", "OpsAgent", "QAAgent"],
+  "memoryFile": "./data/memory.json",
+  "logLevel": "info",
+  "customPhases": [],
+  "plugins": [],
+  "vectorMemory": {
+    "enabled": false,
+    "collection": "agent_memory"
+  }
+}

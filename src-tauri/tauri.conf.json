@@ -1,0 +1,31 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Agent Builder",
+  "version": "1.0.0",
+  "identifier": "com.agent.builder",
+  "build": {
+    "beforeDevCommand": "npm run dashboard",
+    "beforeBuildCommand": "npm --prefix dashboard run build",
+    "devPath": "http://localhost:3000",
+    "distDir": "../dashboard/.next"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Agent Builder Mission Control",
+        "width": 1280,
+        "height": 800,
+        "resizable": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "identifier": "com.agent.builder",
+    "icon": []
+  },
+  "security": {
+    "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' https://localhost:3000; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; connect-src *"
+  }
+}
