@@ -13,7 +13,7 @@ type ContainersPanelProps = {
 
 const canApprove = (user: AuthUser | null) => user?.teams.some((team) => team.role === "admin" || team.role === "owner") ?? false;
 const canRequest = (user: AuthUser | null) =>
-  user?.teams.some((team) => team.role === "editor" || team.role === "admin" || team.role === "owner") ?? false;
+  user?.teams.some((team) => ["developer", "admin", "owner"].includes(team.role)) ?? false;
 
 export const ContainersPanel = ({ currentUser }: ContainersPanelProps) => {
   const [image, setImage] = useState("node:20");
@@ -89,7 +89,7 @@ export const ContainersPanel = ({ currentUser }: ContainersPanelProps) => {
       <form onSubmit={handleSubmit} className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 shadow-lg shadow-black/30">
         <h3 className="text-lg font-semibold text-slate-100">Request Sandbox</h3>
         <p className="mt-1 text-xs text-slate-400">
-          Runs require manual approval before execution. {requestEnabled ? "" : "Editors or above may request new runs."}
+          Runs require manual approval before execution. {requestEnabled ? "" : "Developers or above may request new runs."}
         </p>
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-slate-400">

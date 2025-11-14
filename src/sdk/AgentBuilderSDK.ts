@@ -1,0 +1,89 @@
+import type { BuildJobSnapshot, BuildMode, AutonomyLevel } from "../models/BuildTypes.js";
+
+type FetchFn = typeof fetch;
+
+let cachedFetch: FetchFn | undefined;
+
+async function resolveFetch(): Promise<FetchFn> {
+  if (typeof globalThis.fetch === "function") {
+    return globalThis.fetch.bind(globalThis);
+  }
+
+  if (!cachedFetch) {
+    const module = await import("node-fetch");
+    const fetchImpl = (module.default ?? module) as unknown;
+    cachedFetch = fetchImpl as FetchFn;
+  }
+
+  return cachedFetch;
+}
+
+export type AgentBuilderSDKOptions = {
+  baseUrl?: string;
+  token?: string;
+};
+
+const defaultBaseUrl = process.env.AGENT_BUILDER_API_URL ?? "http://localhost:4000";
+
+export class AgentBuilderSDK {
+  private readonly baseUrl: string;
+  private readonly token?: string;
+
+  constructor(options: AgentBuilderSDKOptions = {}) {
+    this.baseUrl = options.baseUrl ?? defaultBaseUrl;
+    this.token = options.token;
+  }
+
+  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...(init.headers as Record<string, string> | undefined)
+    };
+    if (this.token) {
+      headers.Authorization = `Bearer ${this.token}`;
+    }
+    const runtimeFetch = await resolveFetch();
+    const response = await runtimeFetch(`${this.baseUrl}${path}`, { ...init, headers });
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(message || `Request failed with status ${response.status}`);
+    }
+    if (response.status === 204) {
+      return {} as T;
+    }
+    return (await response.json()) as T;
+  }
+
+  async buildApp(prompt: string, options: { mode?: BuildMode; autonomy?: AutonomyLevel; repositories?: string[]; sessionId?: string } = {}) {
+    const body = JSON.stringify({ prompt, ...options });
+    const result = await this.request<{ job: BuildJobSnapshot }>("/api/build/start", { method: "POST", body });
+    return result.job;
+  }
+
+  async getBuild(id: string) {
+    const result = await this.request<{ job: BuildJobSnapshot }>(`/api/build/status/${id}`);
+    return result.job;
+  }
+
+  async listBuilds() {
+    const result = await this.request<{ jobs: BuildJobSnapshot[] }>("/api/build/history");
+    return result.jobs;
+  }
+
+  async mergeRepos(options: { sourceA: string; sourceB: string; outputDir?: string; strategy?: "semantic" | "overwrite" }) {
+    const result = await this.request<{ report: Record<string, unknown> }>("/api/build/merge", {
+      method: "POST",
+      body: JSON.stringify(options)
+    });
+    return result.report;
+  }
+
+  async exportProjects() {
+    const result = await this.request<{ projects: string[] }>("/api/project/export");
+    return result.projects;
+  }
+
+  async trainAgent() {
+    return this.request<{ message: string; datasetPath: string; provider: string }>("/api/train/start", { method: "POST" });
+  }
+}

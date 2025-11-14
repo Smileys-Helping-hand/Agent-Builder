@@ -7,6 +7,8 @@ import { registerUpdateRoute } from "./update.js";
 import { eventBus, emitServerEvent, type ServerEvent } from "./eventBus.js";
 import { MemoryStore } from "../state/MemoryStore.js";
 import { authenticate, authorizeRoles, registerAuthRoutes } from "./auth.js";
+import { UserModel } from "../models/UserModel.js";
+import { Hash } from "../utils/hash.js";
 import { PluginRegistry } from "../agents/PluginRegistry.js";
 import { VectorMemory } from "../state/VectorMemory.js";
 import { FineTuner } from "../orchestrator/FineTuner.js";
@@ -23,11 +25,48 @@ import { registerLibraryRoutes } from "./library.js";
 import { QueueService } from "../queue/QueueService.js";
 import { registerGovernanceRoutes } from "./governance.js";
 import { registerControlRoutes } from "./controls.js";
+import { registerChatRoutes } from "./chat.js";
+import { registerTrainingRoutes } from "./train.js";
+import { registerRobloxRoutes } from "./roblox.js";
+import { registerRobloxSyncRoutes } from "./robloxSync.js";
+import { registerCollaborationRoutes } from "./collaboration.js";
+import { registerRobloxDebugRoutes } from "./robloxDebug.js";
+import { registerStoryworldRoutes } from "./storyworld.js";
+import { registerBuildRoutes } from "./build.js";
+import { envRouter } from "./envManager.js";
+import { WorldMemory } from "../state/WorldMemory.js";
+import { registerLicenseRoutes } from "./license.js";
+import { registerAdminRoutes } from "./admin.js";
+import { onboardingRouter } from "./onboarding.js";
+import { ConfigVault } from "../utils/ConfigVault.js";
+import { syncDynamicEnv } from "../utils/EnvLoader.js";
 
+const ADMIN_EMAIL = "mraaziqp@gmail.com";
+const ADMIN_PASSWORD = "admin123";
+
+const ensureAdmin = () => {
+  const config = ConfigVault.load();
+  const targetEmail = config?.adminEmail ?? ADMIN_EMAIL;
+  const targetRole = config?.adminRole ?? "admin";
+  const passwordHash = config?.passwordHash ?? Hash.make(ADMIN_PASSWORD);
+
+  const existing = UserModel.findByEmail(targetEmail);
+  if (!existing) {
+    UserModel.create(targetEmail, passwordHash, targetRole);
+    console.log("Admin account created:", targetEmail);
+  } else if (config?.passwordHash && existing.password_hash !== config.passwordHash) {
+    UserModel.updateCredentials(existing.id, { passwordHash: config.passwordHash, role: targetRole });
+    console.log("Admin credentials refreshed from onboarding config for", targetEmail);
+  }
+};
+
+syncDynamicEnv();
 await initializeTelemetry();
 await PluginRegistry.initialize();
 await VectorMemory.init();
 await QueueService.getInstance();
+await WorldMemory.getInstance().init();
+ensureAdmin();
 
 const app = express();
 app.use(cors());
@@ -69,6 +108,7 @@ app.get("/api/agent/tasks", (_req: Request, res: Response) => {
 
 registerUpdateRoute(app);
 registerAuthRoutes(app);
+app.use("/api/onboarding", onboardingRouter);
 registerMarketplaceRoutes(app);
 registerAnalyticsRoutes(app);
 registerContainerRoutes(app);
@@ -78,6 +118,17 @@ registerSecurityRoutes(app);
 registerLibraryRoutes(app);
 registerGovernanceRoutes(app);
 registerControlRoutes(app);
+registerChatRoutes(app);
+registerTrainingRoutes(app);
+registerRobloxRoutes(app);
+registerRobloxSyncRoutes(app);
+registerRobloxDebugRoutes(app);
+registerCollaborationRoutes(app);
+registerBuildRoutes(app);
+registerStoryworldRoutes(app);
+registerLicenseRoutes(app);
+registerAdminRoutes(app);
+app.use("/api/env", authenticate, authorizeRoles(["admin", "owner"]), envRouter);
 const healthMonitor = new HealthMonitor();
 registerHealthRoute(app, healthMonitor);
 

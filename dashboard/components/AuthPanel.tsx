@@ -1,23 +1,26 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { fetchCurrentUser, loginUser, registerUser, type AuthUser, type TeamRole } from "../lib/api";
+import {
+  clearSessionTokens,
+  fetchCurrentUser,
+  getStoredAccessToken,
+  getStoredRefreshToken,
+  loginUser,
+  persistSessionTokens,
+  registerUser,
+  logoutSession,
+  type AuthSessionResponse,
+  type AuthUser,
+  type TeamRole
+} from "../lib/api";
 
 type AuthPanelProps = {
   onAuthChange?: (user: AuthUser | null) => void;
 };
 
-const TOKEN_KEY = "agent-builder-token";
-
-const getStoredToken = () => {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  return window.localStorage.getItem(TOKEN_KEY);
-};
-
 const rolePriority: Record<TeamRole["role"], number> = {
   owner: 4,
   admin: 3,
-  editor: 2,
+  developer: 2,
   viewer: 1
 };
 
@@ -27,8 +30,8 @@ const describeRole = (role: TeamRole["role"]) => {
       return "Owner";
     case "admin":
       return "Admin";
-    case "editor":
-      return "Editor";
+    case "developer":
+      return "Developer";
     default:
       return "Viewer";
   }
@@ -51,14 +54,12 @@ export const AuthPanel = ({ onAuthChange }: AuthPanelProps) => {
   }, [user]);
 
   const syncUser = useCallback(
-    (next: AuthUser | null, token?: string | null) => {
+    (next: AuthUser | null, tokens?: { accessToken: string; refreshToken?: string | null } | null) => {
       setUser(next);
-      if (typeof window !== "undefined") {
-        if (token) {
-          window.localStorage.setItem(TOKEN_KEY, token);
-        } else if (token === null) {
-          window.localStorage.removeItem(TOKEN_KEY);
-        }
+      if (tokens) {
+        persistSessionTokens(tokens);
+      } else if (tokens === null) {
+        clearSessionTokens();
       }
       onAuthChange?.(next);
     },
@@ -67,7 +68,7 @@ export const AuthPanel = ({ onAuthChange }: AuthPanelProps) => {
 
   useEffect(() => {
     const bootstrap = async () => {
-      const token = getStoredToken();
+      const token = getStoredAccessToken();
       if (!token) {
         return;
       }
@@ -94,13 +95,18 @@ export const AuthPanel = ({ onAuthChange }: AuthPanelProps) => {
       setError(null);
 
       try {
+        let session: AuthSessionResponse;
         if (mode === "login") {
-          const { token, user: profile } = await loginUser(email, password);
-          syncUser(profile, token);
+          session = await loginUser(email, password);
         } else {
-          const { token, user: profile } = await registerUser(email, password);
-          syncUser(profile, token);
+          session = await registerUser(email, password);
         }
+
+        const accessToken = session.accessToken ?? session.token;
+        syncUser(session.user, {
+          accessToken,
+          refreshToken: session.refreshToken ?? null
+        });
         setEmail("");
         setPassword("");
       } catch (err) {
@@ -113,6 +119,12 @@ export const AuthPanel = ({ onAuthChange }: AuthPanelProps) => {
   );
 
   const logout = useCallback(() => {
+    const refreshToken = getStoredRefreshToken();
+    if (refreshToken) {
+      void logoutSession({ refreshToken }).catch(() => undefined);
+    } else {
+      void logoutSession({ allSessions: true }).catch(() => undefined);
+    }
     syncUser(null, null);
   }, [syncUser]);
 
