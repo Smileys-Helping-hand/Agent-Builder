@@ -1,0 +1,165 @@
+import fs from "fs";
+import path from "path";
+import { BaseAgent } from "./BaseAgent.js";
+import type { Task } from "../orchestrator/types.js";
+import { ModelRouter } from "../tools/ModelRouter.js";
+import { RobloxBridge } from "../integrations/RobloxBridge.js";
+import { Logger } from "../utils/Logger.js";
+const slugify = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "")
+    .slice(0, 64);
+
+export type QuestRequest = {
+  prompt: string;
+  sessionId?: string;
+};
+
+export type QuestResult = {
+  questId: string;
+  title: string;
+  summary: string;
+  steps: string[];
+  rewards?: string[];
+  scriptPath: string;
+};
+
+const QUEST_DIRECTORY = path.resolve("games/roblox/quests");
+
+const ensureDirectory = async () => {
+  await fs.promises.mkdir(QUEST_DIRECTORY, { recursive: true });
+};
+
+const fallbackSteps = (prompt: string): string[] => {
+  const sanitized = prompt.trim().replace(/\s+/g, " ");
+  return [
+    "Introduce the quest giver and explain the challenge.",
+    `Guide the player to investigate: ${sanitized.slice(0, 80)}`,
+    "Add a twist that escalates the conflict.",
+    "Resolve the quest with a reward and summary dialogue."
+  ];
+};
+
+export class QuestAgent extends BaseAgent {
+  constructor() {
+    super("QuestAgent");
+  }
+
+  canHandle(task: Task): boolean {
+    return task.agentType === "QuestAgent";
+  }
+
+  protected async execute(task: Task): Promise<QuestResult> {
+    const prompt = task.description ?? "Create a multi-stage quest for the current world.";
+    return this.generateQuest({ prompt, sessionId: task.metadata?.sessionId as string | undefined });
+  }
+
+  async generateQuest(request: QuestRequest): Promise<QuestResult> {
+    await ensureDirectory();
+
+    const summary = await this.createSummary(request.prompt);
+    const steps = await this.createSteps(request.prompt);
+    const rewards = await this.createRewards(request.prompt);
+
+    const questSlug = slugify(summary || request.prompt || "quest");
+    const questId = questSlug || `quest-${Date.now()}`;
+    const scriptPath = path.join(QUEST_DIRECTORY, `${questId}.lua`);
+
+    const script = this.composeScript({
+      questId,
+      summary,
+      steps,
+      rewards,
+      prompt: request.prompt
+    });
+
+    await fs.promises.writeFile(scriptPath, script, "utf8");
+
+    try {
+      await RobloxBridge.getInstance().pushAsset(scriptPath);
+    } catch (error) {
+      Logger.warn("QuestAgent failed to push quest to Roblox Studio", error);
+    }
+
+    return {
+      questId,
+      title: summary || questId,
+      summary: summary || request.prompt,
+      steps,
+      rewards,
+      scriptPath
+    };
+  }
+
+  private async createSummary(prompt: string): Promise<string> {
+    try {
+      const result = await ModelRouter.generate(
+        `Summarize the following quest idea in under 80 characters, focusing on the core conflict: ${prompt}`
+      );
+      return result.trim();
+    } catch (error) {
+      Logger.warn("QuestAgent summary generation failed", error);
+      return prompt.trim().slice(0, 80);
+    }
+  }
+
+  private async createSteps(prompt: string): Promise<string[]> {
+    try {
+      const result = await ModelRouter.generate(
+        `Create 4 bullet points describing escalating quest stages for the following idea. Return as plain text separated by newline.\n${prompt}`
+      );
+      const lines = result
+        .split(/\r?\n/)
+        .map((line) => line.replace(/^[-*\d\.\s]+/, "").trim())
+        .filter(Boolean);
+      return lines.length > 0 ? lines.slice(0, 6) : fallbackSteps(prompt);
+    } catch (error) {
+      Logger.warn("QuestAgent step generation failed", error);
+      return fallbackSteps(prompt);
+    }
+  }
+
+  private async createRewards(prompt: string): Promise<string[] | undefined> {
+    try {
+      const result = await ModelRouter.generate(
+        `List up to 3 short Roblox-friendly rewards for the quest idea below. Separate each reward on a new line.\n${prompt}`
+      );
+      const rewards = result
+        .split(/\r?\n/)
+        .map((line) => line.replace(/^[-*\d\.\s]+/, "").trim())
+        .filter(Boolean)
+        .slice(0, 3);
+      return rewards.length > 0 ? rewards : undefined;
+    } catch (error) {
+      Logger.warn("QuestAgent reward generation failed", error);
+      return undefined;
+    }
+  }
+
+  private composeScript({
+    questId,
+    summary,
+    steps,
+    rewards,
+    prompt
+  }: {
+    questId: string;
+    summary: string;
+    steps: string[];
+    rewards?: string[];
+    prompt: string;
+  }): string {
+    const escapedSummary = summary.replace(/"/g, '\\"');
+    const serializedSteps = steps
+      .map((step) => `    "${step.replace(/"/g, '\\"')}"`)
+      .join(",\n");
+    const serializedRewardsList = (rewards ?? [])
+      .map((reward) => `    "${reward.replace(/"/g, '\\"')}"`)
+      .join(",\n");
+    const serializedRewards = serializedRewardsList || "    -- Rewards determined dynamically";
+
+    return `-- Quest generated by Agent Builder StoryWorld\n-- Prompt: ${prompt.replace(/\n/g, " ")}\n\nlocal Quest = {}\n\nQuest.Id = "${questId}"\nQuest.Title = "${escapedSummary}"\nQuest.Description = [[${prompt}]]\nQuest.Steps = {\n${serializedSteps}\n}\n\nQuest.Rewards = {\n${serializedRewards}\n}\n\nfunction Quest:GetIntroDialogue(player)\n    return "${escapedSummary}. Are you ready to help?"\nend\n\nfunction Quest:GetCompletionDialogue(player)\n    return "Excellent work, hero. You've completed ${escapedSummary}."\nend\n\nreturn Quest\n`;
+  }
+}

@@ -3,6 +3,7 @@ import { registerType, toSql } from "pgvector/pg";
 import { Logger } from "../utils/Logger.js";
 import { OpenAIClient } from "../tools/OpenAIClient.js";
 import type { Task } from "../orchestrator/types.js";
+import { v4 as uuidv4 } from "uuid";
 
 export type VectorRecord = {
   id: string;
@@ -152,6 +153,40 @@ export class VectorMemory {
       }
     } catch (error) {
       Logger.warn("Failed to store task embedding:", error);
+    }
+  }
+
+  static async storeConversationTurn(content: string, metadata: Record<string, unknown> = {}): Promise<void> {
+    if (!this.initialized) {
+      return;
+    }
+
+    try {
+      const embedding = await OpenAIClient.embed(content);
+      if (!embedding) {
+        return;
+      }
+
+      const recordId = uuidv4();
+      const client = await this.getClient();
+      try {
+        await client.query(insertSql, [
+          recordId,
+          recordId,
+          metadata.role ?? "AutoCode",
+          metadata.title ?? "AutoCode conversation turn",
+          content,
+          toSql(embedding),
+          {
+            ...metadata,
+            createdVia: metadata.type ?? "conversation"
+          }
+        ]);
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      Logger.warn("Failed to store conversation turn:", error);
     }
   }
 

@@ -23,11 +23,21 @@ import { registerLibraryRoutes } from "./library.js";
 import { QueueService } from "../queue/QueueService.js";
 import { registerGovernanceRoutes } from "./governance.js";
 import { registerControlRoutes } from "./controls.js";
+import { registerChatRoutes } from "./chat.js";
+import { registerTrainingRoutes } from "./train.js";
+import { registerRobloxRoutes } from "./roblox.js";
+import { registerRobloxSyncRoutes } from "./robloxSync.js";
+import { registerCollaborationRoutes } from "./collaboration.js";
+import { registerRobloxDebugRoutes } from "./robloxDebug.js";
+import { registerStoryworldRoutes } from "./storyworld.js";
+import { registerBuildRoutes } from "./build.js";
+import { WorldMemory } from "../state/WorldMemory.js";
 
 await initializeTelemetry();
 await PluginRegistry.initialize();
 await VectorMemory.init();
 await QueueService.getInstance();
+await WorldMemory.getInstance().init();
 
 const app = express();
 app.use(cors());
@@ -78,6 +88,14 @@ registerSecurityRoutes(app);
 registerLibraryRoutes(app);
 registerGovernanceRoutes(app);
 registerControlRoutes(app);
+registerChatRoutes(app);
+registerTrainingRoutes(app);
+registerRobloxRoutes(app);
+registerRobloxSyncRoutes(app);
+registerRobloxDebugRoutes(app);
+registerCollaborationRoutes(app);
+registerBuildRoutes(app);
+registerStoryworldRoutes(app);
 const healthMonitor = new HealthMonitor();
 registerHealthRoute(app, healthMonitor);
 

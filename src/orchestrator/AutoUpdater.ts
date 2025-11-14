@@ -1,6 +1,7 @@
 import { FineTuner } from "./FineTuner.js";
 import { Logger } from "../utils/Logger.js";
 import { emitServerEvent } from "../server/eventBus.js";
+import { FeedbackStore } from "../utils/FeedbackStore.js";
 
 export class AutoUpdater {
   private timer: NodeJS.Timeout | null = null;
@@ -48,6 +49,13 @@ export class AutoUpdater {
         ids: pending.map((entry) => entry.id)
       };
       Logger.log(`AutoUpdater processed ${pending.length} feedback entries.`);
+      await FeedbackStore.append({
+        id: `auto-${Date.now()}`,
+        source: "auto-updater",
+        message: `Processed ${pending.length} feedback entries`,
+        metadata: summary,
+        createdAt: new Date().toISOString()
+      });
       emitServerEvent({
         type: "feedback",
         payload: {
