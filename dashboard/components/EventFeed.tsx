@@ -107,17 +107,119 @@ export const EventFeed = ({ events }: EventFeedProps) => {
           );
         }
 
-        return (
-          <li key={`${event.payload.task.id}-${index}`} className="rounded-md border border-slate-800 bg-slate-900/60 p-3">
-            <p className="text-xs font-mono uppercase tracking-wide text-sky-400">
-              Task {event.payload.task.agentType}
-            </p>
-            <p className="mt-1 text-sm text-slate-200">Status: {event.payload.task.status}</p>
-            <p className="text-xs text-slate-400">
-              Updated {new Date(event.payload.timestamp).toLocaleTimeString()}
-            </p>
-          </li>
-        );
+        if (event.type === "roblox_sync") {
+          const status = event.payload.status.toUpperCase();
+          const message = event.payload.message;
+          const accent = (() => {
+            if (event.payload.status === "error") return "border-rose-900 bg-rose-950/40 text-rose-200";
+            if (event.payload.status === "disconnected") return "border-slate-800 bg-slate-900/60 text-slate-200";
+            if (event.payload.status === "playtest") return "border-emerald-800 bg-emerald-950/40 text-emerald-100";
+            if (event.payload.status === "sync") return "border-emerald-800 bg-emerald-950/40 text-emerald-100";
+            return "border-sky-900 bg-sky-950/40 text-sky-100";
+          })();
+          return (
+            <li key={`${event.payload.timestamp}-${index}`} className={`rounded-md border ${accent} p-3`}>
+              <p className="text-xs font-mono uppercase tracking-wide text-slate-300">Roblox Studio Bridge</p>
+              <p className="mt-1 text-sm">{message}</p>
+              {event.payload.path && <p className="text-xs text-slate-400">{event.payload.path}</p>}
+              <p className="text-[10px] uppercase tracking-wide text-slate-500">{status}</p>
+            </li>
+          );
+        }
+
+        if (event.type === "collaboration") {
+          return (
+            <li
+              key={`${event.payload.timestamp}-${index}`}
+              className="rounded-md border border-indigo-900 bg-indigo-950/40 p-3"
+            >
+              <p className="text-xs font-mono uppercase tracking-wide text-indigo-300">Collaboration</p>
+              <p className="mt-1 text-sm text-slate-100">{event.payload.message}</p>
+              <p className="text-xs text-indigo-200/70">
+                Participants: {event.payload.participants.map((participant) => participant.name).join(", ") || "n/a"}
+              </p>
+              {event.payload.context && (
+                <p className="text-[10px] text-indigo-200/60">
+                  {event.payload.context.summary} · Agents: {event.payload.context.activeAgents.join(", ") || "–"}
+                </p>
+              )}
+              <p className="text-[10px] uppercase tracking-wide text-slate-500">
+                {new Date(event.payload.timestamp).toLocaleTimeString()} · Session {event.payload.sessionId}
+              </p>
+            </li>
+          );
+        }
+
+        if (event.type === "build") {
+          return (
+            <li
+              key={`${event.payload.job.id}-${index}`}
+              className="rounded-md border border-sky-900 bg-sky-950/40 p-3"
+            >
+              <p className="text-xs font-mono uppercase tracking-wide text-sky-300">Build Engine</p>
+              <p className="mt-1 text-sm text-slate-100">{event.payload.job.prompt}</p>
+              <p className="text-xs text-slate-400">
+                Mode: {event.payload.job.mode.toUpperCase()} · Status: {event.payload.job.status.toUpperCase()}
+              </p>
+              {event.payload.job.plan && event.payload.job.plan.length > 0 && (
+                <p className="text-[10px] text-slate-500">Plan: {event.payload.job.plan.join(" → ")}</p>
+              )}
+            </li>
+          );
+        }
+
+        if (event.type === "story") {
+          return (
+            <li
+              key={`${event.payload.id}-${index}`}
+              className="rounded-md border border-fuchsia-900 bg-fuchsia-950/40 p-3"
+            >
+              <p className="text-xs font-mono uppercase tracking-wide text-fuchsia-300">StoryWorld</p>
+              <p className="mt-1 text-sm text-slate-100">{event.payload.description}</p>
+              <p className="text-xs text-fuchsia-200/70">
+                {event.payload.entityLabel ?? event.payload.entityId} · {event.payload.tags.join(", ")}
+              </p>
+              <p className="text-[10px] uppercase tracking-wide text-slate-500">
+                {new Date(event.payload.createdAt).toLocaleTimeString()} · Session {event.payload.sessionId ?? "storyworld"}
+              </p>
+            </li>
+          );
+        }
+
+        if (event.type === "simulation") {
+          return (
+            <li
+              key={`${event.payload.id}-${index}`}
+              className="rounded-md border border-amber-900 bg-amber-950/40 p-3"
+            >
+              <p className="text-xs font-mono uppercase tracking-wide text-amber-300">Simulation</p>
+              <p className="mt-1 text-sm text-slate-100">{event.payload.description}</p>
+              <p className="text-xs text-amber-200/70">
+                {event.payload.label ?? event.payload.category.toUpperCase()}
+                {event.payload.npcId ? ` · NPC ${event.payload.npcId}` : ""}
+              </p>
+              <p className="text-[10px] uppercase tracking-wide text-slate-500">
+                {new Date(event.payload.timestamp).toLocaleTimeString()}
+              </p>
+            </li>
+          );
+        }
+
+        if (event.type === "task") {
+          return (
+            <li key={`${event.payload.task.id}-${index}`} className="rounded-md border border-slate-800 bg-slate-900/60 p-3">
+              <p className="text-xs font-mono uppercase tracking-wide text-sky-400">
+                Task {event.payload.task.agentType}
+              </p>
+              <p className="mt-1 text-sm text-slate-200">Status: {event.payload.task.status}</p>
+              <p className="text-xs text-slate-400">
+                Updated {new Date(event.payload.timestamp).toLocaleTimeString()}
+              </p>
+            </li>
+          );
+        }
+
+        return null;
       }),
     [events]
   );

@@ -1,5 +1,8 @@
 import { EventEmitter } from "events";
 import type { Task } from "../orchestrator/types.js";
+import type { StoryTimelineEvent } from "../models/NarrativeTypes.js";
+import type { SimulationEvent as SimulationPayload } from "../orchestrator/WorldSimulator.js";
+import type { BuildJobSnapshot } from "../models/BuildTypes.js";
 
 type LogEvent = {
   type: "log";
@@ -59,6 +62,45 @@ type SecurityEvent = {
   payload: Record<string, unknown> & { timestamp: string };
 };
 
+type RobloxSyncEvent = {
+  type: "roblox_sync";
+  payload: {
+    status: "disconnected" | "connecting" | "connected" | "sync" | "playtest" | "error";
+    message: string;
+    path?: string;
+    metadata?: Record<string, unknown>;
+    timestamp: string;
+  };
+};
+
+type CollaborationEvent = {
+  type: "collaboration";
+  payload: {
+    sessionId: string;
+    message: string;
+    participants: Array<{ id: string; name: string; role: string }>;
+    timestamp: string;
+    context?: Record<string, unknown> | null;
+  };
+};
+
+type BuildEvent = {
+  type: "build";
+  payload: {
+    job: BuildJobSnapshot;
+  };
+};
+
+type StoryEvent = {
+  type: "story";
+  payload: StoryTimelineEvent;
+};
+
+type SimulationEvent = {
+  type: "simulation";
+  payload: SimulationPayload;
+};
+
 export type ServerEvent =
   | LogEvent
   | TaskEvent
@@ -68,7 +110,12 @@ export type ServerEvent =
   | ContainerEvent
   | QueueEvent
   | HealthEvent
-  | SecurityEvent;
+  | SecurityEvent
+  | RobloxSyncEvent
+  | CollaborationEvent
+  | BuildEvent
+  | StoryEvent
+  | SimulationEvent;
 
 class ServerEventBus extends EventEmitter {
   emitEvent(event: ServerEvent) {

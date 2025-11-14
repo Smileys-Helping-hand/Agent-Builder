@@ -16,6 +16,16 @@ import { SecurityPanel } from "../components/SecurityPanel";
 import { LogsPanel } from "../components/LogsPanel";
 import { GovernancePanel } from "../components/GovernancePanel";
 import { ControlPanel } from "../components/ControlPanel";
+import { ChatPanel } from "../components/ChatPanel";
+import { GamePanel } from "../components/GamePanel";
+import { BuildPanel } from "../components/BuildPanel";
+import { CollaboratePanel } from "../components/CollaboratePanel";
+import { NpcPanel } from "../components/NpcPanel";
+import { TerrainPanel } from "../components/TerrainPanel";
+import { StoryPanel } from "../components/StoryPanel";
+import { SimulationPanel } from "../components/SimulationPanel";
+import { SocialPanel } from "../components/SocialPanel";
+import { PlayerPanel } from "../components/PlayerPanel";
 import {
   fetchTasks,
   runAgent,
@@ -38,7 +48,17 @@ type TabKey =
   | "security"
   | "logs"
   | "governance"
-  | "controls";
+  | "controls"
+  | "build"
+  | "autocode"
+  | "game"
+  | "collaborate"
+  | "npc"
+  | "terrain"
+  | "story"
+  | "social"
+  | "simulation"
+  | "player";
 
 const tabLabels: Record<TabKey, string> = {
   overview: "Overview",
@@ -50,7 +70,17 @@ const tabLabels: Record<TabKey, string> = {
   security: "Security",
   logs: "Logs",
   governance: "Governance",
-  controls: "Controls"
+  controls: "Controls",
+  build: "Build",
+  autocode: "AutoCode",
+  game: "Game",
+  collaborate: "Collaborate",
+  npc: "NPC AI",
+  terrain: "Terrain",
+  story: "StoryWorld",
+  social: "Social",
+  simulation: "Simulation",
+  player: "Players"
 };
 
 export default function Dashboard() {
@@ -319,6 +349,48 @@ export default function Dashboard() {
             )}
           </section>
         )}
+
+        {activeTab === "build" && <BuildPanel events={events} />}
+
+        {activeTab === "autocode" && (
+          <section className="mx-auto mt-10 max-w-5xl space-y-6 px-6">
+            <ChatPanel />
+          </section>
+        )}
+
+        {activeTab === "game" && (
+          <section className="mx-auto mt-10 max-w-6xl space-y-6 px-6">
+            <GamePanel />
+          </section>
+        )}
+
+        {activeTab === "collaborate" && (
+          <section className="mx-auto mt-10 max-w-6xl space-y-6 px-6">
+            <CollaboratePanel />
+          </section>
+        )}
+
+        {activeTab === "npc" && (
+          <section className="mx-auto mt-10 max-w-6xl space-y-6 px-6">
+            <NpcPanel />
+          </section>
+        )}
+
+        {activeTab === "terrain" && (
+          <section className="mx-auto mt-10 max-w-6xl space-y-6 px-6">
+            <TerrainPanel />
+          </section>
+        )}
+
+        {activeTab === "story" && (
+          <StoryPanel events={events} />
+        )}
+
+        {activeTab === "social" && <SocialPanel events={events} />}
+
+        {activeTab === "simulation" && <SimulationPanel events={events} />}
+
+        {activeTab === "player" && <PlayerPanel events={events} />}
       </main>
     </>
   );

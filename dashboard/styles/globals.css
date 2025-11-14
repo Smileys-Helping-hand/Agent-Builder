@@ -9,3 +9,20 @@ body {
 a {
   @apply text-sky-400 hover:text-sky-300;
 }
+
+@keyframes syncPulse {
+  0%,
+  100% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.35);
+  }
+}
+
+.sync-indicator-active {
+  animation: syncPulse 1.5s ease-in-out infinite;
+  box-shadow: 0 0 0.75rem rgba(16, 185, 129, 0.35);
+}

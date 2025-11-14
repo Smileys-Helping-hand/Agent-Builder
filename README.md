@@ -1,7 +1,7 @@
 # 🧠 Agent Builder
 
 A modular, autonomous multi-agent builder powered by OpenAI.
-It can generate, design, test, and deploy apps from a single prompt.
+It can generate, design, test, and deploy apps from a single prompt — now with a unified Build Engine, voice-driven planning, and continuous learning loops.
 
 ## 🚀 Quick-Start
 
@@ -34,12 +34,37 @@ cp .env.example .env
 ```
 
 ```env
-AI_PROVIDER=openai
+AI_PROVIDER=ollama # or openai / lmstudio
+MODEL=llama3
 OPENAI_API_KEY=sk-XXXX
 PG_URL=postgres://user:pass@localhost:5432/agentbuilder
 QUEUE_PROVIDER=redis
 JWT_SECRET=change_me
 PLAN=free
+VOICE_ENABLED=true
+TTS_ENGINE=edge-tts
+AUTONOMY_LEVEL=semi
+BUILD_MODE=app
+PROJECT_OUTPUT=./projects
+AUTO_DEPLOY=false
+MERGE_MODE=semantic
+QA_ON_MERGE=true
+GAME_MODE=roblox
+TRAINING_ENABLED=true
+AUTO_LEARN=true
+ROBLOX_SYNC_ENABLED=true
+COLLAB_PORT=35000
+CLOUD_SYNC=false
+WORLD_MEMORY_DB=./data/storyworld/worldmemory.db
+VOICE_NARRATOR_VOICE=en-US-GuyNeural
+STORYWORLD_ENABLED=true
+STORYWORLD_SIMULATION_ENABLED=true
+STORYWORLD_TICK_MS=60000
+COGNITIVE_NPC_INTERVAL_MS=45000
+AI_PLAYER_SIMULATION=true
+MAX_AI_PLAYERS=10
+PLAYER_GOAL_INTERVAL=60000
+NARRATE_PLAYER_EVENTS=true
 ```
 
 ### Build & Verify
@@ -62,11 +87,19 @@ npm --prefix dashboard run dev
 Visit <http://localhost:3000>
 
 ### Explore
-- **Dashboard Tabs:** Dashboard · Queue · Health · Security · Logs · Governance · Cluster · Plugins · Analytics
+- **Dashboard Tabs:** Overview · Build · Voice · Collaborate · AutoCode · Game · NPC AI · Terrain · StoryWorld · Social · Simulation · Players · Queue · Health · Security · Logs · Governance · Cluster · Plugins · Analytics
 - **CLI:** `npm run shell` to open the interactive Agent Shell
 - **SDK:** `src/sdk/DeveloperSDK.ts` for embedding into other apps
 
 For a deeper walkthrough, see [`docs/SETUP_GUIDE.md`](docs/SETUP_GUIDE.md).
+To orchestrate persistent lore, quests, and narration, read the [`StoryWorld Orchestrator guide`](docs/STORYWORLD_ORCHESTRATOR.md).
+To operate the autonomous simulation loop, explore the [`StoryWorld Engine guide`](docs/STORYWORLD_ENGINE.md).
+For multi-agent dialogue, social graphs, and diplomacy loops, review the [`Social Simulation guide`](docs/SOCIAL_SIMULATION.md).
+To direct AI player cognition and global goals, check the [`AI Player Simulation guide`](docs/AI_PLAYER_SIMULATION.md).
+Automated build orchestration, repo merging, and deployment tips live in [`docs/BUILD_AUTOMATION.md`](docs/BUILD_AUTOMATION.md) and [`docs/REPO_MERGE_GUIDE.md`](docs/REPO_MERGE_GUIDE.md).
+For collaborative rooms, context memory, and human/AI pair programming, reference [`docs/COLLABORATION_ROOMS.md`](docs/COLLABORATION_ROOMS.md).
+Voice-first planning plus the external SDK/API surface are covered in [`docs/BUILD_AUTOMATION.md`](docs/BUILD_AUTOMATION.md) and [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md).
+For continuous learning loops driven by `data/feedback.jsonl`, see [`docs/CONTINUOUS_LEARNING.md`](docs/CONTINUOUS_LEARNING.md).
 
 > 🛡️ **Need a supervised walkthrough?** Follow the step-by-step checklist in
 > [`docs/SUPERVISED_BOOTSTRAP.md`](docs/SUPERVISED_BOOTSTRAP.md) to recreate the
@@ -126,6 +159,17 @@ By default the dashboard targets `http://localhost:4000`. Update `NEXT_PUBLIC_AP
 | **Security** | Explore the active `policy.yaml`, validate sandbox requests, and audit enforcement outcomes. |
 | **Governance** | Review consent records, capture manual approvals, and audit compliance events emitted by the agents. |
 | **Controls** | Prototype voice + AR hooks for issuing natural-language or gesture commands into the orchestrator loop. |
+| **Build** | Coordinate Builder/QA/Ops/Roblox agents with the unified Build Engine and Hustle Studio merger. |
+| **Voice** | Drive the Voice Flow pipeline, narrate status updates, and launch hands-free builds. |
+| **AutoCode** | Chat-driven file inspection, guided edits, and microphone-enabled workflows backed by the AutoCode engine. |
+| **Game** | Generate Roblox experiences, inspect Lua assets, and export `.rbxlx` packages for Roblox Studio. |
+| **Collaborate** | Launch multiplayer rooms, invite teammates, sync shared context memory, and stream live diff snapshots. |
+| **NPC AI** | Generate Luau behaviour scripts for dialogue, patrol, and shop NPCs with live sync to Studio. |
+| **Terrain** | Produce procedural terrain scripts with optional seeds and biome presets. |
+| **StoryWorld** | Direct persistent lore, quests, and factions. Commands feed the WorldMemory graph and optional narration. |
+| **Social** | Inspect faction diplomacy, social graphs, and NPC-to-NPC dialogue loops. |
+| **Simulation** | Observe autonomous NPC cognition, faction influence shifts, and control the world tick cadence. |
+| **Players** | Manage autonomous AI adventurers, assign world goals, and monitor their resources. |
 | **Logs** | Browse structured JSON logs persisted by the orchestrator for quick triage and export. |
 
 ### 🔔 Observability & Metrics
@@ -149,6 +193,26 @@ Governance events are written to `data/governance.json` and exposed via `/api/go
 ### 🗣️ Voice & AR Control Hooks
 
 Prototype voice commands and AR gestures using `/api/controls/voice` and `/api/controls/gestures`. The new dashboard Controls tab lets authenticated operators record sample inputs that flow through the orchestration event bus.
+
+### 🧵 AutoCode Chat & Offline Fine-Tuning
+
+The AutoCode tab exposes a multi-turn chat interface that can inspect files, propose edits, and stage commits. Enable the microphone toggle to drive conversations hands-free (see [`docs/VOICE_GUIDE.md`](docs/VOICE_GUIDE.md)). Each turn is persisted to vector memory so the orchestrator can recall prior context. Collected feedback flows into `LocalTrainer`, which generates `data/train.jsonl` for Ollama or LM Studio fine-tuning via `POST /api/train/start`.
+
+### 🎮 Roblox Game Builder
+
+Switch to the Game tab to produce fully-scripted Roblox experiences. Behind the scenes the new `RobloxAgent` stitches Lua templates from `templates/roblox/`, summarizes your prompt, and can export the project as an `.rbxlx` archive for Roblox Studio. Learn more in [`docs/ROBLOX_BUILDING.md`](docs/ROBLOX_BUILDING.md) and enable live Studio mirroring with the [`ROBLOX_STUDIO_SYNC`](docs/ROBLOX_STUDIO_SYNC.md) guide.
+
+### 🤝 Collaborative Sessions
+
+The Collaborate tab pairs the Socket.IO collaboration server with the dashboard. Create sessions, invite teammates, and track live cursors and diffs inside the panel. Configuration and troubleshooting steps live in [`docs/COLLABORATION_GUIDE.md`](docs/COLLABORATION_GUIDE.md).
+
+### 🧟 NPC AI Agent
+
+Generate Luau NPC scripts directly from prompts using the NPC AI tab. The `NpcAgent` stores each script under `games/roblox/npcs/` and pushes updates to Roblox Studio automatically when the bridge is connected. Review the behaviour templates and usage tips in [`docs/NPC_AI_GUIDE.md`](docs/NPC_AI_GUIDE.md).
+
+### 🏔️ Procedural Terrain Generator
+
+The Terrain tab wraps the `TerrainGenerator` utility for crafting mountains, deserts, and volcanic biomes with optional seeds. Generated scripts are saved under `games/roblox/terrain/` and synced via the bridge. See [`docs/TERRAIN_GENERATOR.md`](docs/TERRAIN_GENERATOR.md) for presets and best practices.
 
 ### 🛡️ Policy Engine & Sandbox Manager
 
