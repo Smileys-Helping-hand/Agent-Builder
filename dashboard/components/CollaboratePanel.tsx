@@ -13,6 +13,8 @@ import {
   type CollaborationRoomContext,
   type ServerEvent
 } from "../lib/api";
+import heroImages from "../theme/heroImages";
+import HeroSection from "./ui/HeroSection";
 
 const randomParticipant = (): CollaborationParticipant => {
   const randomId = Math.random().toString(36).slice(2, 10);
@@ -126,25 +128,31 @@ export function CollaboratePanel() {
     }
   };
 
+  const heroActions = (
+    <button
+      type="button"
+      className="self-start rounded-md border border-sky-500/60 bg-sky-600/20 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-200 transition hover:border-sky-400 hover:text-sky-100"
+      onClick={() => {
+        setCurrentParticipant(randomParticipant());
+      }}
+    >
+      Shuffle Avatar
+    </button>
+  );
+
   return (
     <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
-      <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-900/60 p-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-100">Live Collaboration</h2>
-          <button
-            className="rounded-md border border-sky-500/60 bg-sky-600/20 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-200"
-            onClick={() => {
-              setCurrentParticipant(randomParticipant());
-            }}
-          >
-            Shuffle Avatar
-          </button>
-        </div>
-        <p className="text-sm text-slate-400">
-          Create or join a shared editing session. Participants and file diffs stream into the Monaco editor in upcoming releases.
-        </p>
+      <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/60 shadow-xl shadow-black/40">
+        <HeroSection
+          image={heroImages.collaborate}
+          title="Live Collaboration"
+          subtitle="Powered by Hustle Studio"
+          className="rounded-t-xl border-b border-slate-800 overflow-hidden"
+          actions={heroActions}
+        />
 
-        <form className="space-y-3" onSubmit={handleJoin}>
+        <div className="space-y-6 p-6">
+          <form className="space-y-3" onSubmit={handleJoin}>
           <div>
             <label className="text-xs uppercase tracking-wide text-slate-400">Session ID</label>
             <input
@@ -243,7 +251,8 @@ export function CollaboratePanel() {
             {syncingContext ? "Syncing…" : "Sync Context"}
           </button>
         </div>
-      </div>
+        </div>
+      </section>
 
       <aside className="space-y-4 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
         <h3 className="text-sm font-semibold text-slate-100">Participants</h3>

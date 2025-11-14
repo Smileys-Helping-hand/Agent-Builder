@@ -3,7 +3,22 @@
 @tailwind utilities;
 
 body {
+  position: relative;
   @apply bg-slate-950 text-slate-100;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: url("/branding/neon_dashboard_bg.png");
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-position: center;
+  opacity: 0.12;
+  animation: neonDrift 28s ease-in-out infinite alternate;
+  pointer-events: none;
+  z-index: -1;
 }
 
 a {
@@ -25,4 +40,87 @@ a {
 .sync-indicator-active {
   animation: syncPulse 1.5s ease-in-out infinite;
   box-shadow: 0 0 0.75rem rgba(16, 185, 129, 0.35);
+}
+
+@keyframes neonDrift {
+  0% {
+    transform: scale(1) translate3d(-2%, -1%, 0);
+  }
+  50% {
+    transform: scale(1.02) translate3d(2%, 1%, 0);
+  }
+  100% {
+    transform: scale(1.04) translate3d(-1%, 2%, 0);
+  }
+}
+
+.hero-bg {
+  position: relative;
+  min-height: 11rem;
+  width: 100%;
+  overflow: hidden;
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-position: center;
+  transform-style: preserve-3d;
+}
+
+.hero-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(15, 23, 42, 0.2) 0%,
+    rgba(15, 23, 42, 0.35) 30%,
+    rgba(15, 23, 42, 0.75) 70%,
+    rgba(15, 23, 42, 0.92) 100%
+  );
+  pointer-events: none;
+}
+
+.hero-overlay {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 1rem;
+  min-height: 11rem;
+  padding: 1.75rem;
+}
+
+.hero-overlay h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: rgb(226 232 240);
+}
+
+.hero-overlay p {
+  color: rgba(148, 163, 184, 0.9);
+  font-size: 0.9rem;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.parallax-3d {
+  background-attachment: fixed;
+  will-change: background-position;
+}
+
+@media (max-width: 768px) {
+  .hero-bg {
+    min-height: 9rem;
+  }
+
+  .hero-overlay {
+    padding: 1.25rem;
+  }
+
+  .parallax-3d {
+    background-attachment: scroll;
+  }
 }

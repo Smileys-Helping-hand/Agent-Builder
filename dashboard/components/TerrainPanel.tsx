@@ -2,6 +2,8 @@
 
 import { FormEvent, useCallback, useState } from "react";
 import { generateTerrain } from "../lib/api";
+import heroImages from "../theme/heroImages";
+import HeroSection from "./ui/HeroSection";
 
 const biomes = [
   { id: "mountains", label: "Mountains" },
@@ -40,28 +42,31 @@ export function TerrainPanel() {
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1.1fr_1fr]">
-      <form onSubmit={handleSubmit} className="space-y-4 rounded-xl border border-slate-800 bg-slate-900/60 p-6">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-100">Procedural Terrain</h2>
-          <p className="mt-1 text-sm text-slate-400">Blend noise-driven landscapes with biome presets and send them directly to Studio.</p>
-        </div>
+      <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/60 shadow-xl shadow-black/40">
+        <HeroSection
+          image={heroImages.terrain}
+          title="Procedural Terrain"
+          subtitle="Powered by Hustle Studio"
+          className="rounded-t-xl border-b border-slate-800 overflow-hidden"
+        />
 
-        <div>
-          <label className="text-xs uppercase tracking-wide text-slate-400">Prompt</label>
-          <textarea
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            rows={4}
-            className="mt-1 w-full rounded-md border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100"
-          />
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2">
+        <form onSubmit={handleSubmit} className="space-y-4 p-6">
           <div>
-            <label className="text-xs uppercase tracking-wide text-slate-400">Biome Preset</label>
-            <div className="mt-2 flex gap-2">
-              {biomes.map((biome) => (
-                <button
+            <label className="text-xs uppercase tracking-wide text-slate-400">Prompt</label>
+            <textarea
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              rows={4}
+              className="mt-1 w-full rounded-md border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100"
+            />
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="text-xs uppercase tracking-wide text-slate-400">Biome Preset</label>
+              <div className="mt-2 flex gap-2">
+                {biomes.map((biome) => (
+                  <button
                   type="button"
                   key={biome.id}
                   onClick={() => setSelectedBiome(biome.id)}
@@ -85,19 +90,20 @@ export function TerrainPanel() {
               className="mt-1 w-full rounded-md border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100"
             />
           </div>
-        </div>
+          </div>
 
-        <div className="flex gap-3">
-          <button
-            type="submit"
-            disabled={isGenerating}
-            className="rounded-md bg-sky-600/80 px-4 py-2 text-sm font-semibold text-sky-50 disabled:opacity-50"
-          >
-            Build Terrain
-          </button>
-          {error && <p className="text-sm text-rose-400">{error}</p>}
-        </div>
-      </form>
+          <div className="flex gap-3">
+            <button
+              type="submit"
+              disabled={isGenerating}
+              className="rounded-md bg-sky-600/80 px-4 py-2 text-sm font-semibold text-sky-50 disabled:opacity-50"
+            >
+              Build Terrain
+            </button>
+            {error && <p className="text-sm text-rose-400">{error}</p>}
+          </div>
+        </form>
+      </section>
 
       <aside className="rounded-xl border border-slate-800 bg-slate-900/40 p-6">
         <h3 className="text-sm font-semibold text-slate-100">Output</h3>

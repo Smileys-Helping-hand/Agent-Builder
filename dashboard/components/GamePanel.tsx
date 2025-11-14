@@ -14,6 +14,8 @@ import {
   type RobloxTemplate,
   type ServerEvent
 } from "../lib/api";
+import heroImages from "../theme/heroImages";
+import HeroSection from "./ui/HeroSection";
 
 type RobloxSyncStatus = "disconnected" | "connecting" | "connected" | "sync" | "playtest" | "error";
 
@@ -279,25 +281,30 @@ export function GamePanel() {
     }
   }, [game]);
 
-  return (
-    <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 shadow-xl shadow-black/40">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-100">Roblox Game Builder</h2>
-          <p className="text-sm text-slate-400">Generate Lua scripts, inspect the asset tree, and export a ready-to-open RBXLX.</p>
-      </div>
-      {exportLink && (
+  const heroActions = exportLink
+    ? (
         <a
           href={exportLink}
           download={game?.title ? `${game.title}.rbxlx` : "roblox-experience.rbxlx"}
-            className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-400"
-          >
-            Download Export
-          </a>
-        )}
-      </div>
+          className="inline-flex items-center justify-center rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-400"
+        >
+          Download Export
+        </a>
+      )
+    : undefined;
 
-      <div className="mt-4 space-y-3 rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+  return (
+    <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/60 shadow-xl shadow-black/40">
+      <HeroSection
+        image={heroImages.game}
+        title="Roblox Game Builder"
+        subtitle="Powered by Hustle Studio"
+        className="rounded-t-xl border-b border-slate-800 overflow-hidden"
+        actions={heroActions}
+      />
+
+      <div className="space-y-6 p-6">
+        <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-950/70 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Studio Live-Sync</h3>
@@ -350,40 +357,40 @@ export function GamePanel() {
         </div>
       </div>
 
-      <form onSubmit={onGenerate} className="mt-4 grid gap-4 lg:grid-cols-[1fr_auto]">
-        <div className="space-y-2">
-          <label className="text-xs uppercase tracking-wide text-slate-400">Experience prompt</label>
-          <textarea
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            className="h-24 w-full rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
-          />
-        </div>
-        <div className="space-y-2">
-          <label className="text-xs uppercase tracking-wide text-slate-400">Template</label>
-          <select
-            value={selectedTemplate}
-            onChange={(event) => setSelectedTemplate(event.target.value)}
-            className="w-full rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
-          >
-            {templates.map((template) => (
-              <option key={template.id} value={template.id}>
-                {template.label}
-              </option>
-            ))}
-          </select>
-          <button
-            type="submit"
-            disabled={isGenerating}
-            className="w-full rounded-md bg-sky-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:bg-slate-700"
-          >
-            {isGenerating ? "Generating..." : "Generate"}
-          </button>
-        </div>
-      </form>
+        <form onSubmit={onGenerate} className="grid gap-4 lg:grid-cols-[1fr_auto]">
+          <div className="space-y-2">
+            <label className="text-xs uppercase tracking-wide text-slate-400">Experience prompt</label>
+            <textarea
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              className="h-24 w-full rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs uppercase tracking-wide text-slate-400">Template</label>
+            <select
+              value={selectedTemplate}
+              onChange={(event) => setSelectedTemplate(event.target.value)}
+              className="w-full rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
+            >
+              {templates.map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.label}
+                </option>
+              ))}
+            </select>
+            <button
+              type="submit"
+              disabled={isGenerating}
+              className="w-full rounded-md bg-sky-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:bg-slate-700"
+            >
+              {isGenerating ? "Generating..." : "Generate"}
+            </button>
+          </div>
+        </form>
 
-      {game ? (
-        <div className="mt-6 grid gap-6 lg:grid-cols-3">
+        {game ? (
+          <div className="grid gap-6 lg:grid-cols-3">
           <aside className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Asset Tree</h3>
             <ul className="mt-3 space-y-2 text-sm">
@@ -430,10 +437,11 @@ export function GamePanel() {
               </div>
             </div>
           </div>
-        </div>
-      ) : (
-        <p className="mt-6 text-sm text-slate-500">Generate a Roblox experience to see the game tree and scripts.</p>
-      )}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">Generate a Roblox experience to see the game tree and scripts.</p>
+        )}
+      </div>
     </section>
   );
 }

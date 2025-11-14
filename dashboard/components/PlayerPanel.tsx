@@ -10,6 +10,8 @@ import {
   type ServerEvent,
   type SimulationEvent
 } from "../lib/api";
+import heroImages from "../theme/heroImages";
+import HeroSection from "./ui/HeroSection";
 
 const goalTypes = ["conquest", "discovery", "diplomacy", "artifact", "exploration"];
 
@@ -109,10 +111,26 @@ export const PlayerPanel = ({ events }: PlayerPanelProps) => {
     }
   };
 
+  const heroStatus = isValidating ? "Refreshing…" : running ? "Simulation Live" : "Simulation Paused";
+  const heroActions = (
+    <span className="inline-flex items-center rounded-full border border-indigo-400/60 bg-indigo-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-indigo-200">
+      {heroStatus}
+    </span>
+  );
+
   return (
-    <section className="mx-auto mt-10 grid max-w-6xl gap-8 px-6 lg:grid-cols-[2fr_1fr]">
-      <div className="space-y-6">
-        <div className="rounded-xl border border-indigo-900/50 bg-slate-950/85 p-6 shadow-lg shadow-indigo-900/20">
+    <section className="mx-auto mt-10 max-w-6xl overflow-hidden rounded-xl border border-slate-900/60 bg-slate-950/60 shadow-2xl shadow-black/40">
+      <HeroSection
+        image={heroImages.player}
+        title="AI Player Command"
+        subtitle="Powered by Hustle Studio"
+        className="rounded-t-xl border-b border-slate-800 overflow-hidden"
+        actions={heroActions}
+      />
+
+      <div className="grid gap-8 px-6 pb-6 pt-2 lg:grid-cols-[2fr_1fr]">
+        <div className="space-y-6">
+          <div className="rounded-xl border border-indigo-900/50 bg-slate-950/85 p-6 shadow-lg shadow-indigo-900/20">
           <header className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-indigo-100">Autonomous AI Players</h2>
@@ -290,6 +308,7 @@ export const PlayerPanel = ({ events }: PlayerPanelProps) => {
           </ul>
         </div>
       </aside>
+      </div>
     </section>
   );
 };

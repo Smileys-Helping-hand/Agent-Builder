@@ -11,6 +11,8 @@ import {
   type BuildJob,
   type ServerEvent
 } from "../lib/api";
+import heroImages from "../theme/heroImages";
+import HeroSection from "./ui/HeroSection";
 
 const buildModes: BuildJob["mode"][] = ["app", "game", "simulation", "fusion"];
 const autonomyModes: BuildJob["autonomy"][] = ["manual", "semi", "full"];
@@ -148,13 +150,16 @@ export function BuildPanel({ events }: BuildPanelProps) {
     <section className="mx-auto mt-10 grid max-w-6xl gap-8 px-6 lg:grid-cols-[2fr_1fr]">
       <div className="space-y-6">
         <form onSubmit={handleSubmit} className="rounded-xl border border-slate-800 bg-slate-950/80 p-6 shadow-lg shadow-black/40">
-          <header className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-semibold text-slate-100">Unified Build Engine</h2>
-              <p className="mt-1 text-sm text-slate-400">
-                Coordinate Builder, QA, Ops, and Roblox agents from a single launch command. Voice commands map here automatically when Voice Flow is enabled.
-              </p>
-            </div>
+          <HeroSection
+            image={heroImages.build}
+            title="Unified Build Engine"
+            subtitle="Powered by Hustle Studio"
+            className="-mx-6 -mt-6 overflow-hidden rounded-t-xl border-b border-slate-800"
+          />
+          <header className="mt-6 flex flex-wrap items-center justify-between gap-3">
+            <p className="max-w-xl text-sm text-slate-400">
+              Coordinate Builder, QA, Ops, and Roblox agents from a single launch command. Voice requests flow through the Build Engine for end-to-end automation.
+            </p>
             <span className="text-xs uppercase tracking-wide text-slate-500">{isValidating ? "Refreshing…" : "Live"}</span>
           </header>
 

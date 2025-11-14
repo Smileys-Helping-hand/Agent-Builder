@@ -14,6 +14,8 @@ import {
   YAxis,
   Tooltip
 } from "recharts";
+import heroImages from "../theme/heroImages";
+import HeroSection from "./ui/HeroSection";
 
 type SocialPanelProps = {
   events: ServerEvent[];
@@ -66,9 +68,17 @@ export const SocialPanel = ({ events }: SocialPanelProps) => {
   const graphData = useMemo(() => buildGraphData(state), [state]);
 
   return (
-    <section className="mx-auto mt-10 grid max-w-6xl gap-8 px-6 lg:grid-cols-[2fr_1fr]">
-      <div className="space-y-6">
-        <div className="rounded-xl border border-sky-900/40 bg-slate-950/80 p-6 shadow-lg shadow-sky-900/30">
+    <section className="mx-auto mt-10 max-w-6xl overflow-hidden rounded-xl border border-slate-900/60 bg-slate-950/60 shadow-2xl shadow-black/40">
+      <HeroSection
+        image={heroImages.social}
+        title="Social Simulation"
+        subtitle="Powered by Hustle Studio"
+        className="rounded-t-xl border-b border-slate-800 overflow-hidden"
+      />
+
+      <div className="grid gap-8 px-6 pb-6 pt-2 lg:grid-cols-[2fr_1fr]">
+        <div className="space-y-6">
+          <div className="rounded-xl border border-sky-900/40 bg-slate-950/80 p-6 shadow-lg shadow-sky-900/30">
           <header className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-sky-100">NPC Social Graph</h2>
@@ -182,6 +192,7 @@ export const SocialPanel = ({ events }: SocialPanelProps) => {
           </ul>
         </div>
       </aside>
+      </div>
     </section>
   );
 };

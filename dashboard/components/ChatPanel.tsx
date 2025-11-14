@@ -14,6 +14,8 @@ import {
   type AutoCodeChatResponse,
   type ProposedEdit
 } from "../lib/api";
+import heroImages from "../theme/heroImages";
+import HeroSection from "./ui/HeroSection";
 
 const renderers = {
   code({ inline, className, children }: { inline?: boolean; className?: string; children: string[] }) {
@@ -117,48 +119,54 @@ export function ChatPanel() {
   }, [sendRequest, filePath]);
 
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 shadow-xl shadow-black/40">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-100">AutoCode Chat</h2>
-          <p className="text-sm text-slate-400">Collaborate with the orchestrator to inspect files and apply guided edits.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            type="text"
-            value={filePath}
-            onChange={(event) => setFilePath(event.target.value)}
-            className="w-56 rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100 focus:border-sky-500 focus:outline-none"
-            placeholder="src/index.ts"
-          />
-          <button
-            onClick={readFile}
-            className="rounded-md border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-sky-500 hover:text-sky-300"
-            type="button"
-          >
-            Preview
-          </button>
-          <button
-            onClick={handleMicrophoneToggle}
-            type="button"
-            className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-              supportsSpeech
-                ? listening
-                  ? "bg-rose-600 text-white"
-                  : "bg-slate-800 text-slate-200 hover:bg-slate-700"
-                : "bg-slate-800/50 text-slate-500"
-            }`}
-            disabled={!supportsSpeech}
-          >
-            <span role="img" aria-label="microphone">
-              🎙️
-            </span>
-            {listening ? "Listening" : "Mic"}
-          </button>
-        </div>
-      </div>
+    <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/60 shadow-xl shadow-black/40">
+      <HeroSection
+        image={heroImages.chat}
+        title="AutoCode Chat"
+        subtitle="Powered by Hustle Studio"
+        className="rounded-t-xl border-b border-slate-800 overflow-hidden"
+      />
 
-      <form onSubmit={onSubmit} className="mt-4 space-y-3">
+      <div className="space-y-6 p-6">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
+            <input
+              type="text"
+              value={filePath}
+              onChange={(event) => setFilePath(event.target.value)}
+              className="w-full min-w-[12rem] rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100 focus:border-sky-500 focus:outline-none sm:w-56"
+              placeholder="src/index.ts"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={readFile}
+                className="rounded-md border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-sky-500 hover:text-sky-300"
+                type="button"
+              >
+                Preview
+              </button>
+              <button
+                onClick={handleMicrophoneToggle}
+                type="button"
+                className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                  supportsSpeech
+                    ? listening
+                      ? "bg-rose-600 text-white"
+                      : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+                    : "bg-slate-800/50 text-slate-500"
+                }`}
+                disabled={!supportsSpeech}
+              >
+                <span role="img" aria-label="microphone">
+                  🎙️
+                </span>
+                {listening ? "Listening" : "Mic"}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <form onSubmit={onSubmit} className="space-y-3">
         <textarea
           value={instruction}
           onChange={(event) => setInstruction(event.target.value)}
@@ -174,9 +182,9 @@ export function ChatPanel() {
             {isLoading ? "Working..." : "Propose Edit"}
           </button>
         </div>
-      </form>
+        </form>
 
-      <div className="mt-6 space-y-4">
+        <div className="space-y-4">
         {messages.length === 0 ? (
           <p className="text-sm text-slate-500">No messages yet. Ask AutoCode to inspect a file or propose an edit.</p>
         ) : (
@@ -212,13 +220,14 @@ export function ChatPanel() {
             </article>
           ))
         )}
-      </div>
-
-      {lastResponse?.message && (
-        <div className="mt-6 rounded-md border border-slate-800 bg-slate-950/70 p-4 text-xs text-slate-400">
-          <strong className="text-slate-200">Latest status:</strong> {lastResponse.message}
         </div>
-      )}
+
+        {lastResponse?.message && (
+          <div className="rounded-md border border-slate-800 bg-slate-950/70 p-4 text-xs text-slate-400">
+            <strong className="text-slate-200">Latest status:</strong> {lastResponse.message}
+          </div>
+        )}
+      </div>
     </section>
   );
 }

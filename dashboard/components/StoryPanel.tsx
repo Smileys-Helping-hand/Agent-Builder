@@ -10,6 +10,8 @@ import {
   type StoryEntitySnapshot,
   type StoryTimelineEvent
 } from "../lib/api";
+import heroImages from "../theme/heroImages";
+import HeroSection from "./ui/HeroSection";
 
 const dedupeEvents = (events: StoryTimelineEvent[]) => {
   const seen = new Set<string>();
@@ -123,9 +125,17 @@ export const StoryPanel = ({ events }: StoryPanelProps) => {
   );
 
   return (
-    <section className="mx-auto mt-10 grid max-w-6xl gap-8 px-6 lg:grid-cols-[2fr_1fr]">
-      <div className="space-y-6">
-        <div className="rounded-xl border border-fuchsia-900/40 bg-slate-950/80 p-6 shadow-lg shadow-fuchsia-900/20">
+    <section className="mx-auto mt-10 max-w-6xl overflow-hidden rounded-xl border border-slate-900/60 bg-slate-950/60 shadow-2xl shadow-black/40">
+      <HeroSection
+        image={heroImages.story}
+        title="StoryWorld Orchestrator"
+        subtitle="Powered by Hustle Studio"
+        className="rounded-t-xl border-b border-slate-800 overflow-hidden"
+      />
+
+      <div className="grid gap-8 px-6 pb-6 pt-2 lg:grid-cols-[2fr_1fr]">
+        <div className="space-y-6">
+          <div className="rounded-xl border border-fuchsia-900/40 bg-slate-950/80 p-6 shadow-lg shadow-fuchsia-900/20">
           <h2 className="text-lg font-semibold text-fuchsia-200">StoryWorld Orchestrator</h2>
           <p className="mt-2 text-sm text-slate-400">
             Issue narrative directives and coordinate quests, NPCs, and terrain in your persistent Roblox world. All actions are
@@ -244,6 +254,7 @@ export const StoryPanel = ({ events }: StoryPanelProps) => {
           )}
         </div>
       </aside>
+      </div>
     </section>
   );
 };
