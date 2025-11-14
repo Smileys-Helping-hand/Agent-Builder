@@ -1,4 +1,5 @@
 import Head from "next/head";
+import Image from "next/image";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { EventFeed } from "../components/EventFeed";
@@ -16,6 +17,16 @@ import { SecurityPanel } from "../components/SecurityPanel";
 import { LogsPanel } from "../components/LogsPanel";
 import { GovernancePanel } from "../components/GovernancePanel";
 import { ControlPanel } from "../components/ControlPanel";
+import { ChatPanel } from "../components/ChatPanel";
+import { GamePanel } from "../components/GamePanel";
+import { BuildPanel } from "../components/BuildPanel";
+import { CollaboratePanel } from "../components/CollaboratePanel";
+import { NpcPanel } from "../components/NpcPanel";
+import { TerrainPanel } from "../components/TerrainPanel";
+import { StoryPanel } from "../components/StoryPanel";
+import { SimulationPanel } from "../components/SimulationPanel";
+import { SocialPanel } from "../components/SocialPanel";
+import { PlayerPanel } from "../components/PlayerPanel";
 import {
   fetchTasks,
   runAgent,
@@ -25,6 +36,7 @@ import {
   type ServerEvent,
   type Task
 } from "../lib/api";
+import heroImages from "../theme/heroImages";
 
 const fetcher = () => fetchTasks();
 
@@ -38,7 +50,17 @@ type TabKey =
   | "security"
   | "logs"
   | "governance"
-  | "controls";
+  | "controls"
+  | "build"
+  | "autocode"
+  | "game"
+  | "collaborate"
+  | "npc"
+  | "terrain"
+  | "story"
+  | "social"
+  | "simulation"
+  | "player";
 
 const tabLabels: Record<TabKey, string> = {
   overview: "Overview",
@@ -50,7 +72,17 @@ const tabLabels: Record<TabKey, string> = {
   security: "Security",
   logs: "Logs",
   governance: "Governance",
-  controls: "Controls"
+  controls: "Controls",
+  build: "Build",
+  autocode: "AutoCode",
+  game: "Game",
+  collaborate: "Collaborate",
+  npc: "NPC AI",
+  terrain: "Terrain",
+  story: "StoryWorld",
+  social: "Social",
+  simulation: "Simulation",
+  player: "Players"
 };
 
 export default function Dashboard() {
@@ -147,10 +179,22 @@ export default function Dashboard() {
       <main className="min-h-screen bg-slate-950 pb-20">
         <header className="border-b border-slate-900/70 bg-slate-950/80 backdrop-blur">
           <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-12 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-sm uppercase tracking-[0.2em] text-sky-400">Agent Builder</p>
-              <h1 className="mt-2 text-3xl font-bold text-slate-100 lg:text-4xl">Mission Control</h1>
-              <p className="mt-2 max-w-2xl text-sm text-slate-400">
+            <div className="flex w-full flex-col gap-4 lg:max-w-xl">
+              <div className="flex items-center gap-3">
+                <Image
+                  src="/branding/hustle_studio_logo.png"
+                  alt="Hustle Studio Logo"
+                  width={56}
+                  height={56}
+                  className="h-14 w-14 rounded-full border border-slate-800 bg-slate-900 object-cover"
+                  priority
+                />
+                <div>
+                  <p className="text-sm uppercase tracking-[0.2em] text-sky-400">Agent Builder</p>
+                  <h1 className="mt-1 text-3xl font-bold text-slate-100 lg:text-4xl">Mission Control</h1>
+                </div>
+              </div>
+              <p className="max-w-2xl text-sm text-slate-400">
                 Launch new builds, monitor autonomous agents, and orchestrate updates from a single real-time dashboard.
               </p>
             </div>
@@ -177,18 +221,30 @@ export default function Dashboard() {
           </div>
         </header>
 
-        <section className="mx-auto mt-6 flex max-w-6xl flex-wrap items-center gap-2 px-6">
-          {(Object.entries(tabLabels) as Array<[TabKey, string]>).map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setActiveTab(key)}
-              className={`rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-wide transition ${
-                activeTab === key ? "bg-sky-500 text-white" : "border border-slate-800 bg-slate-950 text-slate-300 hover:bg-slate-900"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+        <section className="mx-auto mt-6 flex max-w-6xl flex-wrap items-center gap-3 px-6">
+          <Image
+            src={heroImages.logo}
+            alt="Hustle Studio mark"
+            width={40}
+            height={40}
+            className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-cover shadow-[0_0_0_rgba(56,189,248,0)] transition-shadow hover:shadow-[0_0_25px_rgba(56,189,248,0.45)]"
+            priority
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            {(Object.entries(tabLabels) as Array<[TabKey, string]>).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setActiveTab(key)}
+                className={`rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-wide transition ${
+                  activeTab === key
+                    ? "bg-sky-500 text-white"
+                    : "border border-slate-800 bg-slate-950 text-slate-300 hover:bg-slate-900"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </section>
 
         {activeTab === "overview" && (
@@ -319,6 +375,48 @@ export default function Dashboard() {
             )}
           </section>
         )}
+
+        {activeTab === "build" && <BuildPanel events={events} />}
+
+        {activeTab === "autocode" && (
+          <section className="mx-auto mt-10 max-w-5xl space-y-6 px-6">
+            <ChatPanel />
+          </section>
+        )}
+
+        {activeTab === "game" && (
+          <section className="mx-auto mt-10 max-w-6xl space-y-6 px-6">
+            <GamePanel />
+          </section>
+        )}
+
+        {activeTab === "collaborate" && (
+          <section className="mx-auto mt-10 max-w-6xl space-y-6 px-6">
+            <CollaboratePanel />
+          </section>
+        )}
+
+        {activeTab === "npc" && (
+          <section className="mx-auto mt-10 max-w-6xl space-y-6 px-6">
+            <NpcPanel />
+          </section>
+        )}
+
+        {activeTab === "terrain" && (
+          <section className="mx-auto mt-10 max-w-6xl space-y-6 px-6">
+            <TerrainPanel />
+          </section>
+        )}
+
+        {activeTab === "story" && (
+          <StoryPanel events={events} />
+        )}
+
+        {activeTab === "social" && <SocialPanel events={events} />}
+
+        {activeTab === "simulation" && <SimulationPanel events={events} />}
+
+        {activeTab === "player" && <PlayerPanel events={events} />}
       </main>
     </>
   );

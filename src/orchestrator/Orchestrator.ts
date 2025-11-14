@@ -3,6 +3,7 @@ import { BuilderAgent } from "../agents/BuilderAgent.js";
 import { UXAgent } from "../agents/UXAgent.js";
 import { OpsAgent } from "../agents/OpsAgent.js";
 import { QAAgent } from "../agents/QAAgent.js";
+import { RobloxAgent } from "../agents/RobloxAgent.js";
 import { PluginRegistry } from "../agents/PluginRegistry.js";
 import { Logger } from "../utils/Logger.js";
 import { MemoryStore } from "../state/MemoryStore.js";
@@ -23,6 +24,7 @@ export class Orchestrator {
     new UXAgent(),
     new OpsAgent(),
     new QAAgent(),
+    new RobloxAgent(),
     ...PluginRegistry.getAgents()
   ];
 
