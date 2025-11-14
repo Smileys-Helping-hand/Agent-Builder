@@ -17,6 +17,11 @@ import { SecurityPanel } from "../components/SecurityPanel";
 import { LogsPanel } from "../components/LogsPanel";
 import { GovernancePanel } from "../components/GovernancePanel";
 import { ControlPanel } from "../components/ControlPanel";
+import { EnvManager } from "../components/Admin/EnvManager";
+import { LicenseManager } from "../components/Admin/LicenseManager";
+import { SystemStatusPanel } from "../components/Admin/SystemStatusPanel";
+import { UserManagementPanel } from "../components/Admin/UserManagement";
+import { OnboardingWizard } from "../components/Admin/OnboardingWizard";
 import { ChatPanel } from "../components/ChatPanel";
 import { GamePanel } from "../components/GamePanel";
 import { BuildPanel } from "../components/BuildPanel";
@@ -32,9 +37,11 @@ import {
   runAgent,
   subscribeToEvents,
   updateTask,
+  fetchUpdateStatus,
   type AuthUser,
   type ServerEvent,
-  type Task
+  type Task,
+  type UpdateStatus
 } from "../lib/api";
 import heroImages from "../theme/heroImages";
 
@@ -51,6 +58,10 @@ type TabKey =
   | "logs"
   | "governance"
   | "controls"
+  | "env"
+  | "license"
+  | "system"
+  | "users"
   | "build"
   | "autocode"
   | "game"
@@ -73,6 +84,10 @@ const tabLabels: Record<TabKey, string> = {
   logs: "Logs",
   governance: "Governance",
   controls: "Controls",
+  env: "Environment Manager",
+  license: "License",
+  system: "System Status",
+  users: "Users",
   build: "Build",
   autocode: "AutoCode",
   game: "Game",
@@ -97,13 +112,24 @@ export default function Dashboard() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("overview");
+  const [updateDismissed, setUpdateDismissed] = useState(false);
   const canPublishQueue = useMemo(
     () =>
       Boolean(
-        currentUser?.teams?.some((team) => ["editor", "admin", "owner"].includes(team.role))
+        currentUser?.teams?.some((team) => ["developer", "admin", "owner"].includes(team.role))
       ),
     [currentUser]
   );
+  const isAdmin = useMemo(
+    () =>
+      Boolean(currentUser?.teams?.some((team) => ["admin", "owner"].includes(team.role))),
+    [currentUser]
+  );
+
+  const { data: updateStatus } = useSWR<UpdateStatus>("update-status", fetchUpdateStatus, {
+    revalidateOnFocus: false,
+    refreshInterval: 60000
+  });
 
   useEffect(() => {
     const subscription = subscribeToEvents((event) => {
@@ -178,6 +204,22 @@ export default function Dashboard() {
       </Head>
       <main className="min-h-screen bg-slate-950 pb-20">
         <header className="border-b border-slate-900/70 bg-slate-950/80 backdrop-blur">
+          {updateStatus?.updateAvailable && !updateDismissed && (
+            <div className="border-b border-amber-500/40 bg-amber-500/10">
+              <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-6 py-3 text-sm text-amber-200">
+                <span>
+                  A new Agent Builder release ({updateStatus.latestVersion}) is available. Current version: {updateStatus.currentVersion}.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setUpdateDismissed(true)}
+                  className="rounded-full border border-amber-500/60 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-amber-200 hover:bg-amber-500/10"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
           <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-12 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex w-full flex-col gap-4 lg:max-w-xl">
               <div className="flex items-center gap-3">
@@ -321,6 +363,14 @@ export default function Dashboard() {
           </section>
         )}
 
+        {activeTab === "env" && <EnvManager currentUser={currentUser} />}
+
+        {activeTab === "license" && <LicenseManager canManage={isAdmin} />}
+
+        {activeTab === "system" && <SystemStatusPanel canView={isAdmin} />}
+
+        {activeTab === "users" && <UserManagementPanel canManage={isAdmin} />}
+
         {activeTab === "marketplace" && (
           <section className="mx-auto mt-10 max-w-6xl space-y-6 px-6">
             <MarketplaceManager currentUser={currentUser} />
@@ -418,6 +468,7 @@ export default function Dashboard() {
 
         {activeTab === "player" && <PlayerPanel events={events} />}
       </main>
+      <OnboardingWizard onConfigured={() => window.location.reload()} />
     </>
   );
 }

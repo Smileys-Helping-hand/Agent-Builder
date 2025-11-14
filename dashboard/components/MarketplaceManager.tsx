@@ -32,7 +32,9 @@ export const MarketplaceManager = ({ currentUser }: MarketplaceManagerProps) => 
       const { catalog: available } = await fetchMarketplaceCatalog();
       setCatalog(available);
 
-      const canViewRequests = currentUser.teams.some((team) => team.role === "editor" || team.role === "admin" || team.role === "owner");
+      const canViewRequests = currentUser.teams.some((team) =>
+        ["developer", "admin", "owner"].includes(team.role)
+      );
       if (canViewRequests) {
         const { requests: existing } = await fetchMarketplaceRequests();
         setRequests(existing);

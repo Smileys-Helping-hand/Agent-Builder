@@ -75,13 +75,24 @@ export type FeedbackEntry = {
 export type TeamRole = {
   teamId: string;
   teamName: string;
-  role: "owner" | "admin" | "editor" | "viewer";
+  role: "owner" | "admin" | "developer" | "viewer";
 };
 
 export type AuthUser = {
   id: string;
   email: string;
+  role: TeamRole["role"];
   teams: TeamRole[];
+  status?: string;
+  lastLoginAt?: string | null;
+  createdAt?: string;
+};
+
+export type AuthSessionResponse = {
+  token: string;
+  accessToken?: string;
+  refreshToken?: string;
+  user: AuthUser;
 };
 
 export type AnalyticsSummary = {
@@ -167,6 +178,62 @@ export type BuildJob = {
   updatedAt: string;
   outputDir?: string;
   metadata?: Record<string, unknown>;
+};
+
+export type LicenseSnapshot = {
+  id: number;
+  key: string;
+  tier: "free" | "pro" | "enterprise";
+  activated_at: string;
+  metadata: Record<string, unknown> | null;
+};
+
+export type OnboardingStatus = {
+  configured: boolean;
+  workspaceName?: string;
+  adminEmail?: string;
+  aiProvider?: string;
+  tier?: string;
+};
+
+export type SystemStatus = {
+  system: {
+    cpuLoad: number;
+    platform: string;
+    release: string;
+    uptimeSeconds: number;
+    totalMem: number;
+    freeMem: number;
+    memoryUsage: Record<string, number>;
+    queue: QueueMetrics;
+    serverStartedAt: string;
+  };
+  builds: BuildJob[];
+};
+
+export type AdminUserRecord = {
+  id: number;
+  email: string;
+  role: string;
+  createdAt: string;
+  status?: string;
+  lastLoginAt?: string | null;
+};
+
+export type AuditLogEntry = {
+  id: number;
+  eventType: string;
+  actorId: number | null;
+  actorEmail: string | null;
+  message: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+};
+
+export type UpdateStatus = {
+  currentVersion: string;
+  latestVersion: string;
+  updateAvailable: boolean;
 };
 
 export type RobloxTemplate = {
@@ -544,12 +611,47 @@ export type ServerEvent =
   | { type: "simulation"; payload: SimulationEvent };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+const ACCESS_TOKEN_KEY = "agent-builder-token";
+const REFRESH_TOKEN_KEY = "agent-builder-refresh";
 
 const getToken = () => {
   if (typeof window === "undefined") {
     return null;
   }
-  return window.localStorage.getItem("agent-builder-token");
+  return window.localStorage.getItem(ACCESS_TOKEN_KEY);
+};
+
+const getRefreshToken = () => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  return window.localStorage.getItem(REFRESH_TOKEN_KEY);
+};
+
+export const ACCESS_TOKEN_STORAGE_KEY = ACCESS_TOKEN_KEY;
+export const REFRESH_TOKEN_STORAGE_KEY = REFRESH_TOKEN_KEY;
+
+export const getStoredAccessToken = () => getToken();
+export const getStoredRefreshToken = () => getRefreshToken();
+
+export const persistSessionTokens = (tokens: { accessToken: string; refreshToken?: string | null }) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(ACCESS_TOKEN_KEY, tokens.accessToken);
+  if (tokens.refreshToken) {
+    window.localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refreshToken);
+  } else {
+    window.localStorage.removeItem(REFRESH_TOKEN_KEY);
+  }
+};
+
+export const clearSessionTokens = () => {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.removeItem(ACCESS_TOKEN_KEY);
+  window.localStorage.removeItem(REFRESH_TOKEN_KEY);
 };
 
 const jsonFetcher = async <T>(path: string, init: RequestInit = {}, auth = false): Promise<T> => {
@@ -570,7 +672,65 @@ const jsonFetcher = async <T>(path: string, init: RequestInit = {}, auth = false
     headers
   });
 
+  const refreshAndRetry = async (): Promise<T | null> => {
+    const refreshToken = getRefreshToken();
+    if (!refreshToken) {
+      return null;
+    }
+
+    const refreshResponse = await fetch(`${API_BASE}/api/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refreshToken })
+    });
+
+    if (!refreshResponse.ok) {
+      clearSessionTokens();
+      return null;
+    }
+
+    const refreshPayload = (await refreshResponse.json()) as {
+      token?: string;
+      accessToken?: string;
+      refreshToken?: string;
+    };
+
+    const nextAccessToken = refreshPayload.accessToken ?? refreshPayload.token;
+    if (!nextAccessToken) {
+      clearSessionTokens();
+      return null;
+    }
+
+    persistSessionTokens({
+      accessToken: nextAccessToken,
+      refreshToken: refreshPayload.refreshToken ?? refreshToken
+    });
+
+    headers.Authorization = `Bearer ${nextAccessToken}`;
+
+    const retryResponse = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers
+    });
+
+    if (!retryResponse.ok) {
+      return null;
+    }
+
+    if (retryResponse.status === 204) {
+      return {} as T;
+    }
+
+    return (await retryResponse.json()) as T;
+  };
+
   if (!response.ok) {
+    if (response.status === 401 && auth) {
+      const retried = await refreshAndRetry();
+      if (retried !== null) {
+        return retried;
+      }
+    }
     const message = await response.text();
     throw new Error(message || `API request failed with status ${response.status}`);
   }
@@ -628,18 +788,42 @@ export const fetchFeedback = (processed?: boolean) =>
   );
 
 export const registerUser = (email: string, password: string) =>
-  jsonFetcher<{ token: string; user: AuthUser }>("/api/auth/register", {
+  jsonFetcher<AuthSessionResponse>("/api/auth/register", {
     method: "POST",
     body: JSON.stringify({ email, password })
   });
 
 export const loginUser = (email: string, password: string) =>
-  jsonFetcher<{ token: string; user: AuthUser }>("/api/auth/login", {
+  jsonFetcher<AuthSessionResponse>("/api/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password })
   });
 
+export const logoutSession = (payload: { refreshToken?: string; allSessions?: boolean } = {}) =>
+  jsonFetcher<{ ok: boolean }>(
+    "/api/auth/logout",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    },
+    true
+  );
+
 export const fetchCurrentUser = () => jsonFetcher<{ user: AuthUser }>("/api/auth/me", {}, true);
+
+export const fetchEnvironmentConfig = () =>
+  jsonFetcher<{ env: Record<string, string> }>("/api/env", {}, true);
+
+export const updateEnvironmentConfig = (env: Record<string, string>) =>
+  jsonFetcher<{ ok: boolean; env: Record<string, string> }>(
+    "/api/env",
+    {
+      method: "POST",
+      body: JSON.stringify(env)
+    },
+    true
+  );
 
 export const fetchMarketplaceCatalog = () =>
   jsonFetcher<{ catalog: MarketplacePlugin[] }>("/api/marketplace/catalog", {}, true);
@@ -1063,6 +1247,71 @@ export const createGlobalGoal = (payload: { type?: string; catalyst?: string }) 
     },
     true
   );
+
+export const fetchUpdateStatus = () => jsonFetcher<UpdateStatus>("/api/update/check");
+
+export const fetchOnboardingStatus = () => jsonFetcher<OnboardingStatus>("/api/onboarding/status");
+
+export const completeOnboardingSetup = (payload: {
+  workspaceName: string;
+  adminEmail: string;
+  adminPassword: string;
+  aiProvider: string;
+  providerKey?: string;
+}) =>
+  jsonFetcher<{ ok: boolean }>(
+    "/api/onboarding/complete",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }
+  );
+
+export const fetchLicenseStatus = () =>
+  jsonFetcher<{ license: LicenseSnapshot | null }>("/api/license/status", {}, true);
+
+export const activateLicense = (payload: { key: string; tier: LicenseSnapshot["tier"]; metadata?: Record<string, unknown> }) =>
+  jsonFetcher<{ license: LicenseSnapshot | null }>(
+    "/api/license/activate",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    },
+    true
+  );
+
+export const fetchSystemStatus = () => jsonFetcher<SystemStatus>("/api/admin/system-status", {}, true);
+
+export const fetchAdminUsers = () => jsonFetcher<{ users: AdminUserRecord[] }>("/api/admin/users", {}, true);
+
+export const inviteUserAccount = (payload: { email: string; role: string }) =>
+  jsonFetcher<{ ok: boolean; temporaryPassword: string }>(
+    "/api/admin/users",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    },
+    true
+  );
+
+export const fetchAuditLog = (options: { limit?: number; eventType?: string } = {}) => {
+  const params = new URLSearchParams();
+  if (options.limit) {
+    params.set("limit", String(options.limit));
+  }
+  if (options.eventType) {
+    params.set("eventType", options.eventType);
+  }
+  const query = params.toString();
+  return jsonFetcher<{ entries: AuditLogEntry[] }>(
+    `/api/admin/audit-log${query ? `?${query}` : ""}`,
+    {},
+    true
+  );
+};
 
 type ServerToClientEvents = {
   event: (payload: ServerEvent) => void;
