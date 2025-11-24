@@ -5,6 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx src/index.ts",
+    "dev:server": "tsx src/server/server.ts",
+    "dev:all": "concurrently \"npm run dev:server\" \"npm --prefix dashboard run dev\"",
     "build": "npm run build:server && npm run build:dashboard",
     "build:server": "tsc && node esbuild.config.js",
     "build:dashboard": "npm --prefix dashboard run build",
@@ -68,5 +70,7 @@
     "ts-node": "^10.9.1",
     "tsx": "^4.15.7",
     "typescript": "^5.6.3"
+    ,
+    "concurrently": "^8.2.0"
   }
 }
