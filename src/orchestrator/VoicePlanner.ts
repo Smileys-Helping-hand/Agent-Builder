@@ -13,29 +13,54 @@ const DEFAULT_PLAN: Record<BuildMode, BuildPlan> = {
       { id: "deploy", title: "Prepare Deployment", detail: "Bundle artifacts and update deployment instructions.", agent: "OpsAgent" }
     ]
   },
-  game: {
-    overview: "Generate Roblox experience assets, NPCs, and sync with Studio.",
+  api: {
+    overview: "Design and ship a production-grade API with docs and tests.",
     steps: [
-      { id: "concept", title: "Outline Game Concept", detail: "Describe mechanics, goals, and player flow.", agent: "StoryAgent" },
-      { id: "world", title: "Generate World", detail: "Create terrain, assets, and lighting presets.", agent: "RobloxAgent" },
-      { id: "npcs", title: "Add NPC Logic", detail: "Produce NPC behaviours and quests.", agent: "NpcAgent" },
-      { id: "sync", title: "Sync to Studio", detail: "Push assets via Roblox Bridge and confirm playtest readiness.", agent: "RobloxAgent" }
+      { id: "design", title: "Design API", detail: "Outline endpoints, auth, and data contracts.", agent: "UXAgent" },
+      { id: "implement", title: "Implement Services", detail: "Build controllers, services, and data models.", agent: "BuilderAgent" },
+      { id: "docs", title: "Document", detail: "Generate OpenAPI specs and usage examples.", agent: "BuilderAgent" },
+      { id: "qa", title: "Validate", detail: "Run integration tests and linting.", agent: "QAAgent" }
     ]
   },
-  simulation: {
-    overview: "Configure StoryWorld simulation parameters and kick off live ticks.",
+  fullstack: {
+    overview: "Create a full-stack experience with UI, API, and persistence.",
     steps: [
-      { id: "timeline", title: "Extend Timeline", detail: "Update lore, quests, and memory context.", agent: "StoryOrchestrator" },
-      { id: "actors", title: "Configure Actors", detail: "Spawn or update NPCs, factions, and AI players.", agent: "StoryOrchestrator" },
-      { id: "run", title: "Advance Simulation", detail: "Trigger world ticks and capture notable events.", agent: "WorldSimulator" }
+      { id: "plan", title: "Plan Architecture", detail: "Define routes, screens, and data flow.", agent: "UXAgent" },
+      { id: "build", title: "Build Backend", detail: "Implement core services and database migrations.", agent: "BuilderAgent" },
+      { id: "ui", title: "Build UI", detail: "Create responsive pages and components.", agent: "BuilderAgent" },
+      { id: "qa", title: "Test", detail: "Execute unit and e2e tests.", agent: "QAAgent" }
     ]
   },
-  fusion: {
-    overview: "Blend application workflows with StoryWorld simulation hooks.",
+  automation: {
+    overview: "Automate workflows with schedulers, hooks, and clean logging.",
     steps: [
-      { id: "analyze", title: "Analyze Domains", detail: "Map overlaps between app features and simulation loops.", agent: "BuilderAgent" },
-      { id: "integrate", title: "Wire Integration", detail: "Connect APIs or UI to simulation events.", agent: "MergeEngine" },
-      { id: "validate", title: "Validate Scenarios", detail: "Run combined tests ensuring both systems interoperate.", agent: "QAAgent" }
+      { id: "intake", title: "Gather Workflow", detail: "Capture triggers, inputs, and success criteria.", agent: "UXAgent" },
+      { id: "wire", title: "Connect APIs", detail: "Wire webhooks, schedulers, and third-party APIs.", agent: "BuilderAgent" },
+      { id: "observe", title: "Add Observability", detail: "Instrument logs and alerts for each step.", agent: "OpsAgent" }
+    ]
+  },
+  script: {
+    overview: "Generate a reusable script with flags, docs, and tests.",
+    steps: [
+      { id: "outline", title: "Outline", detail: "Describe CLI flags and behaviour.", agent: "UXAgent" },
+      { id: "implement", title: "Implement Script", detail: "Write the script with clear logging and errors.", agent: "BuilderAgent" },
+      { id: "validate", title: "Validate", detail: "Add smoke tests and usage notes.", agent: "QAAgent" }
+    ]
+  },
+  cli: {
+    overview: "Deliver a polished CLI with subcommands and help text.",
+    steps: [
+      { id: "design", title: "Design Commands", detail: "Map subcommands and options.", agent: "UXAgent" },
+      { id: "build", title: "Build CLI", detail: "Implement commands, parsing, and output.", agent: "BuilderAgent" },
+      { id: "docs", title: "Document", detail: "Write help text and usage examples.", agent: "BuilderAgent" }
+    ]
+  },
+  desktop: {
+    overview: "Create a desktop utility with native menus and updates.",
+    steps: [
+      { id: "plan", title: "Plan UI", detail: "Map windows, menus, and offline behaviour.", agent: "UXAgent" },
+      { id: "implement", title: "Implement", detail: "Create the desktop shell and core features.", agent: "BuilderAgent" },
+      { id: "ship", title: "Prepare Packaging", detail: "Bundle installers and update stubs.", agent: "OpsAgent" }
     ]
   }
 };

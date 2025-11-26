@@ -158,7 +158,7 @@ export function BuildPanel({ events }: BuildPanelProps) {
           />
           <header className="mt-6 flex flex-wrap items-center justify-between gap-3">
             <p className="max-w-xl text-sm text-slate-400">
-              Coordinate Builder, QA, Ops, and Roblox agents from a single launch command. Voice requests flow through the Build Engine for end-to-end automation.
+              Coordinate Builder, QA, and Ops agents from a single launch command. Voice requests flow through the Build Engine for end-to-end automation.
             </p>
             <span className="text-xs uppercase tracking-wide text-slate-500">{isValidating ? "Refreshing…" : "Live"}</span>
           </header>
@@ -356,7 +356,10 @@ export function BuildPanel({ events }: BuildPanelProps) {
           <p className="text-xs uppercase tracking-wide text-slate-500">Live Events</p>
           <ul className="mt-2 space-y-2 text-[11px] text-slate-300">
             {events
-              .filter((event): event is { type: "build"; payload: { job: BuildJob } } => event.type === "build")
+              .filter(
+                (event): event is { type: "build"; payload: { job: BuildJob } } =>
+                  event.type === "build" && Boolean((event.payload as any)?.job)
+              )
               .slice(0, 6)
               .map((event, index) => (
                 <li key={index} className="rounded border border-slate-800 bg-slate-900/60 p-2">

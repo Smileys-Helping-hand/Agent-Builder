@@ -4,8 +4,3 @@ export * from "./UXAgent.js";
 export * from "./OpsAgent.js";
 export * from "./QAAgent.js";
 export * from "./PluginRegistry.js";
-export * from "./RobloxAgent.js";
-export * from "./NpcAgent.js";
-export * from "./QuestAgent.js";
-export * from "./CognitiveNpcAgent.js";
-export * from "./PlayerAgent.js";

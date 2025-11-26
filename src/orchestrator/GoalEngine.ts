@@ -94,7 +94,7 @@ export class GoalEngine {
     const id = uuidv4();
     const createdAt = new Date().toISOString();
     const context = typeof options.catalyst === "string" ? options.catalyst : options.catalyst?.name;
-    const directive = `Create a ${type} goal for a persistent Roblox storyworld. Catalyst: ${context ?? "emergent simulation"}. ` +
+    const directive = `Create a ${type} goal for an agent builder project. Catalyst: ${context ?? "automation focus"}. ` +
       "Return a short label and description under 60 words.";
 
     let label = `${type.toUpperCase()} Objective`;

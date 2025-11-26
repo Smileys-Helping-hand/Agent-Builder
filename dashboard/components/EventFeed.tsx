@@ -107,22 +107,20 @@ export const EventFeed = ({ events }: EventFeedProps) => {
           );
         }
 
-        if (event.type === "roblox_sync") {
-          const status = event.payload.status.toUpperCase();
-          const message = event.payload.message;
-          const accent = (() => {
-            if (event.payload.status === "error") return "border-rose-900 bg-rose-950/40 text-rose-200";
-            if (event.payload.status === "disconnected") return "border-slate-800 bg-slate-900/60 text-slate-200";
-            if (event.payload.status === "playtest") return "border-emerald-800 bg-emerald-950/40 text-emerald-100";
-            if (event.payload.status === "sync") return "border-emerald-800 bg-emerald-950/40 text-emerald-100";
-            return "border-sky-900 bg-sky-950/40 text-sky-100";
-          })();
+        if (event.type === "builder") {
+          const status = (event.payload.level as string)?.toUpperCase() ?? "INFO";
+          const message = (event.payload.message as string) ?? "";
           return (
-            <li key={`${event.payload.timestamp}-${index}`} className={`rounded-md border ${accent} p-3`}>
-              <p className="text-xs font-mono uppercase tracking-wide text-slate-300">Roblox Studio Bridge</p>
+            <li
+              key={`${event.payload.timestamp ?? index}`}
+              className="rounded-md border border-blue-900 bg-blue-950/40 p-3 text-blue-100"
+            >
+              <p className="text-xs font-mono uppercase tracking-wide">Builder</p>
               <p className="mt-1 text-sm">{message}</p>
-              {event.payload.path && <p className="text-xs text-slate-400">{event.payload.path}</p>}
-              <p className="text-[10px] uppercase tracking-wide text-slate-500">{status}</p>
+              {event.payload.details && (
+                <p className="text-xs text-blue-200">{JSON.stringify(event.payload.details)}</p>
+              )}
+              <p className="text-[10px] uppercase tracking-wide text-blue-300">{status}</p>
             </li>
           );
         }
@@ -150,7 +148,7 @@ export const EventFeed = ({ events }: EventFeedProps) => {
           );
         }
 
-        if (event.type === "build") {
+        if (event.type === "build" && (event.payload as any)?.job) {
           return (
             <li
               key={`${event.payload.job.id}-${index}`}

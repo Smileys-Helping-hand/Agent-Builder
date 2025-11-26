@@ -3,7 +3,7 @@ import { BuilderAgent } from "../agents/BuilderAgent.js";
 import { UXAgent } from "../agents/UXAgent.js";
 import { OpsAgent } from "../agents/OpsAgent.js";
 import { QAAgent } from "../agents/QAAgent.js";
-import { RobloxAgent } from "../agents/RobloxAgent.js";
+import { PackagerAgent } from "../agents/PackagerAgent.js";
 import { PluginRegistry } from "../agents/PluginRegistry.js";
 import { Logger } from "../utils/Logger.js";
 import { MemoryStore } from "../state/MemoryStore.js";
@@ -24,7 +24,7 @@ export class Orchestrator {
     new UXAgent(),
     new OpsAgent(),
     new QAAgent(),
-    new RobloxAgent(),
+    new PackagerAgent(),
     ...PluginRegistry.getAgents()
   ];
 
@@ -76,7 +76,32 @@ export class Orchestrator {
         if (task.startedAt) {
           task.durationMs = new Date(timestamp).getTime() - new Date(task.startedAt).getTime();
         }
+
         emitServerEvent({ type: "task", payload: { task: { ...task }, timestamp } });
+
+        if (task.agentType === "PackagerAgent") {
+          if (response.success && response.output?.downloadUrl) {
+            emitServerEvent({
+              type: "build",
+              payload: {
+                taskId: task.id,
+                downloadUrl: response.output.downloadUrl,
+                version: response.output.version,
+                artifacts: response.output.artifacts,
+                primaryArtifact: response.output.primaryArtifact,
+                notes: response.output.notes,
+                stage: "packager:complete",
+                timestamp
+              }
+            });
+          } else if (!response.success) {
+            emitServerEvent({
+              type: "build",
+              payload: { taskId: task.id, stage: "packager:error", error: response.error, timestamp }
+            });
+          }
+        }
+
         memory[task.id] = task;
         MemoryStore.save(memory);
         await VectorMemory.storeTask(task);
@@ -92,6 +117,12 @@ export class Orchestrator {
       onTaskFailure: async (task: Task, response: AgentResponse) => {
         Logger.warn(`Task ${task.id} (${task.agentType}) failed: ${response.error ?? "Unknown error"}`);
         const timestamp = new Date().toISOString();
+        if (task.agentType === "PackagerAgent") {
+          emitServerEvent({
+            type: "build",
+            payload: { taskId: task.id, stage: "packager:error", error: response.error, timestamp }
+          });
+        }
         await GovernanceStore.recordAudit({
           action: "task.failure",
           actor: task.agentType,
