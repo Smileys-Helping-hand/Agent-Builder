@@ -27,19 +27,28 @@ import { registerGovernanceRoutes } from "./governance.js";
 import { registerControlRoutes } from "./controls.js";
 import { registerChatRoutes } from "./chat.js";
 import { registerTrainingRoutes } from "./train.js";
-import { registerRobloxRoutes } from "./roblox.js";
-import { registerRobloxSyncRoutes } from "./robloxSync.js";
-import { registerCollaborationRoutes } from "./collaboration.js";
-import { registerRobloxDebugRoutes } from "./robloxDebug.js";
-import { registerStoryworldRoutes } from "./storyworld.js";
 import { registerBuildRoutes } from "./build.js";
+import { registerBuildDownloadRoutes } from "./buildDownload.js";
 import { envRouter } from "./envManager.js";
-import { WorldMemory } from "../state/WorldMemory.js";
 import { registerLicenseRoutes } from "./license.js";
 import { registerAdminRoutes } from "./admin.js";
 import { onboardingRouter } from "./onboarding.js";
 import { ConfigVault } from "../utils/ConfigVault.js";
 import { syncDynamicEnv } from "../utils/EnvLoader.js";
+import { registerBuilderRoutes } from "./builder/StartBuilder.js";
+import { BuilderStream } from "./builder/BuilderStream.js";
+import {
+  applySettingsToEnv,
+  getSettings,
+  runDiagnostics,
+  saveSettings,
+  validateSettingsLive
+} from "./settings/SettingsStore.js";
+import { errorHandler } from "./middleware/errorHandler.js";
+import { registerProcessRoutes } from "./system/ProcessManager.js";
+import { registerStatusRoutes } from "./system/statusRoutes.js";
+import { checkForUpdates } from "./updater/CheckForUpdates.js";
+import { applyUpdates } from "./updater/ApplyUpdates.js";
 
 const ADMIN_EMAIL = "mraaziqp@gmail.com";
 const ADMIN_PASSWORD = "admin123";
@@ -65,12 +74,17 @@ await initializeTelemetry();
 await PluginRegistry.initialize();
 await VectorMemory.init();
 await QueueService.getInstance();
-await WorldMemory.getInstance().init();
 ensureAdmin();
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+app.use(
+  cors({
+    origin: "*",
+    exposedHeaders: ["Content-Disposition", "Content-Length", "Last-Modified"]
+  })
+);
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true }));
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -120,15 +134,50 @@ registerGovernanceRoutes(app);
 registerControlRoutes(app);
 registerChatRoutes(app);
 registerTrainingRoutes(app);
-registerRobloxRoutes(app);
-registerRobloxSyncRoutes(app);
-registerRobloxDebugRoutes(app);
-registerCollaborationRoutes(app);
 registerBuildRoutes(app);
-registerStoryworldRoutes(app);
+registerBuildDownloadRoutes(app);
 registerLicenseRoutes(app);
 registerAdminRoutes(app);
 app.use("/api/env", authenticate, authorizeRoles(["admin", "owner"]), envRouter);
+registerBuilderRoutes(app);
+registerProcessRoutes(app);
+registerStatusRoutes(app);
+
+app.get("/api/settings", (_req: Request, res: Response) => {
+  res.json(getSettings());
+});
+
+app.post("/api/settings", (req: Request, res: Response) => {
+  try {
+    const updated = saveSettings(req.body ?? {});
+    res.json(updated);
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+});
+
+app.post("/api/settings/validate", async (req: Request, res: Response) => {
+  const settings = { ...getSettings(), ...(req.body ?? {}) };
+  const validation = await validateSettingsLive(settings);
+  res.json(validation);
+});
+
+app.post("/api/settings/diagnostics", async (_req: Request, res: Response) => {
+  const settings = getSettings();
+  const diagnostics = await runDiagnostics(settings);
+  res.json({ ok: true, diagnostics });
+});
+
+app.get("/api/system/check-updates", (_req: Request, res: Response) => {
+  res.json(checkForUpdates());
+});
+
+app.post("/api/system/apply-update", (_req: Request, res: Response) => {
+  res.json(applyUpdates());
+});
+
+applySettingsToEnv(getSettings());
+BuilderStream.getInstance();
 const healthMonitor = new HealthMonitor();
 registerHealthRoute(app, healthMonitor);
 
@@ -186,6 +235,8 @@ app.get("/api/feedback", authenticate, authorizeRoles(["viewer", "editor", "admi
 });
 
 const port = Number(process.env.PORT) || 4000;
+
+app.use(errorHandler);
 
 server.listen(port, () => {
   console.log(`Agent Builder API running on port ${port}`);

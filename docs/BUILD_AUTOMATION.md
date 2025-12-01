@@ -1,6 +1,6 @@
 # Build Automation & Unified Builder Mode
 
-The v12 release introduces the **BuildEngine**, a central orchestrator that coordinates Builder, QA, Ops, UX, Roblox, and StoryWorld agents from a single command. This guide explains how to launch builds, monitor progress, and integrate voice-driven planning.
+The v12 release introduces the **BuildEngine**, a central orchestrator that coordinates Builder, QA, Ops, and UX agents from a single command. This guide explains how to launch builds, monitor progress, and integrate voice-driven planning.
 
 ## Quick Start
 
@@ -8,7 +8,7 @@ The v12 release introduces the **BuildEngine**, a central orchestrator that coor
 2. Open the dashboard and switch to the **Build** tab.
 3. Describe your desired app, game, or hybrid experience. Example prompts:
    - `Create a SaaS billing dashboard with Stripe webhooks and admin metrics.`
-   - `Generate a Roblox obby with checkpoints, NPC helpers, and live Studio sync.`
+   - `Generate a production-ready web dashboard with auth and analytics.`
    - `Fusion mode: build a fitness tracker that mirrors player morale from the StoryWorld simulation.`
 4. Optionally provide repository paths (comma separated) to merge or reuse existing projects. Hustle Studio archives can be unpacked and pointed at the engine.
 5. Choose the autonomy tier:

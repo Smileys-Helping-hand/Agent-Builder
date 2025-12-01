@@ -57,6 +57,6 @@ The `AutoUpdater` service runs in-process and publishes `feedback` events on the
 Connect via Socket.IO (`subscribeToEvents` in `dashboard/lib/api.ts`). Payload types include:
 
 - `log`, `task`, `feedback`, `analytics`, `marketplace`, `container`, `queue`, `health`, `security`
-- `roblox_sync`, `collaboration`, `build`, `story`, `simulation`
+- `builder`, `collaboration`, `build`
 
 Use these events to power dashboards, CLI monitors, or external automation.

@@ -1,5 +1,10 @@
 node_modules/
 dist/
+release/
+.turbo/
+.vercel/
+.vscode/
+.idea/
 .env
 npm-debug.log*
 .DS_Store
@@ -9,4 +14,5 @@ dashboard/node_modules/
 dashboard/.env.local
 src-tauri/target/
 src-tauri/gen/
+electron/icon.png
 

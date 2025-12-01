@@ -12,10 +12,13 @@ export type VoiceFlowEvents = {
 };
 
 const MODE_KEYWORDS: Record<BuildMode, RegExp[]> = {
-  app: [/app/i, /dashboard/i, /frontend/i, /backend/i],
-  game: [/game/i, /roblox/i, /obby/i, /tycoon/i],
-  simulation: [/simulation/i, /storyworld/i, /narrative/i, /world/i],
-  fusion: [/fusion/i, /hybrid/i, /simulation app/i]
+  app: [/app/i, /dashboard/i, /frontend/i, /ui/i],
+  api: [/api/i, /backend/i, /service/i],
+  fullstack: [/full[- ]?stack/i, /end-to-end/i],
+  automation: [/automation/i, /workflow/i, /pipeline/i],
+  script: [/script/i, /utility/i, /helper/i],
+  cli: [/cli/i, /command[- ]?line/i, /terminal/i],
+  desktop: [/desktop/i, /electron/i, /native app/i]
 };
 
 const detectMode = (text: string): BuildMode => {

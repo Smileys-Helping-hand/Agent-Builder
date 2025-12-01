@@ -31,7 +31,8 @@ export class TaskPlanner {
       { agentType: "BuilderAgent", desc: "Generate and scaffold base code" },
       { agentType: "UXAgent", desc: "Design UI and visual components" },
       { agentType: "OpsAgent", desc: "Setup CI/CD and deployment pipeline" },
-      { agentType: "QAAgent", desc: "Run tests and validate logic" }
+      { agentType: "QAAgent", desc: "Run tests and validate logic" },
+      { agentType: "PackagerAgent", desc: "Package the build into desktop apps" }
     ];
 
     if (config.customPhases?.length) {
