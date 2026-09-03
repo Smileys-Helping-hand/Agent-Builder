@@ -32,7 +32,7 @@ export class RobloxBridge extends EventEmitter {
   private readonly watcher: FileWatcher | null;
   private readonly hub = CollaborationHub.getInstance();
   private readonly pendingPaths = new Set<string>();
-  private readonly enabled = String(process.env.ROBLOX_SYNC_ENABLED ?? "true").toLowerCase() === "true";
+  private readonly enabled = false; // Disabled - feature removed
   private readonly port = Number(process.env.ROBLOX_SYNC_PORT ?? DEFAULT_PORT);
   private readonly host = process.env.ROBLOX_SYNC_HOST ?? "127.0.0.1";
 
@@ -40,7 +40,7 @@ export class RobloxBridge extends EventEmitter {
     super();
 
     if (!this.enabled) {
-      Logger.log("RobloxBridge disabled via configuration");
+      Logger.log("RobloxBridge disabled - feature removed");
       this.watcher = null;
       return;
     }

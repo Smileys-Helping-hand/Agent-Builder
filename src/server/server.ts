@@ -28,37 +28,48 @@ import { registerControlRoutes } from "./controls.js";
 import { registerChatRoutes } from "./chat.js";
 import { registerTrainingRoutes } from "./train.js";
 import { registerRobloxRoutes } from "./roblox.js";
-import { registerRobloxSyncRoutes } from "./robloxSync.js";
+// import { registerRobloxSyncRoutes } from "./robloxSync.js";
 import { registerCollaborationRoutes } from "./collaboration.js";
-import { registerRobloxDebugRoutes } from "./robloxDebug.js";
+// import { registerRobloxDebugRoutes } from "./robloxDebug.js";
 import { registerStoryworldRoutes } from "./storyworld.js";
 import { registerBuildRoutes } from "./build.js";
 import { envRouter } from "./envManager.js";
+import { buildStudioRouter, initializeBuildStudio } from "./buildStudioRoutes.js";
 import { WorldMemory } from "../state/WorldMemory.js";
 import { registerLicenseRoutes } from "./license.js";
 import { registerAdminRoutes } from "./admin.js";
 import { onboardingRouter } from "./onboarding.js";
 import { ConfigVault } from "../utils/ConfigVault.js";
 import { syncDynamicEnv } from "../utils/EnvLoader.js";
+import { registerAutonomousRoutes } from "./autonomous.js";
 
-const ADMIN_EMAIL = "mraaziqp@gmail.com";
-const ADMIN_PASSWORD = "admin123";
+const ADMIN_EMAIL = "mraaziqp";
+const ADMIN_PASSWORD = "114477";
 
 const ensureAdmin = () => {
   const config = ConfigVault.load();
   const targetEmail = config?.adminEmail ?? ADMIN_EMAIL;
-  const targetRole = config?.adminRole ?? "admin";
-  const passwordHash = config?.passwordHash ?? Hash.make(ADMIN_PASSWORD);
+  const targetRole = config?.adminRole ?? "owner";
+  const passwordHash = Hash.make(ADMIN_PASSWORD);
 
   const existing = UserModel.findByEmail(targetEmail);
   if (!existing) {
     UserModel.create(targetEmail, passwordHash, targetRole);
-    console.log("Admin account created:", targetEmail);
-  } else if (config?.passwordHash && existing.password_hash !== config.passwordHash) {
-    UserModel.updateCredentials(existing.id, { passwordHash: config.passwordHash, role: targetRole });
-    console.log("Admin credentials refreshed from onboarding config for", targetEmail);
+    UserModel.create("mraaziqp@gmail.com", passwordHash, targetRole);
+    console.log("Super Admin accounts created:", targetEmail, "and mraaziqp@gmail.com");
+  } else {
+    UserModel.updateCredentials(existing.id, { passwordHash, role: targetRole });
+    const existingGmail = UserModel.findByEmail("mraaziqp@gmail.com");
+    if (!existingGmail) {
+      UserModel.create("mraaziqp@gmail.com", passwordHash, targetRole);
+    } else {
+      UserModel.updateCredentials(existingGmail.id, { passwordHash, role: targetRole });
+    }
+    console.log("Super Admin credentials updated for:", targetEmail);
   }
 };
+
+import { JarvisBridge } from "../integrations/JarvisBridge.js";
 
 syncDynamicEnv();
 await initializeTelemetry();
@@ -66,7 +77,9 @@ await PluginRegistry.initialize();
 await VectorMemory.init();
 await QueueService.getInstance();
 await WorldMemory.getInstance().init();
+initializeBuildStudio(process.cwd());
 ensureAdmin();
+JarvisBridge.getInstance().initialize().catch(() => {});
 
 const app = express();
 app.use(cors());
@@ -121,13 +134,15 @@ registerControlRoutes(app);
 registerChatRoutes(app);
 registerTrainingRoutes(app);
 registerRobloxRoutes(app);
-registerRobloxSyncRoutes(app);
-registerRobloxDebugRoutes(app);
+// registerRobloxSyncRoutes(app);
+// registerRobloxDebugRoutes(app);
 registerCollaborationRoutes(app);
 registerBuildRoutes(app);
 registerStoryworldRoutes(app);
 registerLicenseRoutes(app);
 registerAdminRoutes(app);
+registerAutonomousRoutes(app);
+app.use("/api/build-studio", buildStudioRouter);
 app.use("/api/env", authenticate, authorizeRoles(["admin", "owner"]), envRouter);
 const healthMonitor = new HealthMonitor();
 registerHealthRoute(app, healthMonitor);

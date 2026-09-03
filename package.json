@@ -15,11 +15,19 @@
     "package:win": "npm run bundle && node scripts/package/win.mjs",
     "package:mac": "npm run bundle && node scripts/package/mac.mjs",
     "package:linux": "npm run bundle && node scripts/package/linux.mjs",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "package": "npm run tauri:build",
     "start": "node dist/index.js",
     "cli": "tsx src/cli/index.ts",
     "dashboard": "npm --prefix dashboard run dev",
     "dashboard:build": "npm --prefix dashboard run build",
-    "verify": "npm run build"
+    "verify": "npm run build",
+    "build-studio": "tsx src/cli/buildStudio.ts",
+    "build-studio:start": "tsx src/cli/buildStudio.ts start",
+    "build-studio:list": "tsx src/cli/buildStudio.ts list",
+    "build-studio:test": "tsx src/cli/testBuildStudio.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
@@ -29,8 +37,9 @@
     "@opentelemetry/semantic-conventions": "^1.21.0",
     "amqplib": "^0.10.4",
     "bcrypt": "^5.1.1",
-    "better-sqlite3": "^9.4.5",
+    "better-sqlite3": "^13.0.3",
     "chokidar": "^3.6.0",
+    "commander": "^11.1.0",
     "cors": "^2.8.5",
     "diff": "^5.2.0",
     "dotenv": "^16.3.1",
@@ -53,6 +62,7 @@
   },
   "devDependencies": {
     "@rbxts/types": "^1.0.890",
+    "@tauri-apps/cli": "^1.5.9",
     "@types/amqplib": "^0.10.4",
     "@types/bcrypt": "^5.0.2",
     "@types/better-sqlite3": "^7.6.9",
@@ -66,12 +76,11 @@
     "@types/sqlite3": "^3.1.11",
     "@types/uuid": "^9.0.7",
     "@types/ws": "^8.18.1",
+    "concurrently": "^8.2.0",
     "esbuild": "^0.21.5",
     "pkg": "^5.8.1",
     "ts-node": "^10.9.1",
     "tsx": "^4.15.7",
     "typescript": "^5.6.3"
-    ,
-    "concurrently": "^8.2.0"
   }
 }

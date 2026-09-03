@@ -3,7 +3,16 @@
 A modular, autonomous multi-agent builder powered by OpenAI.
 It can generate, design, test, and deploy apps from a single prompt — now with a unified Build Engine, voice-driven planning, and continuous learning loops.
 
-## 🚀 Quick-Start
+## � Package as Desktop Application
+
+Want to install Agent Builder like a normal Windows application? See **[INSTALLATION.md](INSTALLATION.md)** for complete instructions on creating a Windows installer (.msi).
+
+**Quick start:**
+```powershell
+.\setup-and-build.ps1
+```
+
+## �🚀 Quick-Start
 
 Agent Builder Ultra is a local-first multi-agent development environment.
 It lets you design, build, and deploy complete applications through supervised AI orchestration — no cloud credits required.

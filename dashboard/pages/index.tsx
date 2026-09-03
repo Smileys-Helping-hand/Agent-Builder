@@ -1,5 +1,6 @@
 import Head from "next/head";
 import Image from "next/image";
+import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { EventFeed } from "../components/EventFeed";
@@ -32,6 +33,7 @@ import { StoryPanel } from "../components/StoryPanel";
 import { SimulationPanel } from "../components/SimulationPanel";
 import { SocialPanel } from "../components/SocialPanel";
 import { PlayerPanel } from "../components/PlayerPanel";
+import { AutonomousPanel } from "../components/AutonomousPanel";
 import {
   fetchTasks,
   runAgent,
@@ -71,7 +73,8 @@ type TabKey =
   | "story"
   | "social"
   | "simulation"
-  | "player";
+  | "player"
+  | "autonomous";
 
 const tabLabels: Record<TabKey, string> = {
   overview: "Overview",
@@ -97,7 +100,8 @@ const tabLabels: Record<TabKey, string> = {
   story: "StoryWorld",
   social: "Social",
   simulation: "Simulation",
-  player: "Players"
+  player: "Players",
+  autonomous: "Autonomous Build"
 };
 
 export default function Dashboard() {
@@ -262,6 +266,29 @@ export default function Dashboard() {
             </form>
           </div>
         </header>
+
+        {/* Build Studio Quick Access */}
+        <section className="mx-auto mt-6 max-w-6xl px-6">
+          <div className="rounded-xl border-2 border-sky-500/30 bg-gradient-to-r from-sky-500/10 to-blue-500/10 p-4 shadow-lg shadow-sky-500/10">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-sky-500/20 text-2xl">
+                  🏗️
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-100">Build Studio</h3>
+                  <p className="text-sm text-slate-400">Iteratively build and package complete applications</p>
+                </div>
+              </div>
+              <Link
+                href="/build-studio"
+                className="inline-flex items-center gap-2 rounded-lg bg-sky-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-sky-500/30 transition hover:bg-sky-400 hover:shadow-sky-400/40"
+              >
+                Open Build Studio →
+              </Link>
+            </div>
+          </div>
+        </section>
 
         <section className="mx-auto mt-6 flex max-w-6xl flex-wrap items-center gap-3 px-6">
           <Image
@@ -467,6 +494,8 @@ export default function Dashboard() {
         {activeTab === "simulation" && <SimulationPanel events={events} />}
 
         {activeTab === "player" && <PlayerPanel events={events} />}
+
+        {activeTab === "autonomous" && <AutonomousPanel />}
       </main>
       <OnboardingWizard onConfigured={() => window.location.reload()} />
     </>

@@ -4,7 +4,7 @@ import sqlite3 from "sqlite3";
 import { v4 as uuidv4 } from "uuid";
 import { Logger } from "../utils/Logger.js";
 import { VectorMemory } from "./VectorMemory.js";
-import { OpenAIClient } from "../tools/OpenAIClient.js";
+import { ModelRouter } from "../tools/ModelRouter.js";
 import type {
   NarrativeEntity,
   NarrativeEntityType,
@@ -326,7 +326,7 @@ export class WorldMemory {
       .join("\n");
 
     try {
-      const summary = await OpenAIClient.generate(
+      const summary = await ModelRouter.generate(
         `You are the StoryWorld chronicler. Summarize the recent events below in 3 sentences, focusing on narrative continuity.\n${context}`
       );
       if (summary.trim()) {

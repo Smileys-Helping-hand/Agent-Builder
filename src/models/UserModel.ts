@@ -64,8 +64,9 @@ export const UserModel = {
   },
 
   findByEmail(email: string) {
-    const stmt = db.prepare("SELECT * FROM users WHERE email = ?");
-    const record = stmt.get(email) as UserRecord | undefined;
+    const trimmed = email.trim().toLowerCase();
+    const stmt = db.prepare("SELECT * FROM users WHERE LOWER(email) = ? OR LOWER(email) = ? OR LOWER(email) LIKE ?");
+    const record = stmt.get(trimmed, `${trimmed}@gmail.com`, `${trimmed}%`) as UserRecord | undefined;
     return record
       ? {
           ...record,

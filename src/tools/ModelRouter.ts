@@ -8,16 +8,16 @@ type GenerateOptions = {
 };
 
 const getProviderFromEnv = (): ModelProvider => {
-  const provider = (process.env.MODEL_PROVIDER ?? "openai").toLowerCase();
+  const provider = (process.env.MODEL_PROVIDER ?? process.env.AI_PROVIDER ?? process.env.LLM_PROVIDER ?? "ollama").toLowerCase();
   if (provider === "ollama" || provider === "lmstudio" || provider === "openai") {
     return provider;
   }
-  return "openai";
+  return "ollama";
 };
 
 const generateWithOllama = async (prompt: string, model?: string): Promise<string> => {
-  const baseUrl = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
-  const targetModel = model ?? process.env.OLLAMA_MODEL ?? "llama3";
+  const baseUrl = process.env.OLLAMA_BASE_URL ?? process.env.OLLAMA_URL ?? "http://localhost:11434";
+  const targetModel = model ?? process.env.OLLAMA_MODEL ?? process.env.MODEL ?? "qwen2.5-coder:7b";
   const response = await fetch(`${baseUrl}/api/generate`, {
     method: "POST",
     headers: {
