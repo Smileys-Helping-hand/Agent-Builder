@@ -46,7 +46,9 @@ export const registerAutonomousRoutes = (app: Express) => {
           maxIterations: config.maxIterations || 100,
           enableContinuousLearning: config.enableContinuousLearning !== false,
           hardwareOptimization: config.hardwareOptimization !== false,
-          autoPackaging: config.autoPackaging !== false
+          autoPackaging: config.autoPackaging !== false,
+          profile: config.profile,
+          maxRepairAttempts: config.maxRepairAttempts
         };
 
         const orchestrator = new AutonomousOrchestrator(fullConfig);

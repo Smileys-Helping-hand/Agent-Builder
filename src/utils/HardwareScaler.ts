@@ -1,7 +1,10 @@
 import * as os from "os";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { Logger } from "../utils/Logger.js";
 
 const logger = new Logger();
+const execFileAsync = promisify(execFile);
 
 export interface HardwareSpecs {
   cpuCores: number;
@@ -11,6 +14,9 @@ export interface HardwareSpecs {
   arch: string;
   optimalConcurrency: number;
   recommendedModelSize: string;
+  /** GPU VRAM in MB, when detectable (currently: NVIDIA via nvidia-smi only). */
+  vramMB: number | null;
+  vramSource: "nvidia-smi" | "undetected";
 }
 
 export class HardwareScaler {
@@ -21,7 +27,9 @@ export class HardwareScaler {
   }
 
   /**
-   * Detect system hardware capabilities
+   * Detect system hardware capabilities. VRAM detection needs a subprocess
+   * call, so it happens lazily in optimize() — this constructor gives a
+   * RAM-based baseline that's corrected once VRAM is known.
    */
   private detectHardware(): HardwareSpecs {
     const cpuCores = os.cpus().length;
@@ -33,20 +41,6 @@ export class HardwareScaler {
     // Calculate optimal concurrency (leave some cores for system)
     const optimalConcurrency = Math.max(1, Math.floor(cpuCores * 0.75));
 
-    // Recommend model size based on available memory
-    const memoryGB = totalMemory / (1024 ** 3);
-    let recommendedModelSize: string;
-
-    if (memoryGB < 8) {
-      recommendedModelSize = "qwen2.5-coder:1.5b";  // Lightweight model
-    } else if (memoryGB < 16) {
-      recommendedModelSize = "qwen2.5-coder:7b";    // Fast 7B model
-    } else if (memoryGB < 32) {
-      recommendedModelSize = "qwen2.5-coder:7b";    // Optimal 7B model
-    } else {
-      recommendedModelSize = "qwen2.5-coder:7b";    // High performance 7B model
-    }
-
     return {
       cpuCores,
       totalMemory,
@@ -54,23 +48,88 @@ export class HardwareScaler {
       platform,
       arch,
       optimalConcurrency,
-      recommendedModelSize
+      recommendedModelSize: this.recommendModelForRam(totalMemory / (1024 ** 3)),
+      vramMB: null,
+      vramSource: "undetected"
     };
+  }
+
+  /**
+   * Fallback ladder for when VRAM can't be detected (no NVIDIA GPU, or
+   * nvidia-smi unavailable — AMD/Apple GPUs aren't probed yet). System RAM
+   * is a poor proxy for what a GPU-resident model needs, but it's better
+   * than nothing.
+   */
+  private recommendModelForRam(memoryGB: number): string {
+    if (memoryGB < 8) return "qwen2.5-coder:1.5b";
+    if (memoryGB < 16) return "qwen2.5-coder:3b";
+    return "qwen2.5-coder:7b";
+  }
+
+  /**
+   * VRAM-aware ladder, quantization made explicit (Q4_K_M throughout —
+   * Ollama's default pull). Weight sizes are what actually decide whether a
+   * model is GPU-resident; system RAM barely matters for inference speed.
+   */
+  private recommendModelForVram(vramMB: number): string {
+    const vramGB = vramMB / 1024;
+    if (vramGB < 4) return "qwen2.5-coder:1.5b";  // ~1.0GB weights
+    if (vramGB < 6) return "qwen2.5-coder:3b";    // ~2.0GB weights
+    if (vramGB < 10) return "qwen2.5-coder:7b";   // ~4.7GB weights — fits an 8GB card with room for context
+    if (vramGB < 20) return "qwen2.5-coder:14b";  // ~9GB weights — spills below ~10GB, fits 20GB+ cleanly
+    return "qwen2.5-coder:32b";                    // ~20GB weights
+  }
+
+  /**
+   * Query VRAM via nvidia-smi. Returns null (not 0) when no NVIDIA GPU is
+   * present or nvidia-smi isn't on PATH — callers should fall back to the
+   * RAM-based ladder rather than treat null as "no VRAM".
+   */
+  private async detectVramMB(): Promise<number | null> {
+    try {
+      const { stdout } = await execFileAsync(
+        "nvidia-smi",
+        ["--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+        { timeout: 5000 }
+      );
+      const firstLine = stdout.split("\n").map((line) => line.trim()).find(Boolean);
+      const mb = firstLine ? Number(firstLine) : NaN;
+      return Number.isFinite(mb) && mb > 0 ? mb : null;
+    } catch {
+      return null;
+    }
   }
 
   /**
    * Optimize system for current hardware
    */
   async optimize(): Promise<void> {
+    const vramMB = await this.detectVramMB();
+    if (vramMB !== null) {
+      this.specs.vramMB = vramMB;
+      this.specs.vramSource = "nvidia-smi";
+      this.specs.recommendedModelSize = this.recommendModelForVram(vramMB);
+      Logger.log("Detected GPU VRAM", { vramMB, recommendedModel: this.specs.recommendedModelSize });
+    } else {
+      Logger.log("No NVIDIA GPU detected via nvidia-smi; using system-RAM-based model recommendation", {
+        recommendedModel: this.specs.recommendedModelSize
+      });
+    }
+
     Logger.log("Optimizing for hardware", {
       cores: this.specs.cpuCores,
       memoryGB: (this.specs.totalMemory / (1024 ** 3)).toFixed(2),
+      vramMB: this.specs.vramMB,
       recommendedModel: this.specs.recommendedModelSize
     });
 
-    // Set environment variables for optimization
+    // UV_THREADPOOL_SIZE is read lazily by libuv and can still take effect if
+    // set before the threadpool's first use. NODE_OPTIONS' --max-old-space-size
+    // is read once by V8 at process start — setting it here has no effect on
+    // this already-running process (it would only apply to a future child
+    // `node` process that inherits this env var), so it's deliberately not
+    // set here rather than left in as something that looks like it works.
     process.env.UV_THREADPOOL_SIZE = String(this.specs.optimalConcurrency * 2);
-    process.env.NODE_OPTIONS = `--max-old-space-size=${Math.floor(this.specs.totalMemory / (1024 ** 2) * 0.75)}`;
 
     // Update Ollama model if needed
     if (process.env.MODEL_PROVIDER === "ollama") {
@@ -94,6 +153,8 @@ export class HardwareScaler {
       cpuCores: this.specs.cpuCores,
       totalMemoryGB: this.specs.totalMemory / (1024 ** 3),
       availableMemoryGB: this.specs.freeMemory / (1024 ** 3),
+      vramGB: this.specs.vramMB !== null ? this.specs.vramMB / 1024 : null,
+      vramSource: this.specs.vramSource,
       canParallelize: this.specs.cpuCores > 1,
       recommendedWorkers: this.specs.optimalConcurrency,
       platform: this.specs.platform,
