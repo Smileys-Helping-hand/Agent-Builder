@@ -6,14 +6,16 @@ import { ImprovementEngine, type ImprovementPlan, type ImprovementSuggestion } f
 import { HardwareScaler } from "../utils/HardwareScaler.js";
 import { PackagingAgent } from "../agents/PackagingAgent.js";
 import { Workspace } from "./Workspace.js";
+import { Verifier, type VerificationReport } from "./Verifier.js";
 
 export interface BuildIteration {
   iteration: number;
   timestamp: Date;
   qualityScore: number;
+  objectiveScore: number;
   improvements: string[];
   artifacts: string[];
-  status: "running" | "analyzing" | "improving" | "packaging" | "complete" | "error";
+  status: "running" | "verifying" | "repairing" | "analyzing" | "improving" | "packaging" | "complete" | "error";
   metrics: {
     completeness: number;
     security: number;
@@ -21,6 +23,7 @@ export interface BuildIteration {
     usability: number;
     testCoverage: number;
   };
+  verification?: VerificationReport;
 }
 
 export interface AutonomousConfig {
@@ -32,6 +35,8 @@ export interface AutonomousConfig {
   enableContinuousLearning: boolean;
   hardwareOptimization: boolean;
   autoPackaging: boolean;
+  /** Bounded repair attempts per iteration when an objective check fails. Default 3. */
+  maxRepairAttempts?: number;
 }
 
 export class AutonomousOrchestrator extends EventEmitter {
@@ -47,6 +52,10 @@ export class AutonomousOrchestrator extends EventEmitter {
   private hardwareScaler: HardwareScaler;
   private packagingAgent: PackagingAgent;
   private workspace: Workspace;
+
+  // Ratchet: never let the workspace end an iteration worse than its best-known state.
+  private bestObjectiveScore: number = -1;
+  private bestCommitHash?: string;
 
   constructor(private config: AutonomousConfig) {
     super();
@@ -155,6 +164,7 @@ export class AutonomousOrchestrator extends EventEmitter {
       iteration: iterationNum,
       timestamp: new Date(),
       qualityScore: 0,
+      objectiveScore: 0,
       improvements: [],
       artifacts: [],
       status: "running",
@@ -187,7 +197,52 @@ export class AutonomousOrchestrator extends EventEmitter {
         commit: generateWrite.commitHash
       });
 
-      // Phase 2: Analyze Quality
+      // Phase 1.5: Verify objectively — install, typecheck, build, test, lint.
+      // Facts, not model opinion. This is the gate; QualityAnalyzer below is advisory.
+      iteration.status = "verifying";
+      this.emit("iteration-status", { iteration: iterationNum, status: "verifying" });
+
+      let verification = await Verifier.verify(this.workspace);
+      const maxRepairAttempts = this.config.maxRepairAttempts ?? 3;
+      let repairAttempt = 0;
+
+      while (!verification.passed && repairAttempt < maxRepairAttempts) {
+        repairAttempt += 1;
+        iteration.status = "repairing";
+        this.emit("iteration-status", { iteration: iterationNum, status: "repairing", attempt: repairAttempt });
+
+        Logger.log(`Iteration ${iterationNum}: repair attempt ${repairAttempt}/${maxRepairAttempts}`, {
+          failingCheck: verification.blockingCheck?.name
+        });
+
+        const repaired = await this.repairFiles(currentFiles, verification, iterationNum, repairAttempt);
+        if (!repaired) {
+          Logger.warn(`Iteration ${iterationNum}: repair attempt ${repairAttempt} produced no usable patch, stopping repair`);
+          break;
+        }
+
+        currentFiles = repaired;
+        const repairWrite = await this.workspace.writeFiles(
+          currentFiles,
+          `Iteration ${iterationNum}: repair attempt ${repairAttempt} (${verification.blockingCheck?.name ?? "unknown"})`
+        );
+        Logger.log(`Iteration ${iterationNum}: repair wrote ${repairWrite.writtenPaths.length} file(s)`, {
+          commit: repairWrite.commitHash
+        });
+
+        verification = await Verifier.verify(this.workspace);
+      }
+
+      iteration.verification = verification;
+      iteration.objectiveScore = verification.score;
+
+      Logger.log(`Iteration ${iterationNum} objective score: ${verification.score}`, {
+        passed: verification.passed,
+        checks: verification.checks.map((c) => ({ name: c.name, applicable: c.applicable, passed: c.passed }))
+      });
+
+      // Phase 2: Advisory quality read — heuristics + model opinion. Informs the
+      // improvement step below; does not gate anything.
       iteration.status = "analyzing";
       this.emit("iteration-status", { iteration: iterationNum, status: "analyzing" });
 
@@ -198,11 +253,7 @@ export class AutonomousOrchestrator extends EventEmitter {
       });
 
       iteration.metrics = analysis.metrics;
-      iteration.qualityScore = analysis.overallScore;
-
-      Logger.log(`Iteration ${iterationNum} quality score: ${iteration.qualityScore}`, {
-        metrics: iteration.metrics
-      });
+      iteration.qualityScore = verification.score;
 
       // Phase 3: Generate Improvements
       if (iteration.qualityScore < this.config.qualityThreshold) {
@@ -220,6 +271,26 @@ export class AutonomousOrchestrator extends EventEmitter {
 
         // Apply improvements and persist the result — this used to be a no-op.
         currentFiles = await this.applyImprovements(improvements, currentFiles, iterationNum);
+
+        // Improvements can break something that was passing — re-verify before finalizing.
+        const postImprovementVerification = await Verifier.verify(this.workspace);
+        iteration.verification = postImprovementVerification;
+        iteration.objectiveScore = postImprovementVerification.score;
+        iteration.qualityScore = postImprovementVerification.score;
+      }
+
+      // Ratchet: never let the workspace end an iteration worse than its best-known state.
+      const headHash = await this.workspace.getHead();
+      if (iteration.qualityScore > this.bestObjectiveScore) {
+        this.bestObjectiveScore = iteration.qualityScore;
+        this.bestCommitHash = headHash;
+        Logger.log(`Iteration ${iterationNum}: new best objective score ${iteration.qualityScore}`, { commit: headHash });
+      } else if (this.bestCommitHash && iteration.qualityScore < this.bestObjectiveScore) {
+        Logger.log(
+          `Iteration ${iterationNum}: score ${iteration.qualityScore} regressed below best ${this.bestObjectiveScore}; resetting workspace to best commit`,
+          { commit: this.bestCommitHash }
+        );
+        await this.workspace.resetTo(this.bestCommitHash);
       }
 
       iteration.status = "complete";
@@ -229,6 +300,58 @@ export class AutonomousOrchestrator extends EventEmitter {
       iteration.status = "error";
       Logger.error(`Iteration ${iterationNum} failed`, { error: error.message });
       throw error;
+    }
+  }
+
+  /**
+   * Ask the model to fix exactly what a failing objective check reported —
+   * the exact error text, against the exact current files — rather than
+   * regenerating the whole project from scratch.
+   */
+  private async repairFiles(
+    files: Record<string, string>,
+    verification: VerificationReport,
+    iterationNum: number,
+    attempt: number
+  ): Promise<Record<string, string> | null> {
+    const failing = verification.blockingCheck;
+    if (!failing) return null;
+
+    const MAX_FILE_CHARS = 4000;
+    const fileListing = Object.entries(files)
+      .map(([filePath, content]) => {
+        const body = content.length > MAX_FILE_CHARS ? `${content.slice(0, MAX_FILE_CHARS)}\n…(truncated)` : content;
+        return `FILE: ${filePath}\n\`\`\`\n${body}\n\`\`\``;
+      })
+      .join("\n\n");
+
+    const prompt = `You are repairing a generated application that failed an automated check.
+
+Project: ${this.config.projectName}
+Description: ${this.config.description}
+
+Failing check: ${failing.name}
+Error output:
+${failing.output}
+
+Current files:
+${fileListing}
+
+Fix the problem. Return ONLY the corrected file(s) as FILE: blocks, in the same
+format as the files above. Only include files you are changing — omit anything
+unchanged. Do not explain the fix in prose.`;
+
+    try {
+      const response = await ModelRouter.generate(prompt);
+      const patched = this.parseGeneratedCode(response);
+      if (Object.keys(patched).length === 0) {
+        Logger.warn(`Iteration ${iterationNum} repair attempt ${attempt}: model returned no FILE blocks`);
+        return null;
+      }
+      return { ...files, ...patched };
+    } catch (error: any) {
+      Logger.error(`Iteration ${iterationNum} repair attempt ${attempt} failed`, { error: error.message });
+      return null;
     }
   }
 

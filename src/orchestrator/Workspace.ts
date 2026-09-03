@@ -102,6 +102,24 @@ export class Workspace {
     return fs.readFile(this.resolveSafe(relPath), "utf8");
   }
 
+  /** Commit whatever is currently on disk (e.g. after out-of-band scaffolding writes). */
+  async commitCurrentState(message: string): Promise<string | undefined> {
+    await this.init();
+    return this.commitAll(message);
+  }
+
+  async getHead(): Promise<string | undefined> {
+    const result = await Executor.run("git", ["rev-parse", "HEAD"], { cwd: this.root });
+    return result.exitCode === 0 ? result.stdout.trim() : undefined;
+  }
+
+  /** Hard-reset this workspace to a prior commit, discarding anything after it. Scoped to this
+   * generated project's own throwaway directory — never the parent Agent-Builder repo. */
+  async resetTo(commitHash: string): Promise<void> {
+    await Executor.run("git", ["reset", "--hard", commitHash], { cwd: this.root });
+    await Executor.run("git", ["clean", "-fd"], { cwd: this.root });
+  }
+
   private async commitAll(message: string): Promise<string | undefined> {
     await Executor.run("git", ["add", "-A"], { cwd: this.root });
 

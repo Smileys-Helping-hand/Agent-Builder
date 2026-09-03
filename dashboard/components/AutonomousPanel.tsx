@@ -5,9 +5,10 @@ interface BuildIteration {
   iteration: number;
   timestamp: Date;
   qualityScore: number;
+  objectiveScore: number;
   improvements: string[];
   artifacts: string[];
-  status: "running" | "analyzing" | "improving" | "packaging" | "complete" | "error";
+  status: "running" | "verifying" | "repairing" | "analyzing" | "improving" | "packaging" | "complete" | "error";
   metrics: {
     completeness: number;
     security: number;
