@@ -2,6 +2,7 @@ import express, { Request, Response } from "express";
 import fs from "fs";
 import path from "path";
 import { AgentUpdater } from "../orchestrator/AgentUpdater.js";
+import { authenticate } from "./auth.js";
 
 const packageJson = JSON.parse(
   fs.readFileSync(path.resolve("package.json"), "utf8")
@@ -38,7 +39,7 @@ export const registerUpdateRoute = (app: express.Express) => {
     });
   });
 
-  app.post("/api/agent/update", async (req: Request, res: Response) => {
+  app.post("/api/agent/update", authenticate, async (req: Request, res: Response) => {
     const { taskId, instruction } = (req.body ?? {}) as {
       taskId?: string;
       instruction?: string;

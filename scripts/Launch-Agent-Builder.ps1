@@ -21,10 +21,9 @@ if (-not $ollamaListening) {
     Write-Host "      [OK] Ollama active on port 11434" -ForegroundColor Green
 }
 
-# Step 2: Ensure super admin credentials are initialized
-Write-Host "[2/4] Verifying Super Admin account..." -ForegroundColor Yellow
-npx tsx scripts/setupSuperAdmin.ts | Out-Null
-Write-Host "      [OK] Super Admin verified: mraaziqp" -ForegroundColor Green
+# Step 2: Owner account is created via the dashboard's onboarding screen on first
+# run (POST /api/onboarding/complete) — no credentials are provisioned here.
+Write-Host "[2/4] Skipping admin bootstrap (use onboarding on first run)" -ForegroundColor Yellow
 
 # Step 3: Check and start Agent Builder API + Dashboard
 Write-Host "[3/4] Starting Agent Builder Engine & Web UI..." -ForegroundColor Yellow
@@ -44,8 +43,8 @@ Write-Host "      [OK] Application online at $targetUrl" -ForegroundColor Green
 Write-Host ""
 Write-Host "====================================================" -ForegroundColor Cyan
 Write-Host "  Desktop App Ready!" -ForegroundColor Green
-Write-Host "  Username : mraaziqp" -ForegroundColor White
-Write-Host "  Password : (configured)" -ForegroundColor White
+Write-Host "  First run: complete onboarding in the browser window" -ForegroundColor White
+Write-Host "  to create your owner account." -ForegroundColor White
 Write-Host "====================================================" -ForegroundColor Cyan
 Write-Host ""
 

@@ -65,8 +65,8 @@ export const UserModel = {
 
   findByEmail(email: string) {
     const trimmed = email.trim().toLowerCase();
-    const stmt = db.prepare("SELECT * FROM users WHERE LOWER(email) = ? OR LOWER(email) = ? OR LOWER(email) LIKE ?");
-    const record = stmt.get(trimmed, `${trimmed}@gmail.com`, `${trimmed}%`) as UserRecord | undefined;
+    const stmt = db.prepare("SELECT * FROM users WHERE LOWER(email) = ?");
+    const record = stmt.get(trimmed) as UserRecord | undefined;
     return record
       ? {
           ...record,
@@ -92,6 +92,11 @@ export const UserModel = {
       ...record,
       role: normalizeRole(record.role)
     }));
+  },
+
+  count(): number {
+    const stmt = db.prepare("SELECT COUNT(*) as count FROM users");
+    return (stmt.get() as { count: number }).count;
   },
 
   updateCredentials(id: number, updates: { passwordHash?: string; role?: string }) {

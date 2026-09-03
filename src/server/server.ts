@@ -8,7 +8,7 @@ import { eventBus, emitServerEvent, type ServerEvent } from "./eventBus.js";
 import { MemoryStore } from "../state/MemoryStore.js";
 import { authenticate, authorizeRoles, registerAuthRoutes } from "./auth.js";
 import { UserModel } from "../models/UserModel.js";
-import { Hash } from "../utils/hash.js";
+import { JWT } from "../utils/jwt.js";
 import { PluginRegistry } from "../agents/PluginRegistry.js";
 import { VectorMemory } from "../state/VectorMemory.js";
 import { FineTuner } from "../orchestrator/FineTuner.js";
@@ -43,29 +43,12 @@ import { ConfigVault } from "../utils/ConfigVault.js";
 import { syncDynamicEnv } from "../utils/EnvLoader.js";
 import { registerAutonomousRoutes } from "./autonomous.js";
 
-const ADMIN_EMAIL = "mraaziqp";
-const ADMIN_PASSWORD = "114477";
-
-const ensureAdmin = () => {
-  const config = ConfigVault.load();
-  const targetEmail = config?.adminEmail ?? ADMIN_EMAIL;
-  const targetRole = config?.adminRole ?? "owner";
-  const passwordHash = Hash.make(ADMIN_PASSWORD);
-
-  const existing = UserModel.findByEmail(targetEmail);
-  if (!existing) {
-    UserModel.create(targetEmail, passwordHash, targetRole);
-    UserModel.create("mraaziqp@gmail.com", passwordHash, targetRole);
-    console.log("Super Admin accounts created:", targetEmail, "and mraaziqp@gmail.com");
-  } else {
-    UserModel.updateCredentials(existing.id, { passwordHash, role: targetRole });
-    const existingGmail = UserModel.findByEmail("mraaziqp@gmail.com");
-    if (!existingGmail) {
-      UserModel.create("mraaziqp@gmail.com", passwordHash, targetRole);
-    } else {
-      UserModel.updateCredentials(existingGmail.id, { passwordHash, role: targetRole });
-    }
-    console.log("Super Admin credentials updated for:", targetEmail);
+const warnIfNoAccountsExist = () => {
+  if (!ConfigVault.isConfigured() && UserModel.count() === 0) {
+    console.warn(
+      "[setup] No admin account exists yet. Visit the dashboard's onboarding screen " +
+      "(POST /api/onboarding/complete) to create the first owner account."
+    );
   }
 };
 
@@ -78,18 +61,35 @@ await VectorMemory.init();
 await QueueService.getInstance();
 await WorldMemory.getInstance().init();
 initializeBuildStudio(process.cwd());
-ensureAdmin();
+warnIfNoAccountsExist();
 JarvisBridge.getInstance().initialize().catch(() => {});
 
 const app = express();
-app.use(cors());
+
+const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? process.env.DASHBOARD_URL ?? "http://localhost:3000")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*"
+    origin: allowedOrigins,
+    credentials: true
   }
+});
+
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token as string | undefined;
+  const payload = token ? JWT.verify(token) : null;
+  if (!payload) {
+    next(new Error("Unauthorized"));
+    return;
+  }
+  next();
 });
 
 io.on("connection", (socket) => {
@@ -106,14 +106,14 @@ io.on("connection", (socket) => {
   });
 });
 
-app.post("/api/agent/run", async (req: Request, res: Response) => {
+app.post("/api/agent/run", authenticate, async (req: Request, res: Response) => {
   const { prompt } = req.body as { prompt?: string };
   const orchestrator = new Orchestrator();
   const result = await orchestrator.run(prompt ?? "");
   res.json(result);
 });
 
-app.get("/api/agent/tasks", (_req: Request, res: Response) => {
+app.get("/api/agent/tasks", authenticate, (_req: Request, res: Response) => {
   const memory = MemoryStore.load();
   const tasks = Object.values(memory ?? {});
   res.json(tasks);
@@ -136,13 +136,14 @@ registerTrainingRoutes(app);
 registerRobloxRoutes(app);
 // registerRobloxSyncRoutes(app);
 // registerRobloxDebugRoutes(app);
+app.use("/api/collab", authenticate);
 registerCollaborationRoutes(app);
 registerBuildRoutes(app);
 registerStoryworldRoutes(app);
 registerLicenseRoutes(app);
 registerAdminRoutes(app);
 registerAutonomousRoutes(app);
-app.use("/api/build-studio", buildStudioRouter);
+app.use("/api/build-studio", authenticate, buildStudioRouter);
 app.use("/api/env", authenticate, authorizeRoles(["admin", "owner"]), envRouter);
 const healthMonitor = new HealthMonitor();
 registerHealthRoute(app, healthMonitor);
@@ -201,9 +202,10 @@ app.get("/api/feedback", authenticate, authorizeRoles(["viewer", "editor", "admi
 });
 
 const port = Number(process.env.PORT) || 4000;
+const host = process.env.HOST || "127.0.0.1";
 
-server.listen(port, () => {
-  console.log(`Agent Builder API running on port ${port}`);
+server.listen(port, host, () => {
+  console.log(`Agent Builder API running on http://${host}:${port}`);
 });
 
 const autoUpdater = new AutoUpdater();

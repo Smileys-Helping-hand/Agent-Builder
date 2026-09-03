@@ -2,8 +2,11 @@ import { Router } from "express";
 import { ConfigVault } from "../utils/ConfigVault.js";
 import { Hash } from "../utils/hash.js";
 import { UserModel } from "../models/UserModel.js";
+import { authenticate, authorizeRoles } from "./auth.js";
 
 export const onboardingRouter = Router();
+
+const isFirstRun = () => !ConfigVault.isConfigured() && UserModel.count() === 0;
 
 onboardingRouter.get("/status", (_req, res) => {
   const config = ConfigVault.load();
@@ -19,7 +22,14 @@ onboardingRouter.get("/status", (_req, res) => {
   });
 });
 
-onboardingRouter.post("/complete", (req, res) => {
+// First run: open, since no account exists yet to authenticate with.
+// Any run after that must prove ownership of the workspace already.
+onboardingRouter.post("/complete", (req, res, next) => {
+  if (isFirstRun()) {
+    return next();
+  }
+  return authenticate(req, res, () => authorizeRoles(["owner"])(req, res, next));
+}, (req, res) => {
   const { workspaceName, adminEmail, adminPassword, aiProvider, providerKey } =
     (req.body ?? {}) as {
       workspaceName?: string;
