@@ -415,6 +415,27 @@ error) and the specific change needed to fix it. Do not write code.`;
       })
       .join("\n\n");
 
+    // Heuristic for a failure pattern seen repeatedly in practice: both the
+    // model and a bigger critique model tend to diagnose a *symptom* (a
+    // missing arg, a missing dependency) without catching that the module
+    // executes side-effecting code (argument parsing, process.exit) at load
+    // time — so requiring it for a test crashes regardless of what the test
+    // actually calls.
+    const looksLikeEagerExecutionCrash =
+      failing.name === "test" &&
+      /process\.exit|process is not defined|require is not defined|Cannot find module/i.test(failing.output);
+    const eagerExecutionHint = looksLikeEagerExecutionCrash
+      ? "\nThis failure pattern usually means the entry-point file runs its CLI/argument-parsing logic " +
+        "as soon as it is loaded (a top-level function call, or a library like yargs whose .argv getter " +
+        "runs validation immediately). Requiring/importing that file for a test then executes the whole " +
+        "program. Fix: move that execution behind a guard and export the underlying function(s) so the " +
+        "test can call them directly. Match the guard to the actual module system in this file — " +
+        "`if (require.main === module)` ONLY works in CommonJS (require/module.exports); if this file " +
+        "uses import/export or the package is \"type\": \"module\", `require` does not exist at all and " +
+        "will itself throw — use `if (import.meta.url === \\`file://${process.argv[1]}\\`)` instead. " +
+        "Do not mix the two.\n"
+      : "";
+
     const prompt = `You are repairing a generated application that failed an automated check.
 
 Project: ${this.config.projectName}
@@ -423,7 +444,7 @@ Description: ${this.config.description}
 Failing check: ${failing.name}
 Error output:
 ${failing.output}
-${critique ? `\nA senior engineer's diagnosis of the root cause:\n${critique}\n` : ""}
+${critique ? `\nA senior engineer's diagnosis of the root cause:\n${critique}\n` : ""}${eagerExecutionHint}
 Current files:
 ${fileListing}
 
@@ -495,6 +516,18 @@ Requirements:
 - Ensure security best practices
 - Optimize for performance
 - Include unit tests
+- If this is a CLI tool or has a script entry point: put argument parsing and
+  execution behind a guard, and export the underlying functions separately.
+  A test file will require/import this module directly — if that alone runs
+  the CLI or calls process.exit(), every test using it will crash instead of
+  running. Use the guard that matches the module system you are actually
+  writing:
+  - CommonJS (require/module.exports, no "type": "module"):
+    \`if (require.main === module) { ... }\`
+  - ES modules (import/export, or "type": "module" in package.json):
+    \`require\` does not exist here — use
+    \`if (import.meta.url === \`file://\${process.argv[1]}\`) { ... }\` instead.
+    Do not mix require.main with import/export syntax in the same file.
 
 Return code in structured format:
 FILE: path/to/file.ext

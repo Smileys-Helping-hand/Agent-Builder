@@ -87,9 +87,27 @@ export class Verifier {
     if (!hasConfig) {
       // globals: true lets Jest-style `describe`/`it`/`expect` (no imports) work unmodified —
       // that's what a model asked for "tests" tends to generate by default.
+      //
+      // include widens vitest's default glob (**/*.{test,spec}.<ext>) to also catch bare
+      // test.js/tests.js and a __tests__/ directory — both observed in practice: a model asked
+      // for tests sometimes writes one without the .test. suffix vitest expects by default,
+      // which otherwise silently finds zero tests and fails the check for a reason that has
+      // nothing to do with the code itself.
       await fs.writeFile(
         path.join(workspace.root, "vitest.config.mjs"),
-        "import { defineConfig } from 'vitest/config';\n\nexport default defineConfig({\n  test: {\n    globals: true,\n    environment: 'node'\n  }\n});\n",
+        "import { defineConfig } from 'vitest/config';\n\n" +
+          "export default defineConfig({\n" +
+          "  test: {\n" +
+          "    globals: true,\n" +
+          "    environment: 'node',\n" +
+          "    include: [\n" +
+          "      '**/*.{test,spec}.?(c|m)[jt]s?(x)',\n" +
+          "      '**/test.?(c|m)[jt]s?(x)',\n" +
+          "      '**/tests.?(c|m)[jt]s?(x)',\n" +
+          "      '**/__tests__/**/*.?(c|m)[jt]s?(x)'\n" +
+          "    ]\n" +
+          "  }\n" +
+          "});\n",
         "utf8"
       );
     }
