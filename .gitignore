@@ -11,3 +11,7 @@ src-tauri/target/
 src-tauri/gen/
 
 *.tsbuildinfo
+
+# Generated project workspaces (each is its own git repo)
+/builds/
+/projects/

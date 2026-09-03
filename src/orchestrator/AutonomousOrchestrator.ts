@@ -2,9 +2,10 @@ import { EventEmitter } from "events";
 import { ModelRouter } from "../tools/ModelRouter.js";
 import { Logger } from "../utils/Logger.js";
 import { QualityAnalyzer } from "./QualityAnalyzer.js";
-import { ImprovementEngine } from "./ImprovementEngine.js";
+import { ImprovementEngine, type ImprovementPlan, type ImprovementSuggestion } from "./ImprovementEngine.js";
 import { HardwareScaler } from "../utils/HardwareScaler.js";
 import { PackagingAgent } from "../agents/PackagingAgent.js";
+import { Workspace } from "./Workspace.js";
 
 export interface BuildIteration {
   iteration: number;
@@ -45,17 +46,19 @@ export class AutonomousOrchestrator extends EventEmitter {
   private improvementEngine: ImprovementEngine;
   private hardwareScaler: HardwareScaler;
   private packagingAgent: PackagingAgent;
+  private workspace: Workspace;
 
   constructor(private config: AutonomousConfig) {
     super();
     this.buildId = `build_${Date.now()}`;
     this.outputDir = `./builds/${this.buildId}`;
-    
+
     this.qualityAnalyzer = new QualityAnalyzer();
     this.improvementEngine = new ImprovementEngine();
     this.hardwareScaler = new HardwareScaler();
     this.packagingAgent = new PackagingAgent();
-    
+    this.workspace = new Workspace(this.outputDir);
+
     Logger.log("AutonomousOrchestrator initialized", { buildId: this.buildId, config });
   }
 
@@ -173,12 +176,23 @@ export class AutonomousOrchestrator extends EventEmitter {
       const generatedCode = await this.generateCode(buildContext);
       iteration.artifacts.push(...generatedCode.artifacts);
 
+      let currentFiles = generatedCode.files;
+
+      const generateWrite = await this.workspace.writeFiles(
+        currentFiles,
+        `Iteration ${iterationNum}: generate (${this.config.projectName})`
+      );
+      Logger.log(`Iteration ${iterationNum}: wrote ${generateWrite.writtenPaths.length} file(s) to ${this.workspace.root}`, {
+        skipped: generateWrite.skippedPaths,
+        commit: generateWrite.commitHash
+      });
+
       // Phase 2: Analyze Quality
       iteration.status = "analyzing";
       this.emit("iteration-status", { iteration: iterationNum, status: "analyzing" });
-      
+
       const analysis = await this.qualityAnalyzer.analyze({
-        code: generatedCode.files,
+        code: currentFiles,
         iteration: iterationNum,
         previousAnalysis: this.getPreviousAnalysis()
       });
@@ -196,16 +210,16 @@ export class AutonomousOrchestrator extends EventEmitter {
         this.emit("iteration-status", { iteration: iterationNum, status: "improving" });
 
         const improvements = await this.improvementEngine.generateImprovements({
-          code: generatedCode.files,
+          code: currentFiles,
           analysis: analysis,
           iteration: iterationNum,
           targetQuality: this.config.qualityThreshold
         });
 
         iteration.improvements = improvements.suggestions;
-        
-        // Apply improvements
-        await this.applyImprovements(improvements);
+
+        // Apply improvements and persist the result — this used to be a no-op.
+        currentFiles = await this.applyImprovements(improvements, currentFiles, iterationNum);
       }
 
       iteration.status = "complete";
@@ -309,20 +323,50 @@ code content here
   }
 
   /**
-   * Apply improvement suggestions to the codebase
+   * Apply improvement suggestions to the codebase and persist the result.
+   * Each action is applied sequentially (later actions see earlier ones'
+   * edits) since several may target the same file.
    */
-  private async applyImprovements(improvements: any): Promise<void> {
-    // Apply refactoring, add tests, fix security issues, etc.
-    Logger.log("Applying improvements", { count: improvements.suggestions.length });
-    
-    for (const improvement of improvements.actions) {
-      await this.executeImprovement(improvement);
+  private async applyImprovements(
+    improvements: ImprovementPlan,
+    code: Record<string, string>,
+    iterationNum: number
+  ): Promise<Record<string, string>> {
+    Logger.log("Applying improvements", { count: improvements.actions.length });
+
+    let currentCode = code;
+    const applied: string[] = [];
+
+    for (const action of improvements.actions) {
+      currentCode = await this.executeImprovement(action, currentCode);
+      applied.push(action.file ? `${action.type}:${action.file}` : action.type);
     }
+
+    if (applied.length > 0) {
+      const label = applied.length > 3 ? `${applied.slice(0, 3).join(", ")}, +${applied.length - 3} more` : applied.join(", ");
+      const result = await this.workspace.writeFiles(
+        currentCode,
+        `Iteration ${iterationNum}: apply ${applied.length} improvement(s) — ${label}`
+      );
+      Logger.log(`Iteration ${iterationNum}: wrote ${result.writtenPaths.length} improved file(s)`, {
+        commit: result.commitHash
+      });
+    }
+
+    return currentCode;
   }
 
-  private async executeImprovement(improvement: any): Promise<void> {
-    // Execute specific improvement action (refactor, add test, fix bug, etc.)
-    Logger.log("Executing improvement", { type: improvement.type });
+  private async executeImprovement(
+    improvement: ImprovementSuggestion,
+    code: Record<string, string>
+  ): Promise<Record<string, string>> {
+    Logger.log("Executing improvement", { type: improvement.type, file: improvement.file });
+    try {
+      return await this.improvementEngine.applyImprovement(improvement, code);
+    } catch (error: any) {
+      Logger.error("Improvement application failed", { type: improvement.type, error: error.message });
+      return code;
+    }
   }
 
   /**
