@@ -89,8 +89,10 @@ export class PackagingAgent {
     const exePath = path.join(outputPath, `${options.buildId}.exe`);
     
     try {
-      // Try using pkg if available
-      await execAsync(`npx pkg . --targets node18-win-x64 --output "${exePath}"`);
+      // Try using pkg if available. cwd is the generated project's own
+      // directory — `pkg .` without it runs in Agent-Builder's own cwd and
+      // packages Agent-Builder itself instead of the generated app.
+      await execAsync(`npx pkg . --targets node18-win-x64 --output "${exePath}"`, { cwd: options.outputDir });
     } catch (error) {
       // Fallback: Create a portable package with node
       Logger.warn("pkg not available, creating portable package");
@@ -121,7 +123,7 @@ export class PackagingAgent {
     try {
       // Try using pkg for macOS
       const binPath = path.join(outputPath, options.buildId);
-      await execAsync(`npx pkg . --targets node18-macos-x64 --output "${binPath}"`);
+      await execAsync(`npx pkg . --targets node18-macos-x64 --output "${binPath}"`, { cwd: options.outputDir });
 
       // Create .app bundle structure
       await this.createMacAppBundle(binPath, appPath, options.buildId);
@@ -152,7 +154,7 @@ export class PackagingAgent {
     const binPath = path.join(outputPath, options.buildId);
     
     try {
-      await execAsync(`npx pkg . --targets node18-linux-x64 --output "${binPath}"`);
+      await execAsync(`npx pkg . --targets node18-linux-x64 --output "${binPath}"`, { cwd: options.outputDir });
     } catch (error) {
       Logger.warn("pkg not available, creating portable package");
       await this.createPortablePackage(options.outputDir, outputPath, "linux");

@@ -130,15 +130,25 @@ export class AutonomousOrchestrator extends EventEmitter {
 
         // Check if quality threshold is met
         if (iteration.qualityScore >= this.config.qualityThreshold) {
-          Logger.log("Quality threshold met", { 
-            score: iteration.qualityScore, 
-            threshold: this.config.qualityThreshold 
+          Logger.log("Quality threshold met", {
+            score: iteration.qualityScore,
+            threshold: this.config.qualityThreshold
           });
-          
+
+          // A score above threshold isn't the same as every applicable check
+          // passing — e.g. a heavily-weighted install pass can clear a low
+          // threshold even while tests fail. Package only a genuinely green build.
           if (this.config.autoPackaging) {
-            await this.packageBuild(iteration);
+            if (iteration.verification?.passed) {
+              await this.packageBuild(iteration);
+            } else {
+              Logger.warn("Skipping auto-package: score met threshold but verification did not fully pass", {
+                score: iteration.qualityScore,
+                blockingCheck: iteration.verification?.blockingCheck?.name
+              });
+            }
           }
-          
+
           break;
         }
 
