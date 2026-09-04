@@ -7,7 +7,7 @@ The Collaboration Hub now supports human + AI pair programming with shared conte
 - **Rooms & Roles** — Sessions can live under `default`, `sandbox`, or `team`. Participants declare roles (`Builder`, `UX`, `QA`, `Ops`) and presence (active/idle).
 - **Context Memory** — Each session maintains a `CollaborationRoomContext` containing summaries, linked repositories, active agents, and the last command. Updates are synchronized through `/api/collab/context`.
 - **Event Stream** — Collaboration events (`type: "collaboration"`) now include the current context, enabling dashboards or external tools to render shared goals.
-- **Build Broadcasts** — When a build runs with a `sessionId`, the BuildEngine streams progress into that room, merging agent participation into the context memory automatically.
+- **Build Broadcasts** — `CollaborationHub.broadcastBuild` streams build progress into a room when a build carries a `sessionId`. (The BuildEngine that used to emit these was removed; the transport remains for the autonomous pipeline to adopt.)
 
 ## REST Endpoints
 

@@ -54,12 +54,12 @@
     "pgvector": "^0.2.0",
     "redis": "^4.6.13",
     "roblox-ts": "^2.1.1",
-    "socket.io": "^4.7.5",
-    "socket.io-client": "^4.7.5",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
     "sqlite3": "^5.1.7",
     "uuid": "^9.0.0",
     "ws": "^8.18.3",
-    "yaml": "^2.6.0"
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@rbxts/types": "^1.0.890",
