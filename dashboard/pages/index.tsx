@@ -1,6 +1,5 @@
 import Head from "next/head";
 import Image from "next/image";
-import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { EventFeed } from "../components/EventFeed";
@@ -76,8 +75,16 @@ type TabKey =
   | "player"
   | "autonomous";
 
+// Order here is render order for the tab bar — Autonomous Build first since
+// it's the one pipeline that verifies its own output before calling a build
+// done. "(basic)"/"(legacy)" suffixes are honest labels, not a value
+// judgment on removing them: Build and AutoCode run without the
+// install/typecheck/test/repair loop Autonomous Build has.
 const tabLabels: Record<TabKey, string> = {
+  autonomous: "Autonomous Build",
   overview: "Overview",
+  build: "Build (basic)",
+  autocode: "AutoCode (basic)",
   graph: "Graph",
   marketplace: "Marketplace",
   analytics: "Analytics",
@@ -91,8 +98,6 @@ const tabLabels: Record<TabKey, string> = {
   license: "License",
   system: "System Status",
   users: "Users",
-  build: "Build",
-  autocode: "AutoCode",
   game: "Game",
   collaborate: "Collaborate",
   npc: "NPC AI",
@@ -100,8 +105,7 @@ const tabLabels: Record<TabKey, string> = {
   story: "StoryWorld",
   social: "Social",
   simulation: "Simulation",
-  player: "Players",
-  autonomous: "Autonomous Build"
+  player: "Players"
 };
 
 export default function Dashboard() {
@@ -115,7 +119,7 @@ export default function Dashboard() {
   const [updateInstruction, setUpdateInstruction] = useState("");
   const [isUpdating, setIsUpdating] = useState(false);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
-  const [activeTab, setActiveTab] = useState<TabKey>("overview");
+  const [activeTab, setActiveTab] = useState<TabKey>("autonomous");
   const [updateDismissed, setUpdateDismissed] = useState(false);
   const canPublishQueue = useMemo(
     () =>
@@ -246,8 +250,20 @@ export default function Dashboard() {
             </div>
             <form onSubmit={handleSubmit} className="w-full max-w-xl rounded-xl border border-slate-800 bg-slate-900/80 p-4 shadow-lg shadow-black/40">
               <label htmlFor="prompt" className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Launch a new build
+                Launch a new build (basic — no verification)
               </label>
+              <p className="mt-1 text-xs text-slate-500">
+                Runs one fixed pass with no compile/test check on the result. For a build that
+                installs, tests, and repairs itself,{" "}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("autonomous")}
+                  className="font-semibold text-sky-400 underline decoration-dotted underline-offset-2 hover:text-sky-300"
+                >
+                  use Autonomous Build
+                </button>
+                .
+              </p>
               <textarea
                 id="prompt"
                 value={prompt}
@@ -267,7 +283,7 @@ export default function Dashboard() {
           </div>
         </header>
 
-        {/* Build Studio Quick Access */}
+        {/* Autonomous Build Quick Access — the pipeline that actually verifies its own output */}
         <section className="mx-auto mt-6 max-w-6xl px-6">
           <div className="rounded-xl border-2 border-sky-500/30 bg-gradient-to-r from-sky-500/10 to-blue-500/10 p-4 shadow-lg shadow-sky-500/10">
             <div className="flex items-center justify-between">
@@ -276,16 +292,19 @@ export default function Dashboard() {
                   🏗️
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-slate-100">Build Studio</h3>
-                  <p className="text-sm text-slate-400">Iteratively build and package complete applications</p>
+                  <h3 className="text-lg font-bold text-slate-100">Autonomous Build</h3>
+                  <p className="text-sm text-slate-400">
+                    Generates, installs, tests, and repairs the app until an objective check passes
+                  </p>
                 </div>
               </div>
-              <Link
-                href="/build-studio"
+              <button
+                type="button"
+                onClick={() => setActiveTab("autonomous")}
                 className="inline-flex items-center gap-2 rounded-lg bg-sky-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-sky-500/30 transition hover:bg-sky-400 hover:shadow-sky-400/40"
               >
-                Open Build Studio →
-              </Link>
+                Open Autonomous Build →
+              </button>
             </div>
           </div>
         </section>
