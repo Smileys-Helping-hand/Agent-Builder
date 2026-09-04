@@ -2,7 +2,6 @@ import http from "http";
 import express, { Request, Response } from "express";
 import cors from "cors";
 import { Server } from "socket.io";
-import { Orchestrator } from "../orchestrator/Orchestrator.js";
 import { registerUpdateRoute } from "./update.js";
 import { eventBus, emitServerEvent, type ServerEvent } from "./eventBus.js";
 import { MemoryStore } from "../state/MemoryStore.js";
@@ -35,9 +34,7 @@ import { registerTrainingRoutes } from "./train.js";
 // import { registerRobloxSyncRoutes } from "./robloxSync.js";
 import { registerCollaborationRoutes } from "./collaboration.js";
 // import { registerRobloxDebugRoutes } from "./robloxDebug.js";
-import { registerBuildRoutes } from "./build.js";
 import { envRouter } from "./envManager.js";
-import { buildStudioRouter, initializeBuildStudio } from "./buildStudioRoutes.js";
 import { registerLicenseRoutes } from "./license.js";
 import { registerAdminRoutes } from "./admin.js";
 import { onboardingRouter } from "./onboarding.js";
@@ -75,7 +72,6 @@ if (gameModeEnabled) {
 } else {
   console.log("[boot] Game mode (storyworld/NPC/Roblox) disabled — set GAME_MODE_ENABLED=true to enable.");
 }
-initializeBuildStudio(process.cwd());
 warnIfNoAccountsExist();
 JarvisBridge.getInstance().initialize().catch(() => {});
 
@@ -121,13 +117,9 @@ io.on("connection", (socket) => {
   });
 });
 
-app.post("/api/agent/run", authenticate, async (req: Request, res: Response) => {
-  const { prompt } = req.body as { prompt?: string };
-  const orchestrator = new Orchestrator();
-  const result = await orchestrator.run(prompt ?? "");
-  res.json(result);
-});
-
+// Historical task records written by the removed 4-phase Orchestrator.
+// Kept read-only so existing data stays viewable; nothing writes here now —
+// builds go through /api/autonomous/*.
 app.get("/api/agent/tasks", authenticate, (_req: Request, res: Response) => {
   const memory = MemoryStore.load();
   const tasks = Object.values(memory ?? {});
@@ -160,11 +152,9 @@ if (gameModeEnabled) {
 }
 app.use("/api/collab", authenticate);
 registerCollaborationRoutes(app);
-registerBuildRoutes(app);
 registerLicenseRoutes(app);
 registerAdminRoutes(app);
 registerAutonomousRoutes(app);
-app.use("/api/build-studio", authenticate, buildStudioRouter);
 app.use("/api/env", authenticate, authorizeRoles(["admin", "owner"]), envRouter);
 const healthMonitor = new HealthMonitor();
 registerHealthRoute(app, healthMonitor);

@@ -17,10 +17,9 @@ const statusLabel: Record<Task["status"], string> = {
 
 type TaskCardProps = {
   task: Task;
-  onUpdate: (task: Task) => void;
 };
 
-export const TaskCard = ({ task, onUpdate }: TaskCardProps) => {
+export const TaskCard = ({ task }: TaskCardProps) => {
   const updatedAt = new Date(task.updatedAt);
 
   return (
@@ -64,15 +63,6 @@ export const TaskCard = ({ task, onUpdate }: TaskCardProps) => {
         </details>
       )}
 
-      <button
-        className={
-          "mt-4 inline-flex items-center justify-center rounded-md bg-sky-500 px-3 py-1.5 text-sm font-semibold text-white " +
-          "shadow-sm transition hover:bg-sky-400"
-        }
-        onClick={() => onUpdate(task)}
-      >
-        Request Adjustment
-      </button>
     </div>
   );
 };

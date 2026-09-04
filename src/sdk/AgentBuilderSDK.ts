@@ -1,4 +1,3 @@
-import type { BuildJobSnapshot, BuildMode, AutonomyLevel } from "../models/BuildTypes.js";
 import type { AutonomousConfig, BuildIteration } from "../orchestrator/AutonomousOrchestrator.js";
 
 type FetchFn = typeof fetch;
@@ -53,35 +52,6 @@ export class AgentBuilderSDK {
       return {} as T;
     }
     return (await response.json()) as T;
-  }
-
-  async buildApp(prompt: string, options: { mode?: BuildMode; autonomy?: AutonomyLevel; repositories?: string[]; sessionId?: string } = {}) {
-    const body = JSON.stringify({ prompt, ...options });
-    const result = await this.request<{ job: BuildJobSnapshot }>("/api/build/start", { method: "POST", body });
-    return result.job;
-  }
-
-  async getBuild(id: string) {
-    const result = await this.request<{ job: BuildJobSnapshot }>(`/api/build/status/${id}`);
-    return result.job;
-  }
-
-  async listBuilds() {
-    const result = await this.request<{ jobs: BuildJobSnapshot[] }>("/api/build/history");
-    return result.jobs;
-  }
-
-  async mergeRepos(options: { sourceA: string; sourceB: string; outputDir?: string; strategy?: "semantic" | "overwrite" }) {
-    const result = await this.request<{ report: Record<string, unknown> }>("/api/build/merge", {
-      method: "POST",
-      body: JSON.stringify(options)
-    });
-    return result.report;
-  }
-
-  async exportProjects() {
-    const result = await this.request<{ projects: string[] }>("/api/project/export");
-    return result.projects;
   }
 
   async trainAgent() {

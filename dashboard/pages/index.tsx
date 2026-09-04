@@ -1,6 +1,6 @@
 import Head from "next/head";
 import Image from "next/image";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { EventFeed } from "../components/EventFeed";
 import { TaskCard } from "../components/TaskCard";
@@ -24,7 +24,6 @@ import { UserManagementPanel } from "../components/Admin/UserManagement";
 import { OnboardingWizard } from "../components/Admin/OnboardingWizard";
 import { ChatPanel } from "../components/ChatPanel";
 import { GamePanel } from "../components/GamePanel";
-import { BuildPanel } from "../components/BuildPanel";
 import { CollaboratePanel } from "../components/CollaboratePanel";
 import { NpcPanel } from "../components/NpcPanel";
 import { TerrainPanel } from "../components/TerrainPanel";
@@ -35,9 +34,7 @@ import { PlayerPanel } from "../components/PlayerPanel";
 import { AutonomousPanel } from "../components/AutonomousPanel";
 import {
   fetchTasks,
-  runAgent,
   subscribeToEvents,
-  updateTask,
   fetchUpdateStatus,
   type AuthUser,
   type ServerEvent,
@@ -63,7 +60,6 @@ type TabKey =
   | "license"
   | "system"
   | "users"
-  | "build"
   | "autocode"
   | "game"
   | "collaborate"
@@ -75,15 +71,13 @@ type TabKey =
   | "player"
   | "autonomous";
 
-// Order here is render order for the tab bar — Autonomous Build first since
-// it's the one pipeline that verifies its own output before calling a build
-// done. "(basic)"/"(legacy)" suffixes are honest labels, not a value
-// judgment on removing them: Build and AutoCode run without the
-// install/typecheck/test/repair loop Autonomous Build has.
+// Order here is render order for the tab bar — Autonomous Build first, since
+// it's the pipeline that verifies its own output before calling a build done.
+// AutoCode is marked "(basic)": it edits a single file on request and does
+// not run the install/typecheck/test/repair loop.
 const tabLabels: Record<TabKey, string> = {
   autonomous: "Autonomous Build",
   overview: "Overview",
-  build: "Build (basic)",
   autocode: "AutoCode (basic)",
   graph: "Graph",
   marketplace: "Marketplace",
@@ -112,12 +106,7 @@ export default function Dashboard() {
   const { data: tasks, mutate } = useSWR<Task[]>("tasks", fetcher, {
     refreshInterval: 15000
   });
-  const [prompt, setPrompt] = useState("");
-  const [isRunning, setIsRunning] = useState(false);
   const [events, setEvents] = useState<ServerEvent[]>([]);
-  const [updateTarget, setUpdateTarget] = useState<Task | null>(null);
-  const [updateInstruction, setUpdateInstruction] = useState("");
-  const [isUpdating, setIsUpdating] = useState(false);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("autonomous");
   const [updateDismissed, setUpdateDismissed] = useState(false);
@@ -156,50 +145,6 @@ export default function Dashboard() {
     if (!tasks) return [];
     return [...tasks].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }, [tasks]);
-
-  const handleSubmit = useCallback(
-    async (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      if (!prompt.trim()) return;
-      setIsRunning(true);
-
-      try {
-        await runAgent(prompt.trim());
-        setPrompt("");
-        await mutate();
-      } catch (error) {
-        console.error("Failed to run agent", error);
-      } finally {
-        setIsRunning(false);
-      }
-    },
-    [prompt, mutate]
-  );
-
-  const onUpdateTask = useCallback((task: Task) => {
-    setUpdateTarget(task);
-    setUpdateInstruction("");
-  }, []);
-
-  const submitUpdate = useCallback(
-    async (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      if (!updateTarget) return;
-      setIsUpdating(true);
-
-      try {
-        await updateTask(updateTarget.id, updateInstruction);
-        setUpdateTarget(null);
-        setUpdateInstruction("");
-        await mutate();
-      } catch (error) {
-        console.error("Failed to update task", error);
-      } finally {
-        setIsUpdating(false);
-      }
-    },
-    [updateInstruction, updateTarget, mutate]
-  );
 
   const handleAuthChange = useCallback((user: AuthUser | null) => {
     setCurrentUser(user);
@@ -248,38 +193,20 @@ export default function Dashboard() {
                 Launch new builds, monitor autonomous agents, and orchestrate updates from a single real-time dashboard.
               </p>
             </div>
-            <form onSubmit={handleSubmit} className="w-full max-w-xl rounded-xl border border-slate-800 bg-slate-900/80 p-4 shadow-lg shadow-black/40">
-              <label htmlFor="prompt" className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Launch a new build (basic — no verification)
-              </label>
-              <p className="mt-1 text-xs text-slate-500">
-                Runs one fixed pass with no compile/test check on the result. For a build that
-                installs, tests, and repairs itself,{" "}
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("autonomous")}
-                  className="font-semibold text-sky-400 underline decoration-dotted underline-offset-2 hover:text-sky-300"
-                >
-                  use Autonomous Build
-                </button>
-                .
+            <div className="w-full max-w-xl rounded-xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg shadow-black/40">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Start a build</p>
+              <p className="mt-2 text-sm text-slate-300">
+                Builds run through the autonomous pipeline: generate, install, typecheck, test, and
+                repair on failure, keeping the best-scoring result.
               </p>
-              <textarea
-                id="prompt"
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                className="mt-2 h-28 w-full rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 shadow-inner focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
-                placeholder="Build a React dashboard with Node.js backend"
-                disabled={isRunning}
-              />
               <button
-                type="submit"
-                disabled={isRunning}
-                className="mt-3 inline-flex w-full items-center justify-center rounded-md bg-sky-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:bg-slate-700"
+                type="button"
+                onClick={() => setActiveTab("autonomous")}
+                className="mt-4 inline-flex w-full items-center justify-center rounded-md bg-sky-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-400"
               >
-                {isRunning ? "Running orchestration..." : "Run Orchestrator"}
+                Open Autonomous Build
               </button>
-            </form>
+            </div>
           </div>
         </header>
 
@@ -339,17 +266,29 @@ export default function Dashboard() {
           <section className="mx-auto mt-10 grid max-w-6xl gap-8 px-6 lg:grid-cols-3">
             <div className="space-y-6 lg:col-span-2">
               <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold text-slate-100">Active & Recent Tasks</h2>
-                <span className="text-xs uppercase tracking-wide text-slate-500">Auto-refreshing</span>
+                <h2 className="text-xl font-semibold text-slate-100">Task history (archive)</h2>
+                <span className="text-xs uppercase tracking-wide text-slate-500">Read-only</span>
               </div>
+              <p className="rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3 text-xs text-slate-400">
+                Records from the retired 4-phase orchestrator. Nothing writes here any more — new
+                work runs through{" "}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("autonomous")}
+                  className="font-semibold text-sky-400 underline decoration-dotted underline-offset-2 hover:text-sky-300"
+                >
+                  Autonomous Build
+                </button>
+                .
+              </p>
               <div className="grid gap-4">
                 {sortedTasks.length === 0 && (
                   <p className="rounded-lg border border-dashed border-slate-800 bg-slate-900/40 p-6 text-center text-sm text-slate-400">
-                    No tasks yet. Launch a build to see agents in action.
+                    No archived tasks.
                   </p>
                 )}
                 {sortedTasks.map((task) => (
-                  <TaskCard key={task.id} task={task} onUpdate={onUpdateTask} />
+                  <TaskCard key={task.id} task={task} />
                 ))}
               </div>
               <MemoryBrowser canSearch={Boolean(currentUser)} />
@@ -357,35 +296,6 @@ export default function Dashboard() {
             <aside className="space-y-6">
               <AuthPanel onAuthChange={handleAuthChange} />
               <EventFeed events={events} />
-              {updateTarget && (
-                <form onSubmit={submitUpdate} className="rounded-xl border border-slate-800 bg-slate-900/80 p-4 shadow-lg shadow-black/40">
-                  <h2 className="text-lg font-semibold text-slate-100">Request Adjustment</h2>
-                  <p className="mt-1 text-xs text-slate-400">Target: {updateTarget.agentType}</p>
-                  <textarea
-                    value={updateInstruction}
-                    onChange={(event) => setUpdateInstruction(event.target.value)}
-                    className="mt-3 h-32 w-full rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
-                    placeholder="Refine the UI to include a sidebar navigation"
-                    disabled={isUpdating}
-                  />
-                  <div className="mt-3 flex gap-2">
-                    <button
-                      type="submit"
-                      disabled={isUpdating}
-                      className="inline-flex flex-1 items-center justify-center rounded-md bg-emerald-500 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-slate-700"
-                    >
-                      {isUpdating ? "Sending..." : "Send Update"}
-                    </button>
-                    <button
-                      type="button"
-                      className="inline-flex items-center justify-center rounded-md border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800"
-                      onClick={() => setUpdateTarget(null)}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </form>
-              )}
               <PluginGallery />
             </aside>
           </section>
@@ -472,7 +382,6 @@ export default function Dashboard() {
           </section>
         )}
 
-        {activeTab === "build" && <BuildPanel events={events} />}
 
         {activeTab === "autocode" && (
           <section className="mx-auto mt-10 max-w-5xl space-y-6 px-6">

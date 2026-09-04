@@ -3,11 +3,27 @@ import path from "path";
 import { promisify } from "util";
 import { exec as execCallback } from "child_process";
 import { diffLines } from "diff";
-import { Orchestrator } from "../orchestrator/Orchestrator.js";
+import { ModelRouter } from "../tools/ModelRouter.js";
 import { Logger } from "./Logger.js";
 import { VectorMemory } from "../state/VectorMemory.js";
 
 const exec = promisify(execCallback);
+
+// Every path this engine touches is resolved against the process working
+// directory and rejected if it escapes. Without this, `filePath` (and an
+// `edit.filePath` supplied directly in an /api/chat/autocode request body)
+// is an arbitrary-file-read/write primitive against anything the server
+// process can reach.
+const WORKSPACE_ROOT = path.resolve(process.cwd());
+
+const resolveInsideWorkspace = (filePath: string): string => {
+  const resolved = path.resolve(WORKSPACE_ROOT, filePath);
+  const rootWithSep = WORKSPACE_ROOT.endsWith(path.sep) ? WORKSPACE_ROOT : WORKSPACE_ROOT + path.sep;
+  if (resolved !== WORKSPACE_ROOT && !resolved.startsWith(rootWithSep)) {
+    throw new Error(`Refusing to access a path outside the workspace: ${filePath}`);
+  }
+  return resolved;
+};
 
 export type AutoCodeTurn = {
   role: "user" | "assistant" | "system";
@@ -44,12 +60,7 @@ const formatDiff = (original: string, updated: string): string => {
 };
 
 export class AutoCodeEngine {
-  private readonly orchestrator: Orchestrator;
   private readonly history: AutoCodeTurn[] = [];
-
-  constructor(orchestrator = new Orchestrator()) {
-    this.orchestrator = orchestrator;
-  }
 
   getHistory(): AutoCodeTurn[] {
     return [...this.history];
@@ -68,7 +79,7 @@ export class AutoCodeEngine {
   }
 
   async readFile(filePath: string): Promise<string> {
-    const absolute = path.resolve(filePath);
+    const absolute = resolveInsideWorkspace(filePath);
     const content = await fs.promises.readFile(absolute, "utf8");
     this.recordTurn({
       role: "system",
@@ -80,7 +91,7 @@ export class AutoCodeEngine {
   }
 
   async proposeEdit(filePath: string, instruction: string): Promise<AutoCodeResult> {
-    const absolute = path.resolve(filePath);
+    const absolute = resolveInsideWorkspace(filePath);
     const original = await fs.promises.readFile(absolute, "utf8");
     this.recordTurn({
       role: "user",
@@ -94,16 +105,21 @@ export class AutoCodeEngine {
       "AutoCode requires an AI provider (OpenAI, Ollama, or LM Studio). Provide MODEL_PROVIDER or AI_PROVIDER in .env to enable automatic edits.";
 
     try {
-      const prompt = `You are AutoCode, an expert software engineer. The user asked for: ${instruction}.\n` +
-        `Return ONLY the updated file contents for ${filePath}.`;
-      const tasks = await this.orchestrator.run(prompt);
-      const last = tasks.at(-1);
-      if (last && typeof last.result === "string" && last.result.trim().length > 0) {
-        updated = last.result;
-        summary = `Updated ${filePath} via orchestrator output.`;
+      const prompt =
+        `You are AutoCode, an expert software engineer.\n` +
+        `Apply this change to the file below: ${instruction}\n\n` +
+        `File: ${filePath}\n` +
+        "```\n" +
+        original +
+        "\n```\n\n" +
+        `Return ONLY the complete updated contents of ${filePath}. No prose, no code fence.`;
+      const response = await ModelRouter.generate(prompt);
+      if (response.trim().length > 0) {
+        updated = response;
+        summary = `Updated ${filePath}.`;
       }
     } catch (error) {
-      Logger.warn("AutoCode orchestration fallback", error);
+      Logger.warn("AutoCode generation failed", error);
     }
 
     const diff = formatDiff(original, updated);
@@ -120,7 +136,7 @@ export class AutoCodeEngine {
   }
 
   async applyEdit(edit: ProposedEdit): Promise<void> {
-    const absolute = path.resolve(edit.filePath);
+    const absolute = resolveInsideWorkspace(edit.filePath);
     await fs.promises.writeFile(absolute, edit.updated, "utf8");
     this.recordTurn({
       role: "system",

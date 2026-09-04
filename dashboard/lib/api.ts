@@ -744,18 +744,6 @@ const jsonFetcher = async <T>(path: string, init: RequestInit = {}, auth = false
 
 export const fetchTasks = () => jsonFetcher<Task[]>("/api/agent/tasks");
 
-export const runAgent = (prompt: string) =>
-  jsonFetcher<Task[]>("/api/agent/run", {
-    method: "POST",
-    body: JSON.stringify({ prompt })
-  });
-
-export const updateTask = (taskId: string, instruction: string) =>
-  jsonFetcher<{ updated: boolean; result: Task[] }>("/api/agent/update", {
-    method: "POST",
-    body: JSON.stringify({ taskId, instruction })
-  });
-
 export const fetchPlugins = () => jsonFetcher<{ plugins: PluginMetadata[] }>("/api/plugins");
 
 export const fetchRecentMemory = () => jsonFetcher<{ records: VectorRecord[] }>("/api/memory/recent");
@@ -874,48 +862,6 @@ export const updateCollaborationContext = (sessionId: string, context: Partial<C
 
 export const listCollaborationSessions = () =>
   jsonFetcher<{ sessions: CollaborationSnapshot[] }>("/api/collab/list", {}, true);
-
-export const startBuildPipeline = (payload: {
-  prompt: string;
-  mode?: BuildJob["mode"];
-  autonomy?: BuildJob["autonomy"];
-  repositories?: string[];
-  sessionId?: string;
-}) =>
-  jsonFetcher<{ job: BuildJob }>(
-    "/api/build/start",
-    {
-      method: "POST",
-      body: JSON.stringify(payload)
-    },
-    true
-  );
-
-export const fetchBuildHistory = () => jsonFetcher<{ jobs: BuildJob[] }>("/api/build/history", {}, true);
-
-export const fetchBuildStatus = (buildId: string) => jsonFetcher<{ job: BuildJob }>(`/api/build/status/${buildId}`, {}, true);
-
-export const cancelBuildPipeline = (buildId: string) =>
-  jsonFetcher<{ job: BuildJob | null }>(
-    "/api/build/cancel",
-    {
-      method: "POST",
-      body: JSON.stringify({ id: buildId })
-    },
-    true
-  );
-
-export const mergeRepositories = (payload: { sourceA: string; sourceB: string; outputDir?: string }) =>
-  jsonFetcher<{ report: { id: string; outputDir: string; conflicts: string[] } }>(
-    "/api/build/merge",
-    {
-      method: "POST",
-      body: JSON.stringify(payload)
-    },
-    true
-  );
-
-export const exportProjects = () => jsonFetcher<{ projects: string[] }>("/api/project/export", {}, true);
 
 export const generateNpc = (prompt: string, templateId?: string) =>
   jsonFetcher<{ npc: NpcGeneration }>(

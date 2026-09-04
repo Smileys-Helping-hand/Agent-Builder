@@ -4,7 +4,6 @@ import process from "process";
 import { authenticate, authorizeRoles } from "./auth.js";
 import type { AuthenticatedRequest } from "./auth.js";
 import { QueueService } from "../queue/QueueService.js";
-import { BuildEngine } from "../orchestrator/BuildEngine.js";
 import { UserModel } from "../models/UserModel.js";
 import { Hash } from "../utils/hash.js";
 import { AuditLogModel } from "../models/AuditLogModel.js";
@@ -35,7 +34,6 @@ export const registerAdminRoutes = (app: express.Express) => {
     const uptimeSeconds = process.uptime();
     const load = os.loadavg();
     const queue = await getQueueHealth();
-    const builds = BuildEngine.getInstance().listBuilds().slice(0, 10);
 
     res.json({
       system: {
@@ -49,7 +47,7 @@ export const registerAdminRoutes = (app: express.Express) => {
         queue,
         serverStartedAt: serverStartedAt.toISOString()
       },
-      builds
+      builds: []
     });
   });
 
