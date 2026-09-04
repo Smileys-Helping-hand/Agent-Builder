@@ -27,15 +27,17 @@ import { registerGovernanceRoutes } from "./governance.js";
 import { registerControlRoutes } from "./controls.js";
 import { registerChatRoutes } from "./chat.js";
 import { registerTrainingRoutes } from "./train.js";
-import { registerRobloxRoutes } from "./roblox.js";
+// registerRobloxRoutes and registerStoryworldRoutes are imported dynamically,
+// gated on gameModeEnabled below — both modules construct singletons
+// (StoryOrchestrator, WorldSimulator, WorldMemory, ...) at module top level,
+// so a static import here would pay their init cost on every boot regardless
+// of whether the routes are ever registered.
 // import { registerRobloxSyncRoutes } from "./robloxSync.js";
 import { registerCollaborationRoutes } from "./collaboration.js";
 // import { registerRobloxDebugRoutes } from "./robloxDebug.js";
-import { registerStoryworldRoutes } from "./storyworld.js";
 import { registerBuildRoutes } from "./build.js";
 import { envRouter } from "./envManager.js";
 import { buildStudioRouter, initializeBuildStudio } from "./buildStudioRoutes.js";
-import { WorldMemory } from "../state/WorldMemory.js";
 import { registerLicenseRoutes } from "./license.js";
 import { registerAdminRoutes } from "./admin.js";
 import { onboardingRouter } from "./onboarding.js";
@@ -54,12 +56,25 @@ const warnIfNoAccountsExist = () => {
 
 import { JarvisBridge } from "../integrations/JarvisBridge.js";
 
+// The storyworld/NPC/Roblox subsystem is a separate product bolted onto the
+// app builder. It's off by default so a plain "build me an app" boot doesn't
+// pay init cost (WorldMemory's DB, route registration) for a feature it
+// isn't using. Set GAME_MODE_ENABLED=true (or the pre-existing
+// STORYWORLD_ENABLED, honored for anyone who already had it on) to keep it.
+export const gameModeEnabled =
+  (process.env.GAME_MODE_ENABLED ?? process.env.STORYWORLD_ENABLED ?? "false").toLowerCase() === "true";
+
 syncDynamicEnv();
 await initializeTelemetry();
 await PluginRegistry.initialize();
 await VectorMemory.init();
 await QueueService.getInstance();
-await WorldMemory.getInstance().init();
+if (gameModeEnabled) {
+  const { WorldMemory } = await import("../state/WorldMemory.js");
+  await WorldMemory.getInstance().init();
+} else {
+  console.log("[boot] Game mode (storyworld/NPC/Roblox) disabled — set GAME_MODE_ENABLED=true to enable.");
+}
 initializeBuildStudio(process.cwd());
 warnIfNoAccountsExist();
 JarvisBridge.getInstance().initialize().catch(() => {});
@@ -133,13 +148,19 @@ registerGovernanceRoutes(app);
 registerControlRoutes(app);
 registerChatRoutes(app);
 registerTrainingRoutes(app);
-registerRobloxRoutes(app);
-// registerRobloxSyncRoutes(app);
-// registerRobloxDebugRoutes(app);
+if (gameModeEnabled) {
+  const { registerRobloxRoutes } = await import("./roblox.js");
+  const { registerStoryworldRoutes } = await import("./storyworld.js");
+  registerRobloxRoutes(app);
+  // const { registerRobloxSyncRoutes } = await import("./robloxSync.js");
+  // registerRobloxSyncRoutes(app);
+  // const { registerRobloxDebugRoutes } = await import("./robloxDebug.js");
+  // registerRobloxDebugRoutes(app);
+  registerStoryworldRoutes(app);
+}
 app.use("/api/collab", authenticate);
 registerCollaborationRoutes(app);
 registerBuildRoutes(app);
-registerStoryworldRoutes(app);
 registerLicenseRoutes(app);
 registerAdminRoutes(app);
 registerAutonomousRoutes(app);
