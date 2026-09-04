@@ -1,9 +1,9 @@
 {
   "build": {
     "beforeDevCommand": "npm run dashboard",
-    "beforeBuildCommand": "npm --prefix dashboard run build",
+    "beforeBuildCommand": "npm run tauri:prepare",
     "devPath": "http://localhost:3000",
-    "distDir": "../dashboard/.next",
+    "distDir": "../dashboard/out",
     "withGlobalTauri": false
   },
   "package": {
@@ -15,17 +15,20 @@
       "all": false,
       "shell": {
         "all": false,
-        "open": true
+        "open": true,
+        "sidecar": true,
+        "scope": [{ "name": "binaries/agent-builder-api", "sidecar": true, "args": true }]
       }
     },
     "bundle": {
       "active": true,
       "targets": "all",
       "identifier": "com.agent.builder",
-      "icon": []
+      "icon": [],
+      "externalBin": ["binaries/agent-builder-api"]
     },
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; connect-src *"
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:4000 ws://127.0.0.1:4000"
     },
     "windows": [
       {

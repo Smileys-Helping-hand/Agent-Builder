@@ -27,7 +27,8 @@
     "build-studio": "tsx src/cli/buildStudio.ts",
     "build-studio:start": "tsx src/cli/buildStudio.ts start",
     "build-studio:list": "tsx src/cli/buildStudio.ts list",
-    "build-studio:test": "tsx src/cli/testBuildStudio.ts"
+    "build-studio:test": "tsx src/cli/testBuildStudio.ts",
+    "tauri:prepare": "node scripts/prepare-tauri.mjs"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
@@ -36,7 +37,7 @@
     "@opentelemetry/sdk-node": "^0.52.1",
     "@opentelemetry/semantic-conventions": "^1.21.0",
     "amqplib": "^0.10.4",
-    "bcrypt": "^5.1.1",
+    "bcryptjs": "^2.4.3",
     "better-sqlite3": "^13.0.3",
     "chokidar": "^3.6.0",
     "commander": "^11.1.0",
@@ -64,7 +65,7 @@
     "@rbxts/types": "^1.0.890",
     "@tauri-apps/cli": "^1.5.9",
     "@types/amqplib": "^0.10.4",
-    "@types/bcrypt": "^5.0.2",
+    "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^7.6.9",
     "@types/chokidar": "^2.1.7",
     "@types/cors": "^2.8.19",
@@ -76,11 +77,18 @@
     "@types/sqlite3": "^3.1.11",
     "@types/uuid": "^9.0.7",
     "@types/ws": "^8.18.1",
+    "@yao-pkg/pkg": "^6.22.0",
     "concurrently": "^8.2.0",
     "esbuild": "^0.21.5",
-    "pkg": "^5.8.1",
     "ts-node": "^10.9.1",
     "tsx": "^4.15.7",
     "typescript": "^5.6.3"
+  },
+  "pkg": {
+    "assets": [
+      "node_modules/bcrypt/lib/binding/**/*.node",
+      "node_modules/better-sqlite3/prebuilds/**/*.node",
+      "node_modules/sqlite3/**/*.node"
+    ]
   }
 }

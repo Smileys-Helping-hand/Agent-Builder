@@ -58,7 +58,7 @@ import { JarvisBridge } from "../integrations/JarvisBridge.js";
 // pay init cost (WorldMemory's DB, route registration) for a feature it
 // isn't using. Set GAME_MODE_ENABLED=true (or the pre-existing
 // STORYWORLD_ENABLED, honored for anyone who already had it on) to keep it.
-export const gameModeEnabled =
+const gameModeEnabled =
   (process.env.GAME_MODE_ENABLED ?? process.env.STORYWORLD_ENABLED ?? "false").toLowerCase() === "true";
 
 syncDynamicEnv();

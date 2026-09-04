@@ -15,3 +15,5 @@ src-tauri/gen/
 # Generated project workspaces (each is its own git repo)
 /builds/
 /projects/
+dashboard/out/
+src-tauri/binaries/
