@@ -1,2 +1,1 @@
-export * from "./AgentBuilder.js";
-export * from "./DeveloperSDK.js";
+export * from "./AgentBuilderSDK.js";
