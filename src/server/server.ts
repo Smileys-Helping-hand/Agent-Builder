@@ -226,5 +226,18 @@ server.listen(port, host, () => {
   console.log(`Agent Builder API running on http://${host}:${port}`);
 });
 
+// Running as the desktop app's sidecar: exit as soon as the app is gone. The app
+// stops the sidecar on a normal exit, but a crash or force-quit gives it no chance
+// to, and the API then lingered in the background holding ports 4000/9464/35000.
+// The app keeps this process's stdin open for its whole lifetime, so end-of-input
+// on stdin means the parent has exited, however it exited.
+if (process.env.AGENT_BUILDER_SIDECAR === "1") {
+  const exitWithParent = () => process.exit(0);
+  process.stdin.on("end", exitWithParent);
+  process.stdin.on("close", exitWithParent);
+  process.stdin.on("error", exitWithParent);
+  process.stdin.resume();
+}
+
 const autoUpdater = new AutoUpdater();
 autoUpdater.start();
