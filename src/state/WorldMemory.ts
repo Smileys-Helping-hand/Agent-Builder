@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import sqlite3 from "sqlite3";
+import { openSqlite, type SqliteDatabase } from "../utils/Sqlite.js";
 import { v4 as uuidv4 } from "uuid";
 import { Logger } from "../utils/Logger.js";
 import { VectorMemory } from "./VectorMemory.js";
@@ -75,7 +75,7 @@ export type RecordEventInput = {
 
 export class WorldMemory {
   private static instance: WorldMemory | null = null;
-  private db: sqlite3.Database | null = null;
+  private db: SqliteDatabase | null = null;
   private initializing: Promise<void> | null = null;
 
   static getInstance() {
@@ -94,16 +94,7 @@ export class WorldMemory {
 
     this.initializing = (async () => {
       await ensureDirectory(path.dirname(dbPath));
-      await new Promise<void>((resolve, reject) => {
-        const database = new sqlite3.Database(dbPath, (error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          this.db = database;
-          resolve();
-        });
-      });
+      this.db = openSqlite(dbPath);
 
       await this.run(
         `CREATE TABLE IF NOT EXISTS entities (
@@ -455,42 +446,20 @@ export class WorldMemory {
     return base || entityType;
   }
 
+  // node:sqlite is synchronous; these stay async so every existing caller keeps
+  // awaiting them unchanged, and a thrown SQLite error still surfaces as a rejection.
   private async run(sql: string, params: unknown[] = []): Promise<void> {
     await this.init();
-    await new Promise<void>((resolve, reject) => {
-      this.db?.run(sql, params, function (error) {
-        if (error) {
-          reject(error);
-        } else {
-          resolve();
-        }
-      });
-    });
+    this.db?.prepare(sql).run(...params);
   }
 
   private async all<T>(sql: string, params: unknown[] = []): Promise<T[]> {
     await this.init();
-    return await new Promise<T[]>((resolve, reject) => {
-      this.db?.all(sql, params, (error, rows) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve(rows as T[]);
-        }
-      });
-    });
+    return (this.db?.prepare(sql).all(...params) ?? []) as T[];
   }
 
   private async get<T>(sql: string, params: unknown[] = []): Promise<T | undefined> {
     await this.init();
-    return await new Promise<T | undefined>((resolve, reject) => {
-      this.db?.get(sql, params, (error, row) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve(row as T | undefined);
-        }
-      });
-    });
+    return this.db?.prepare(sql).get(...params) as T | undefined;
   }
 }

@@ -429,20 +429,27 @@ Rules: no title heading; use ONLY the findings; keep citation numbers exactly as
   }
 
   /**
-   * Whether a page plausibly concerns the topic at all: every distinctive (8+
-   * letter) word of the topic title appears in it or, for titles without such
-   * words, most of the title's words do. Deliberately loose — the model still
-   * judges real relevance — it only keeps obviously unrelated pages from
-   * costing a model call.
+   * Whether a page plausibly concerns the topic at all. Deliberately loose — the
+   * model still judges real relevance — it only keeps obviously unrelated pages
+   * from costing a model call.
+   *
+   * For titles with distinctive (8+ letter) words: at least half the title's words
+   * must appear, including one of its longest words (length is a cheap proxy for
+   * the most specific term). This used to require *every* distinctive word, which
+   * skipped Tauri's own "Node.js as a sidecar" docs for a topic titled "Node.js
+   * backends as Tauri sidecars" — the page never says "backends". Titles without
+   * distinctive words keep the plain majority rule.
    */
   static mentionsTopic(topicTitle: string, text: string): boolean {
     const terms = [...new Set(contentTokens(topicTitle))];
     if (terms.length === 0) return true;
     const haystack = text.toLowerCase();
     const present = (term: string) => haystack.includes(term.length > 5 ? term.slice(0, term.length - 2) : term);
+    const coverage = terms.filter(present).length / terms.length;
     const distinctive = terms.filter((term) => term.length >= 8);
-    if (distinctive.length > 0) return distinctive.every(present);
-    return terms.filter(present).length / terms.length >= 0.6;
+    if (distinctive.length === 0) return coverage >= 0.6;
+    const longest = Math.max(...distinctive.map((term) => term.length));
+    return coverage >= 0.5 && distinctive.filter((term) => term.length === longest).some(present);
   }
 
   private async readSource(

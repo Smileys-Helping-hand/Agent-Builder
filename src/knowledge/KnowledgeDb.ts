@@ -9,7 +9,7 @@
  */
 import fs from "fs";
 import path from "path";
-import Database from "better-sqlite3";
+import { openSqlite, type SqliteDatabase } from "../utils/Sqlite.js";
 
 const DB_PATH = path.resolve(process.env.KNOWLEDGE_DB_PATH ?? "data/knowledge.db");
 
@@ -133,12 +133,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
 );
 `;
 
-let instance: Database.Database | null = null;
+let instance: SqliteDatabase | null = null;
 
-export const getKnowledgeDb = (): Database.Database => {
+export const getKnowledgeDb = (): SqliteDatabase => {
   if (instance) return instance;
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-  const db = new Database(DB_PATH);
+  const db = openSqlite(DB_PATH);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   db.exec(SCHEMA);

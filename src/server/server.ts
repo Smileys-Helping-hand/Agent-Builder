@@ -1,3 +1,8 @@
+// Must stay the first import. ESM evaluates imports in order, and modules
+// below read process.env while they load — jwt.ts picks its signing secret
+// at import time. Without this, .env was only loaded later (as a side effect
+// of OpenAIClient) and JWT_SECRET from .env was silently ignored.
+import "dotenv/config";
 import http from "http";
 import express, { Request, Response } from "express";
 import cors from "cors";

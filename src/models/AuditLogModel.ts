@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import Database from "better-sqlite3";
+import { openSqlite } from "../utils/Sqlite.js";
 
 export type AuditLogEntry = {
   id: number;
@@ -30,7 +30,7 @@ export type AuditLogFilter = {
 const DB_PATH = path.resolve("data/audit.db");
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
-const db = new Database(DB_PATH);
+const db = openSqlite(DB_PATH);
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS audit_log (

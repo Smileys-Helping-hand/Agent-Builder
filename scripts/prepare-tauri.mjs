@@ -56,9 +56,9 @@ console.log("\n=== 3/3 Packaging the API as a Tauri sidecar ===");
 // resolves them from a snapshot path that does not exist at runtime. Verified
 // empirically: the produced binary starts and immediately dies with
 // "bcrypt_lib.node was not included into executable at compilation stage".
-// bcrypt has been replaced with pure-JS bcryptjs; better-sqlite3 (used by the
-// user/refresh-token/audit/license models) is the remaining blocker and needs
-// migrating to node:sqlite before this step yields a working binary.
+// Both native addons are now gone (bcrypt -> bcryptjs, better-sqlite3 ->
+// Node's built-in node:sqlite via src/utils/Sqlite.ts). This guard stays so a
+// native addon reintroduced later fails here, loudly, instead of in the binary.
 const NATIVE_BLOCKERS = ["better-sqlite3"];
 const stillNative = NATIVE_BLOCKERS.filter((dep) =>
   fs.existsSync(path.join(root, "node_modules", dep))

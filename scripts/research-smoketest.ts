@@ -160,6 +160,17 @@ check(
   "topic gate handles hyphenated titles and plurals",
   ResearchEngine.mentionsTopic("Retrieval-augmented generation", "RAG systems combine retrieval with augmented text generation.")
 );
+check(
+  "topic gate keeps an on-topic page that omits one title word (Tauri's own sidecar docs)",
+  ResearchEngine.mentionsTopic(
+    "Node.js backends as Tauri sidecars",
+    "Node.js as a sidecar | Tauri. Package your Node.js app as a self-contained binary and embed it as a sidecar in your Tauri application."
+  )
+);
+check(
+  "topic gate still skips a page that shares only one short title word",
+  !ResearchEngine.mentionsTopic("Node.js backends as Tauri sidecars", "Tauri is a genus of moths found in Southeast Asia.")
+);
 
 // 5. Lesson memory -------------------------------------------------------------
 check("seed lessons insert once", LessonMemory.seed() === 5 && LessonMemory.seed() === 0);

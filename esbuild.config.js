@@ -15,17 +15,16 @@ const outFile = path.resolve(__dirname, "dist/bundle/server.js");
 
 await fs.promises.mkdir(path.dirname(outFile), { recursive: true });
 
+// Baked into the bundle so the packaged API never needs package.json at runtime.
+const { version } = JSON.parse(await fs.promises.readFile(path.resolve(__dirname, "package.json"), "utf8"));
+
 await build({
   entryPoints: [entryPoint],
   outfile: outFile,
   bundle: true,
   platform: "node",
-  target: "node18",
+  target: "node22",
   format: "esm",
   sourcemap: true,
-  external: [
-    "better-sqlite3",
-    "bcrypt",
-    "sqlite3"
-  ]
+  define: { __APP_VERSION__: JSON.stringify(version) }
 });
