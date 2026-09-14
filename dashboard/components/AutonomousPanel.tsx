@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import useSWR from "swr";
+import { apiRequest } from "../lib/api";
 
 interface BuildIteration {
   iteration: number;
@@ -44,8 +45,8 @@ interface HardwareInfo {
     recommendedModelSize: string;
   };
   utilization: {
-    cpuUsagePercent: number;
-    memoryUsagePercent: number;
+    cpuUsage: number;
+    memoryUsage: number;
     recommendation: string;
   };
   recommendations: {
@@ -56,11 +57,7 @@ interface HardwareInfo {
   };
 }
 
-const fetcher = (url: string) => fetch(url, {
-  headers: {
-    Authorization: `Bearer ${localStorage.getItem("token")}`
-  }
-}).then(res => res.json());
+const fetcher = (path: string) => apiRequest<any>(path);
 
 export const AutonomousPanel = () => {
   const [projectName, setProjectName] = useState("");
@@ -103,12 +100,8 @@ export const AutonomousPanel = () => {
 
     setIsStarting(true);
     try {
-      const response = await fetch("/api/autonomous/start", {
+      const data = await apiRequest<{ success?: boolean; buildId?: string; error?: string }>("/api/autonomous/start", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`
-        },
         body: JSON.stringify({
           projectName,
           description,
@@ -120,11 +113,9 @@ export const AutonomousPanel = () => {
           autoPackaging: true
         })
       });
-
-      const data = await response.json();
       
       if (data.success) {
-        setActiveBuildId(data.buildId);
+        setActiveBuildId(data.buildId ?? null);
         mutateActiveBuilds();
         setProjectName("");
         setDescription("");
@@ -141,36 +132,21 @@ export const AutonomousPanel = () => {
   const pauseBuild = async () => {
     if (!activeBuildId) return;
     
-    await fetch(`/api/autonomous/${activeBuildId}/pause`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem("token")}`
-      }
-    });
+    await apiRequest(`/api/autonomous/${activeBuildId}/pause`, { method: "POST" });
     mutateBuildStatus();
   };
 
   const resumeBuild = async () => {
     if (!activeBuildId) return;
     
-    await fetch(`/api/autonomous/${activeBuildId}/resume`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem("token")}`
-      }
-    });
+    await apiRequest(`/api/autonomous/${activeBuildId}/resume`, { method: "POST" });
     mutateBuildStatus();
   };
 
   const stopBuild = async () => {
     if (!activeBuildId) return;
     
-    await fetch(`/api/autonomous/${activeBuildId}/stop`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem("token")}`
-      }
-    });
+    await apiRequest(`/api/autonomous/${activeBuildId}/stop`, { method: "POST" });
     setActiveBuildId(null);
     mutateActiveBuilds();
   };
@@ -201,13 +177,13 @@ export const AutonomousPanel = () => {
             <div>
               <p className="text-gray-400 text-sm">CPU Usage</p>
               <p className="text-white text-xl font-bold">
-                {hardwareInfo.utilization.cpuUsagePercent.toFixed(1)}%
+                {(hardwareInfo.utilization.cpuUsage ?? 0).toFixed(1)}%
               </p>
             </div>
             <div>
               <p className="text-gray-400 text-sm">Memory Usage</p>
               <p className="text-white text-xl font-bold">
-                {hardwareInfo.utilization.memoryUsagePercent.toFixed(1)}%
+                {(hardwareInfo.utilization.memoryUsage ?? 0).toFixed(1)}%
               </p>
             </div>
             <div>
@@ -223,7 +199,7 @@ export const AutonomousPanel = () => {
               </p>
             </div>
           </div>
-          {hardwareInfo.utilization.recommendation && (
+          {hardwareInfo.utilization.recommendation && hardwareInfo.utilization.recommendation !== "System running optimally" && (
             <div className="mt-3 p-2 bg-yellow-900/30 border border-yellow-700 rounded">
               <p className="text-yellow-300 text-sm">
                 ⚠️ {hardwareInfo.utilization.recommendation}

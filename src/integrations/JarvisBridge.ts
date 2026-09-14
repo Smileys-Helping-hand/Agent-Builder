@@ -1,9 +1,11 @@
 /**
  * Jarvis Ecosystem Bridge for Agent-Builder
- * Connects Agent-Builder directly to Second-Brain (Jarvis)
+ * Connects Agent-Builder to Second-Brain (Jarvis):
  * - Auto-registration & heartbeat reporting with hardware specs
- * - Real-time event & error log streaming to Jarvis
- * - Bi-directional goal execution & hot-patching
+ * - Security events forwarded to Jarvis's incident feed
+ *
+ * Research knowledge is delivered separately by SecondBrainClient, through
+ * Second-Brain's knowledge ingest endpoint rather than this bridge.
  */
 
 import { eventBus, type ServerEvent } from "../server/eventBus.js";
@@ -19,6 +21,14 @@ export interface JarvisBridgeConfig {
   enableLogForwarding?: boolean;
 }
 
+const originOf = (value: string): string | null => {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+};
+
 export class JarvisBridge {
   private static instance: JarvisBridge | null = null;
   private jarvisHost: string;
@@ -28,6 +38,7 @@ export class JarvisBridge {
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private registered: boolean = false;
   private isConnecting: boolean = false;
+  private eventBusHooked: boolean = false;
 
   private constructor(config: JarvisBridgeConfig = {}) {
     this.jarvisHost = (config.jarvisHost || process.env.JARVIS_HOST || "http://localhost:3000").replace(/\/$/, "");
@@ -50,6 +61,18 @@ export class JarvisBridge {
     if (this.isConnecting) return;
     this.isConnecting = true;
 
+    // Second-Brain and the Agent-Builder dashboard both default to port 3000.
+    // When the host points at the dashboard, every call below would land on the
+    // wrong app and fail in confusing ways, so say so plainly.
+    const dashboardOrigin = originOf(process.env.DASHBOARD_URL ?? "http://localhost:3000");
+    if (originOf(this.jarvisHost) === dashboardOrigin) {
+      Logger.warn(
+        "JARVIS_HOST is the same address as the Agent-Builder dashboard. Run Second-Brain on another port " +
+          "(e.g. PORT=3100) and set JARVIS_HOST / SECOND_BRAIN_HOST to it.",
+        { jarvisHost: this.jarvisHost }
+      );
+    }
+
     try {
       if (!this.apiKey) {
         await this.attemptAutoRegister();
@@ -59,7 +82,7 @@ export class JarvisBridge {
 
       this.startHeartbeatLoop();
       this.hookEventBus();
-      Logger.log("Jarvis Bridge initialized successfully", { host: this.jarvisHost });
+      Logger.log("Jarvis Bridge initialized", { host: this.jarvisHost, connected: this.registered });
     } catch (err: any) {
       Logger.warn("Jarvis Bridge initialization failed (failing open, will retry)", { error: err.message });
     } finally {
@@ -130,11 +153,9 @@ export class JarvisBridge {
         })
       });
 
-      if (response.ok) {
-        this.registered = true;
-      }
+      this.registered = response.ok;
     } catch {
-      // Fails open silently
+      this.registered = false;
     }
   }
 
@@ -149,25 +170,29 @@ export class JarvisBridge {
       }
       await this.sendPing();
     }, 45_000);
+    this.heartbeatTimer.unref();
   }
 
   /**
-   * Hook Agent-Builder event bus to stream events/logs to Jarvis
+   * Forward security events to Jarvis.
+   *
+   * This used to forward log, task, build and feedback events too — all posted
+   * to /api/security/incidents with the event type as the "threatType", which
+   * filed every build step in Second-Brain's security feed as an incident.
+   * Only genuine security events belong there.
    */
   private hookEventBus(): void {
+    if (this.eventBusHooked) return;
+    this.eventBusHooked = true;
     eventBus.on("event", async (event: ServerEvent) => {
-      // Forward significant events or errors to Jarvis
-      if (event.type === "log" || event.type === "task" || event.type === "build" || event.type === "security" || event.type === "feedback") {
-        await this.forwardLogToJarvis(event);
+      if (event.type === "security") {
+        await this.forwardSecurityEvent(event);
       }
     });
   }
 
-  /**
-   * Forward a log / event entry to Jarvis incident or event log endpoint
-   */
-  public async forwardLogToJarvis(event: ServerEvent): Promise<void> {
-    if (!this.apiKey) return;
+  public async forwardSecurityEvent(event: ServerEvent): Promise<void> {
+    if (!this.apiKey || event.type !== "security") return;
 
     try {
       await fetch(`${this.jarvisHost}/api/security/incidents`, {
@@ -178,7 +203,7 @@ export class JarvisBridge {
         },
         body: JSON.stringify({
           endpoint: "/api/agent/events",
-          threatType: event.type,
+          threatType: "security",
           severity: "info",
           details: event.payload
         })

@@ -32,6 +32,7 @@ import { SimulationPanel } from "../components/SimulationPanel";
 import { SocialPanel } from "../components/SocialPanel";
 import { PlayerPanel } from "../components/PlayerPanel";
 import { AutonomousPanel } from "../components/AutonomousPanel";
+import { ResearchPanel } from "../components/ResearchPanel";
 import {
   fetchTasks,
   subscribeToEvents,
@@ -69,7 +70,8 @@ type TabKey =
   | "social"
   | "simulation"
   | "player"
-  | "autonomous";
+  | "autonomous"
+  | "research";
 
 // Order here is render order for the tab bar — Autonomous Build first, since
 // it's the pipeline that verifies its own output before calling a build done.
@@ -77,6 +79,7 @@ type TabKey =
 // not run the install/typecheck/test/repair loop.
 const tabLabels: Record<TabKey, string> = {
   autonomous: "Autonomous Build",
+  research: "Research",
   overview: "Overview",
   autocode: "AutoCode (basic)",
   graph: "Graph",
@@ -424,6 +427,8 @@ export default function Dashboard() {
         {activeTab === "player" && <PlayerPanel events={events} />}
 
         {activeTab === "autonomous" && <AutonomousPanel />}
+
+        {activeTab === "research" && <ResearchPanel events={events} />}
       </main>
       <OnboardingWizard onConfigured={() => window.location.reload()} />
     </>

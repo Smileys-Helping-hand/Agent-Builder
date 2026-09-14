@@ -7,6 +7,10 @@ import { HardwareScaler } from "../utils/HardwareScaler.js";
 import { PackagingAgent } from "../agents/PackagingAgent.js";
 import { Workspace } from "./Workspace.js";
 import { Verifier, type VerificationReport } from "./Verifier.js";
+import { createPatch } from "diff";
+import { LessonMemory, type Lesson } from "../learning/LessonMemory.js";
+import { WorkloadCoordinator } from "../utils/WorkloadCoordinator.js";
+import { toKey } from "../knowledge/KnowledgeDb.js";
 
 export interface BuildIteration {
   iteration: number;
@@ -242,6 +246,16 @@ export class AutonomousOrchestrator extends EventEmitter {
           failingCheck: verification.blockingCheck?.name
         });
 
+        // Pull what earlier builds learned about this kind of failure into the repair prompt.
+        const failingBefore = verification.blockingCheck;
+        const signature = failingBefore ? LessonMemory.errorSignature(failingBefore.name, failingBefore.output) : null;
+        const repairLessons =
+          failingBefore && signature
+            ? LessonMemory.relevant("build", `${signature}\n${failingBefore.output.slice(0, 1500)}`, 4)
+            : [];
+        const repairLessonIds = repairLessons.map((lesson) => lesson.id);
+        LessonMemory.markApplied(repairLessonIds);
+
         let critique: string | null = null;
         if (profileSettings.reviewModel && this.isOllamaProvider()) {
           critique = await this.getRepairCritique(profileSettings.reviewModel, currentFiles, verification);
@@ -250,8 +264,10 @@ export class AutonomousOrchestrator extends EventEmitter {
           }
         }
 
-        const repaired = await this.repairFiles(currentFiles, verification, iterationNum, repairAttempt, critique);
+        const filesBeforeRepair = currentFiles;
+        const repaired = await this.repairFiles(currentFiles, verification, iterationNum, repairAttempt, critique, repairLessons);
         if (!repaired) {
+          LessonMemory.recordOutcome(repairLessonIds, false);
           Logger.warn(`Iteration ${iterationNum}: repair attempt ${repairAttempt} produced no usable patch, stopping repair`);
           break;
         }
@@ -266,6 +282,18 @@ export class AutonomousOrchestrator extends EventEmitter {
         });
 
         verification = await Verifier.verify(this.workspace);
+
+        // Learn from the attempt: the question is whether the check that was blocking now passes.
+        const blockerCleared =
+          failingBefore !== undefined &&
+          !verification.checks.some((check) => check.name === failingBefore.name && check.applicable && !check.passed);
+        LessonMemory.recordOutcome(repairLessonIds, blockerCleared);
+        if (blockerCleared && failingBefore && signature) {
+          const alreadyCredited = repairLessons.some((lesson) => toKey(lesson.signature) === toKey(signature));
+          if (!alreadyCredited) {
+            await this.learnFromFix(signature, failingBefore, filesBeforeRepair, currentFiles, iterationNum);
+          }
+        }
       }
 
       iteration.verification = verification;
@@ -412,7 +440,8 @@ error) and the specific change needed to fix it. Do not write code.`;
     verification: VerificationReport,
     iterationNum: number,
     attempt: number,
-    critique?: string | null
+    critique?: string | null,
+    lessons: Lesson[] = []
   ): Promise<Record<string, string> | null> {
     const failing = verification.blockingCheck;
     if (!failing) return null;
@@ -446,6 +475,14 @@ error) and the specific change needed to fix it. Do not write code.`;
         "Do not mix the two.\n"
       : "";
 
+    // Lessons retrieved from earlier builds for this failure. When one already
+    // covers the CLI-guard fix, the built-in hint would only repeat it.
+    const lessonsSection =
+      lessons.length > 0
+        ? `\nLessons learned from earlier builds that match this failure (apply any that fit):\n${LessonMemory.formatForPrompt(lessons)}\n`
+        : "";
+    const builtInHint = lessons.some((lesson) => /require\.main|import\.meta\.url/.test(lesson.lesson)) ? "" : eagerExecutionHint;
+
     const prompt = `You are repairing a generated application that failed an automated check.
 
 Project: ${this.config.projectName}
@@ -454,7 +491,7 @@ Description: ${this.config.description}
 Failing check: ${failing.name}
 Error output:
 ${failing.output}
-${critique ? `\nA senior engineer's diagnosis of the root cause:\n${critique}\n` : ""}${eagerExecutionHint}
+${critique ? `\nA senior engineer's diagnosis of the root cause:\n${critique}\n` : ""}${builtInHint}${lessonsSection}
 Current files:
 ${fileListing}
 
@@ -480,7 +517,16 @@ unchanged. Do not explain the fix in prose.`;
    * Generate code based on current context and previous iterations
    */
   private async generateCode(context: any): Promise<any> {
-    const systemPrompt = this.buildSystemPrompt(context);
+    // What earlier builds learned that's relevant to this project goes in front of
+    // the prompt. Lessons aren't scored here — whether a whole generation passes
+    // says little about any single lesson — only in the repair loop, where the
+    // failure a lesson targets is known.
+    const lessons = LessonMemory.relevant("build", `${this.config.projectName} ${this.config.description}`, 5);
+    const lessonPreamble =
+      lessons.length > 0
+        ? `Lessons learned from earlier builds on this machine — apply them:\n${LessonMemory.formatForPrompt(lessons)}\n\n`
+        : "";
+    const systemPrompt = lessonPreamble + this.buildSystemPrompt(context);
 
     let response = await ModelRouter.generate(systemPrompt);
     let files = this.parseGeneratedCode(response);
@@ -498,6 +544,82 @@ unchanged. Do not explain the fix in prose.`;
       files,
       artifacts: Object.keys(files)
     };
+  }
+
+  /**
+   * A repair just turned a failing check green. Capture what changed and have the
+   * model generalise it into one reusable sentence, so the next build that hits
+   * the same failure starts with the answer instead of rediscovering it. Learning
+   * is best-effort and never allowed to fail the build.
+   */
+  private async learnFromFix(
+    signature: string,
+    failing: { name: string; output: string },
+    before: Record<string, string>,
+    after: Record<string, string>,
+    iterationNum: number
+  ): Promise<void> {
+    try {
+      const changed = Object.keys(after).filter((file) => before[file] !== after[file]);
+      if (changed.length === 0) return;
+      const patch = changed
+        .map((file) => createPatch(file, before[file] ?? "", after[file] ?? "", "before", "after", { context: 2 }))
+        .join("\n")
+        .slice(0, 3000);
+
+      const reply = await ModelRouter.generate(
+        `A build check failed, and the change below fixed it.
+
+Failing check: ${failing.name}
+Error:
+${failing.output.slice(0, 1500)}
+
+The change that fixed it:
+${patch}
+
+Write ONE sentence (under 40 words) stating the general lesson a developer should apply to avoid this failure in any
+future project. Imperative voice. No file names, project names or line numbers. Reply with only that sentence.`
+      );
+      const lesson =
+        reply
+          .replace(/```[\s\S]*?```/g, "")
+          .split("\n")
+          .map((line) => line.replace(/^["'\s*-]+|["'\s*]+$/g, "").trim())
+          .find((line) => line.length > 0) ?? "";
+      if (lesson.length < 20 || lesson.length > 300) {
+        Logger.warn(`Iteration ${iterationNum}: fix confirmed but the model's lesson was unusable, not recorded`, { reply });
+        return;
+      }
+
+      const saved = LessonMemory.recordFix("build", signature, lesson, patch.slice(0, 1500));
+      Logger.log(`Iteration ${iterationNum}: learned from a confirmed fix`, { signature, lesson: saved.lesson });
+      this.emit("lesson-learned", { iteration: iterationNum, signature, lesson: saved.lesson });
+    } catch (error: any) {
+      Logger.warn("Could not record a lesson from this fix", { error: error.message });
+    }
+  }
+
+  // Background research yields the GPU while this build is actually running —
+  // not while it's paused, and not after it finishes or fails.
+  private readonly workloadTracking = this.trackWorkload();
+
+  private trackWorkload(): true {
+    let release: (() => void) | null = null;
+    const begin = () => {
+      release?.();
+      release = WorkloadCoordinator.beginBuild();
+    };
+    const end = () => {
+      release?.();
+      release = null;
+    };
+    this.on("started", begin);
+    this.on("resumed", begin);
+    this.on("paused", end);
+    this.on("stopped", end);
+    this.on("completed", end);
+    this.on("error", end);
+    return true;
   }
 
   /**

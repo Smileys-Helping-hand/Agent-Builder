@@ -101,6 +101,11 @@ type SimulationEvent = {
   payload: SimulationPayload;
 };
 
+type ResearchEvent = {
+  type: "research";
+  payload: Record<string, unknown> & { topicId: string; event: string; timestamp: string };
+};
+
 export type ServerEvent =
   | LogEvent
   | TaskEvent
@@ -115,7 +120,8 @@ export type ServerEvent =
   | CollaborationEvent
   | BuildEvent
   | StoryEvent
-  | SimulationEvent;
+  | SimulationEvent
+  | ResearchEvent;
 
 class ServerEventBus extends EventEmitter {
   emitEvent(event: ServerEvent) {

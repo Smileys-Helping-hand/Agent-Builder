@@ -1265,6 +1265,9 @@ type ServerToClientEvents = {
 
 type EventSocket = Socket<ServerToClientEvents>;
 
+/** Authenticated request to the API with the same base URL and token-refresh handling as the built-in helpers. */
+export const apiRequest = <T>(path: string, init: RequestInit = {}) => jsonFetcher<T>(path, init, true);
+
 export const subscribeToEvents = (onEvent: (event: ServerEvent) => void) => {
   if (typeof window === "undefined") {
     throw new Error("subscribeToEvents can only be used in a browser context");
