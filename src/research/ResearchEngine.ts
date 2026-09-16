@@ -16,7 +16,7 @@ import { Logger } from "../utils/Logger.js";
 import { emitServerEvent } from "../server/eventBus.js";
 import { WorkloadCoordinator } from "../utils/WorkloadCoordinator.js";
 import { SecondBrainClient } from "../integrations/SecondBrainClient.js";
-import { contentTokens, nowIso } from "../knowledge/KnowledgeDb.js";
+import { contentTokens, jaccard, nowIso } from "../knowledge/KnowledgeDb.js";
 import {
   ResearchStore,
   type ResearchDocument,
@@ -561,8 +561,19 @@ If the source is not relevant to the topic, reply {"relevant": false, "findings"
       ResearchStore.logActivity(topic.id, cycle, "finding", `Contested: "${truncate(existing.claim, 120)}" — "${truncate(says, 120)}"`);
     }
 
+    // Follow-ups drift as a topic runs for hours: a topic about code quality
+    // ended up asking about "implications for ethical AI practices". Rank each
+    // one by how much it still shares with the topic rather than trusting them
+    // all equally — drifting questions sink to the bottom of the frontier and
+    // are only explored once the focused ones run dry, and a question with
+    // nothing in common is dropped.
+    const topicTokens = new Set(contentTokens(`${topic.title} ${topic.question}`));
     for (const followUp of (extraction.followUpQuestions ?? []).slice(0, MAX_FOLLOW_UPS_PER_SOURCE)) {
-      if (typeof followUp === "string" && ResearchStore.addQuestion(topic.id, followUp, 0.6, cycle)) outcome.newQuestions += 1;
+      if (typeof followUp !== "string") continue;
+      const overlap = jaccard(contentTokens(followUp), topicTokens);
+      if (overlap === 0) continue;
+      const priority = Math.min(0.9, 0.35 + overlap * 2);
+      if (ResearchStore.addQuestion(topic.id, followUp, priority, cycle)) outcome.newQuestions += 1;
     }
 
     ResearchStore.logActivity(
