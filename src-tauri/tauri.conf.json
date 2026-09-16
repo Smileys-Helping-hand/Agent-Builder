@@ -38,7 +38,9 @@
     },
     "windows": [
       {
+        "label": "main",
         "title": "Agent Builder Mission Control",
+        "visible": false,
         "width": 1280,
         "height": 800,
         "resizable": true,

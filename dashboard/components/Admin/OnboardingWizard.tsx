@@ -9,8 +9,8 @@ import {
 } from "../../lib/api";
 
 const providers = [
-  { id: "openai", label: "OpenAI" },
-  { id: "ollama", label: "Ollama" }
+  { id: "ollama", label: "Ollama (local, default)" },
+  { id: "openai", label: "OpenAI" }
 ];
 
 type OnboardingWizardProps = {
@@ -19,12 +19,16 @@ type OnboardingWizardProps = {
 
 export const OnboardingWizard = ({ onConfigured }: OnboardingWizardProps) => {
   const { data, mutate } = useSWR("onboarding-status", fetchOnboardingStatus, {
-    revalidateOnFocus: false
+    revalidateOnFocus: false,
+    // Keep asking until the API answers. This component renders nothing until it
+    // has a status, so a single failed request (the desktop app's API is still
+    // starting) used to hide first-run setup entirely until a manual reload.
+    refreshInterval: (latest) => (latest ? 0 : 2000)
   });
   const [workspaceName, setWorkspaceName] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
-  const [aiProvider, setAiProvider] = useState("openai");
+  const [aiProvider, setAiProvider] = useState("ollama");
   const [providerKey, setProviderKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -125,7 +129,7 @@ export const OnboardingWizard = ({ onConfigured }: OnboardingWizardProps) => {
 
           <label className="space-y-2 text-sm text-slate-300">
             <span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
-              API Key (optional)
+              API Key (only for cloud providers)
             </span>
             <input
               value={providerKey}

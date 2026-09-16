@@ -1,7 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::collections::HashMap;
+use std::net::{SocketAddr, TcpStream};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use tauri::api::process::{Command, CommandChild, CommandEvent};
 use tauri::{Manager, RunEvent};
@@ -80,6 +82,37 @@ fn spawn_api_sidecar(app: &tauri::AppHandle) {
     }
 }
 
+/// Show the window once the API accepts connections.
+///
+/// The window is hidden in tauri.conf.json because the dashboard fires its first
+/// requests the instant it loads, and while the sidecar was still starting they
+/// all failed with ERR_CONNECTION_REFUSED. The first-run setup wizard renders
+/// nothing until its status request returns, so a fresh install showed a
+/// dashboard with no way to create the first account until the user reloaded by
+/// hand.
+fn show_window_when_api_is_ready(handle: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let port: u16 = std::env::var("PORT")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(4000);
+        let address = SocketAddr::from(([127, 0, 0, 1], port));
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while Instant::now() < deadline {
+            if TcpStream::connect_timeout(&address, Duration::from_millis(500)).is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        // Show it either way: a window whose panels report errors is better than
+        // an app that never appears because its API failed to start.
+        for window in handle.windows().values() {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    });
+}
+
 fn stop_api_sidecar(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<ApiSidecar>() {
         let child = state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take();
@@ -96,6 +129,7 @@ fn main() {
         .manage(ApiSidecar(Mutex::new(None)))
         .setup(|app| {
             spawn_api_sidecar(&app.handle());
+            show_window_when_api_is_ready(app.handle());
             Ok(())
         })
         .build(tauri::generate_context!())

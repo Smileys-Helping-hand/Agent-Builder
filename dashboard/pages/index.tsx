@@ -157,6 +157,8 @@ export default function Dashboard() {
     <>
       <Head>
         <title>Agent Builder Dashboard</title>
+        <link rel="icon" href="/favicon.ico" sizes="any" />
+        <link rel="apple-touch-icon" href="/icon-128.png" />
       </Head>
       <main className="min-h-screen bg-slate-950 pb-20">
         <header className="border-b border-slate-900/70 bg-slate-950/80 backdrop-blur">

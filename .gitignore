@@ -17,3 +17,6 @@ src-tauri/gen/
 /projects/
 dashboard/out/
 src-tauri/binaries/
+
+# Built installers (large binaries; rebuild with npm run tauri:build)
+release/
