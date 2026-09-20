@@ -268,15 +268,25 @@ export const EcosystemStore = {
     return rows.map(mapProject);
   },
 
-  /** Drop projects whose directory no longer exists, so the registry follows reality. */
-  removeMissingProjects(keepPaths: string[]): number {
-    if (keepPaths.length === 0) return 0;
-    const placeholders = keepPaths.map(() => "?").join(", ");
+  /**
+   * Drop projects that were expected under the given roots but are no longer
+   * there. Scoped to those roots on purpose: scanning one root must not evict
+   * projects registered under another.
+   */
+  removeMissingProjects(keepPaths: string[], scannedRoots: string[]): number {
+    if (scannedRoots.length === 0) return 0;
+    const rootPlaceholders = scannedRoots.map(() => "?").join(", ");
+    // With nothing found under these roots every registered project there is
+    // gone: "path NOT IN (NULL)" is NULL, i.e. matches nothing, so spell that
+    // case out rather than silently keeping stale rows.
+    const pathClause =
+      keepPaths.length > 0 ? `AND path NOT IN (${keepPaths.map(() => "?").join(", ")})` : "";
+    const where = `root IN (${rootPlaceholders}) ${pathClause}`;
     const gone = db()
-      .prepare(`SELECT id FROM eco_projects WHERE path NOT IN (${placeholders})`)
-      .all(...keepPaths) as Array<{ id: string }>;
+      .prepare(`SELECT id FROM eco_projects WHERE ${where}`)
+      .all(...scannedRoots, ...keepPaths) as Array<{ id: string }>;
     for (const row of gone) unindexKnowledge("project", row.id);
-    db().prepare(`DELETE FROM eco_projects WHERE path NOT IN (${placeholders})`).run(...keepPaths);
+    db().prepare(`DELETE FROM eco_projects WHERE ${where}`).run(...scannedRoots, ...keepPaths);
     return gone.length;
   },
 

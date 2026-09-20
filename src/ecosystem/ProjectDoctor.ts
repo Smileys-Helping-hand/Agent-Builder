@@ -82,7 +82,7 @@ export const ProjectDoctor = {
     if (!project) return null;
 
     const workspace = new Workspace(project.path);
-    const report = await Verifier.verify(workspace);
+    const report = await Verifier.verify(workspace, { scaffoldTests: false });
 
     let issues = 0;
     for (const check of report.checks) {
@@ -103,7 +103,9 @@ export const ProjectDoctor = {
         severity: "error",
         title: `${check.name} fails`,
         detail: check.output.slice(0, 4000),
-        signature: `${check.name}:${signature}`
+        // One failing check is one issue: keying on the error signature made a
+        // second row whenever the output varied slightly between runs.
+        signature: `check:${check.name}`
       });
       issues += 1;
     }
@@ -136,7 +138,7 @@ export const ProjectDoctor = {
     }
 
     const workspace = new Workspace(project.path);
-    let report = await Verifier.verify(workspace);
+    let report = await Verifier.verify(workspace, { scaffoldTests: false });
     outcome.startScore = report.score;
     if (report.passed) {
       outcome.reason = "All checks already pass.";
@@ -207,7 +209,7 @@ export const ProjectDoctor = {
 
       const head = await workspace.getHead();
       await workspace.writeFiles(patch, `agent-builder: repair ${failing.name} (attempt ${attempt})`);
-      const next = await Verifier.verify(workspace);
+      const next = await Verifier.verify(workspace, { scaffoldTests: false });
 
       if (next.score > report.score) {
         report = next;

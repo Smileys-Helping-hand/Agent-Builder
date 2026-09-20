@@ -230,7 +230,10 @@ export const ProjectScanner = {
       }
     }
 
-    const removed = EcosystemStore.removeMissingProjects(keptPaths);
+    // Prune only within the roots we just scanned. Scanning one root must not
+    // evict projects belonging to another — an earlier version wiped the whole
+    // registry when ECOSYSTEM_ROOTS was narrowed for a single run.
+    const removed = EcosystemStore.removeMissingProjects(keptPaths, roots);
     const durationMs = Date.now() - started;
     EcosystemStore.recordEvent(null, "scan", `Scanned ${keptPaths.length} project(s) in ${(durationMs / 1000).toFixed(1)}s`);
     return { scanned: keptPaths.length, removed, durationMs, roots };

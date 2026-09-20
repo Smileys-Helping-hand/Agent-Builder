@@ -1,16 +1,23 @@
-# 🧠 Agent Builder
+# Agent Builder
 
-A modular, autonomous multi-agent builder powered by OpenAI.
-It can generate, design, test, and deploy apps from a single prompt — now with a unified Build Engine, voice-driven planning, and continuous learning loops.
+A local-first app builder, packager and maintainer. It runs on your own
+hardware against a local Ollama model — no cloud credits, no API keys — and it
+trades time for quality: a build is not finished because a model says so, but
+because install, typecheck, build, test and lint all pass.
 
-## � Package as Desktop Application
+What it does:
 
-Want to install Agent Builder like a normal Windows application? See **[INSTALLATION.md](INSTALLATION.md)** for complete instructions on creating a Windows installer (.msi).
-
-**Quick start:**
-```powershell
-.\setup-and-build.ps1
-```
+- **Builds apps.** Describe one; it generates, installs, verifies and repairs it
+  until the objective checks pass, keeping the best-scoring attempt.
+- **Learns from its own failures.** Every fix becomes a lesson, retrieved the
+  next time a similar error appears, and retired if it stops helping.
+- **Researches continuously.** Give it a topic and it keeps reading, checks each
+  finding against its source, and rewrites study documents as it learns.
+- **Watches the whole machine.** It keeps a live picture of every project on
+  your drives and exposes it to other agents (Jarvis included) so work can
+  continue across sessions — see **[ECOSYSTEM.md](ECOSYSTEM.md)**.
+- **Ships as a desktop app.** A Windows installer carrying its own API — see
+  **[INSTALL.md](INSTALL.md)**.
 
 ## �🚀 Quick-Start
 

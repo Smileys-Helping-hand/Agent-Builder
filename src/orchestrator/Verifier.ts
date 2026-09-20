@@ -115,8 +115,21 @@ export class Verifier {
     await workspace.commitCurrentState("Scaffold test runner (vitest)");
   }
 
-  static async verify(workspace: Workspace): Promise<VerificationReport> {
-    await this.scaffoldTests(workspace);
+  /**
+   * Run the objective checks.
+   *
+   * `scaffoldTests` adds a test runner when the project has none, which is what
+   * a freshly generated app needs — but it rewrites package.json, so anything
+   * pointed at a project the user already owns (see ProjectDoctor) must pass
+   * false rather than inject files into someone's repository.
+   */
+  static async verify(
+    workspace: Workspace,
+    options: { scaffoldTests?: boolean } = {}
+  ): Promise<VerificationReport> {
+    if (options.scaffoldTests !== false) {
+      await this.scaffoldTests(workspace);
+    }
 
     const root = workspace.root;
     const checks: CheckResult[] = [];
