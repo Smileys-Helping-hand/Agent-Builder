@@ -29,7 +29,9 @@
     "build-studio:list": "tsx src/cli/buildStudio.ts list",
     "build-studio:test": "tsx src/cli/testBuildStudio.ts",
     "tauri:prepare": "node scripts/prepare-tauri.mjs",
-    "test:research": "tsx scripts/research-smoketest.ts"
+    "test:research": "tsx scripts/research-smoketest.ts",
+    "key:agent": "tsx scripts/mint-agent-key.ts",
+    "ecosystem:scan": "tsx scripts/scan-ecosystem.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",

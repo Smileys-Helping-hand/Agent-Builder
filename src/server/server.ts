@@ -47,6 +47,7 @@ import { ConfigVault } from "../utils/ConfigVault.js";
 import { syncDynamicEnv } from "../utils/EnvLoader.js";
 import { registerAutonomousRoutes } from "./autonomous.js";
 import { registerResearchRoutes } from "./research.js";
+import { registerEcosystemRoutes } from "./ecosystem.js";
 
 const warnIfNoAccountsExist = () => {
   if (!ConfigVault.isConfigured() && UserModel.count() === 0) {
@@ -162,6 +163,7 @@ registerLicenseRoutes(app);
 registerAdminRoutes(app);
 registerAutonomousRoutes(app);
 registerResearchRoutes(app);
+registerEcosystemRoutes(app);
 app.use("/api/env", authenticate, authorizeRoles(["admin", "owner"]), envRouter);
 const healthMonitor = new HealthMonitor();
 registerHealthRoute(app, healthMonitor);
