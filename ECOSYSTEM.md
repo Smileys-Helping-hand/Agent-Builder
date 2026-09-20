@@ -139,8 +139,8 @@ repo works against `npm run dev:server`, not against the installed app.
 To mint one for the installed app, run the command from its data directory:
 
 ```
-cd %APPDATA%com.agent.builder
-npx tsx E:ProjectsAgent-Builderscriptsmint-agent-key.ts --name jarvis --scopes read,write,execute
+cd %APPDATA%\com.agent.builder
+npx tsx E:\Projects\Agent-Builder\scripts\mint-agent-key.ts --name jarvis --scopes read,write,execute
 ```
 
 Both listen on port 4000, so only one runs at a time anyway.
