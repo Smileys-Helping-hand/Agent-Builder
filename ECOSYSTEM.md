@@ -130,6 +130,21 @@ change files. Fixing stays an explicit request.
 Roots scanned default to `H:/ts,E:/Projects,K:/Projects`; override with
 `ECOSYSTEM_ROOTS`.
 
+## 4b. Keys are per-installation
+
+The API keeps its data beside wherever it runs, so the installed desktop app
+and the development server have **separate key stores**. A key minted in the
+repo works against `npm run dev:server`, not against the installed app.
+
+To mint one for the installed app, run the command from its data directory:
+
+```
+cd %APPDATA%com.agent.builder
+npx tsx E:ProjectsAgent-Builderscriptsmint-agent-key.ts --name jarvis --scopes read,write,execute
+```
+
+Both listen on port 4000, so only one runs at a time anyway.
+
 ## 5. Honest limits
 
 - **Repairs are as good as a 7B local model.** It fixes the class of failure the
@@ -140,5 +155,7 @@ Roots scanned default to `H:/ts,E:/Projects,K:/Projects`; override with
   `GET /api/ecosystem/github/repos` but have no local state.
 - **GitHub access uses the `gh` CLI** already signed in on this machine
   (`mraaziqp`), falling back to `GITHUB_TOKEN`. Nothing new is stored here.
+- **There is no dashboard screen for this yet.** It is an API for agents; the
+  web UI does not show projects or issues.
 - **This key is powerful.** It can read every line of source on these drives and
   start processes. Treat it like an SSH key: local only, rotate it if it leaks.
