@@ -48,6 +48,7 @@ import { syncDynamicEnv } from "../utils/EnvLoader.js";
 import { registerAutonomousRoutes } from "./autonomous.js";
 import { registerResearchRoutes } from "./research.js";
 import { registerEcosystemRoutes } from "./ecosystem.js";
+import { registerServiceRoutes } from "./services.js";
 
 const warnIfNoAccountsExist = () => {
   if (!ConfigVault.isConfigured() && UserModel.count() === 0) {
@@ -89,7 +90,23 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? process.env.DASHBOARD_URL
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-app.use(cors({ origin: allowedOrigins, credentials: true }));
+// Browser callers that authenticate with an agent key (the remote app, wherever
+// it is hosted) are allowed from any origin: the key is the credential, it is
+// never a cookie, and a page without it cannot do anything. Cookie/session
+// callers — the dashboard — stay restricted to the configured allowlist.
+const usesAgentKey = (req: Request): boolean =>
+  Boolean(req.headers["x-agent-key"]) ||
+  String(req.headers["access-control-request-headers"] ?? "").toLowerCase().includes("x-agent-key");
+
+app.use(
+  cors((req, callback) => {
+    if (usesAgentKey(req as Request)) {
+      callback(null, { origin: true, credentials: false, allowedHeaders: ["Content-Type", "x-agent-key", "Authorization"] });
+      return;
+    }
+    callback(null, { origin: allowedOrigins, credentials: true });
+  })
+);
 app.use(express.json());
 
 const server = http.createServer(app);
@@ -164,6 +181,7 @@ registerAdminRoutes(app);
 registerAutonomousRoutes(app);
 registerResearchRoutes(app);
 registerEcosystemRoutes(app);
+registerServiceRoutes(app);
 app.use("/api/env", authenticate, authorizeRoles(["admin", "owner"]), envRouter);
 const healthMonitor = new HealthMonitor();
 registerHealthRoute(app, healthMonitor);

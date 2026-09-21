@@ -20,3 +20,10 @@ src-tauri/binaries/
 
 # Built installers (large binaries; rebuild with npm run tauri:build)
 release/
+
+# Remote app build output and its native wrapper
+remote/node_modules/
+remote/.next/
+remote/out/
+remote/android/
+remote/.env*.local

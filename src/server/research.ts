@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { authenticate, authorizeRoles } from "./auth.js";
+import { authenticateAgent } from "./agentAuth.js";
 import { ResearchEngine } from "../research/ResearchEngine.js";
 import { ResearchStore } from "../research/ResearchStore.js";
 import { LessonMemory, type LessonScope } from "../learning/LessonMemory.js";
@@ -15,7 +16,7 @@ export const registerResearchRoutes = (app: Express) => {
   SecondBrainClient.startSyncLoop();
   const resumed = engine.resumeAll();
 
-  app.get("/api/research/topics", authenticate, (_req: Request, res: Response) => {
+  app.get("/api/research/topics", authenticateAgent("read"), (_req: Request, res: Response) => {
     const topics = ResearchStore.listTopics().map((topic) => ({
       ...topic,
       cycleRunning: engine.isCycleRunning(topic.id),
@@ -26,8 +27,7 @@ export const registerResearchRoutes = (app: Express) => {
 
   app.post(
     "/api/research/topics",
-    authenticate,
-    authorizeRoles(["developer", "admin", "owner"]),
+    authenticateAgent("write"),
     (req: Request, res: Response) => {
       const { title, question } = (req.body ?? {}) as { title?: unknown; question?: unknown };
       const cleanTitle = typeof title === "string" ? title.replace(/\s+/g, " ").trim() : "";
@@ -46,7 +46,7 @@ export const registerResearchRoutes = (app: Express) => {
     }
   );
 
-  app.get("/api/research/topics/:id", authenticate, (req: Request, res: Response) => {
+  app.get("/api/research/topics/:id", authenticateAgent("read"), (req: Request, res: Response) => {
     const topic = ResearchStore.getTopicSummary(req.params.id);
     if (!topic) return res.status(404).json({ error: "Research topic not found." });
     return res.json({
@@ -68,8 +68,7 @@ export const registerResearchRoutes = (app: Express) => {
   for (const [action, run] of actions) {
     app.post(
       `/api/research/topics/:id/${action}`,
-      authenticate,
-      authorizeRoles(["developer", "admin", "owner"]),
+      authenticateAgent("write"),
       (req: Request, res: Response) => {
         if (!run(req.params.id)) return res.status(404).json({ error: "Research topic not found." });
         return res.json({ topic: ResearchStore.getTopicSummary(req.params.id) });
@@ -108,13 +107,13 @@ export const registerResearchRoutes = (app: Express) => {
     return res.json({ document });
   });
 
-  app.get("/api/research/search", authenticate, (req: Request, res: Response) => {
+  app.get("/api/research/search", authenticateAgent("read"), (req: Request, res: Response) => {
     const query = typeof req.query.q === "string" ? req.query.q.trim() : "";
     if (!query) return res.status(400).json({ error: "Provide a search query with ?q=" });
     return res.json({ results: ResearchStore.search(query, 30) });
   });
 
-  app.get("/api/learning/lessons", authenticate, (req: Request, res: Response) => {
+  app.get("/api/learning/lessons", authenticateAgent("read"), (req: Request, res: Response) => {
     const scope = req.query.scope === "build" || req.query.scope === "research" ? (req.query.scope as LessonScope) : undefined;
     res.json({ lessons: LessonMemory.list(scope, 200) });
   });
