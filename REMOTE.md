@@ -1,100 +1,106 @@
 # Remote app — run your builder from anywhere
 
-A small web app that talks to the Agent Builder on your PC. Host it on Vercel,
-install it on your phone and desktop, and you can check on everything, switch the
-services on, and start work from wherever you are.
+**Live at: https://agent-builder-remote.vercel.app**
 
-It is in `remote/`.
+The app is the interface. Everything actually runs on your PC — building,
+researching, repairing. The app just shows you what is happening and tells the PC
+what to do.
 
-## What it does
+## Everyday use
 
-- **Home** — a power button that switches everything on, a troubleshoot button
-  that tells you what is wrong in plain language, live service status, GPU and
-  disk, and the latest activity.
-- **Projects** — every project on your machine with its branch, uncommitted and
-  unpushed counts. Tap one for a full briefing, or run Diagnose / Repair.
-- **Research** — start a topic, see findings as they accumulate, pause or resume.
-- **Feed** — everything the builder has been doing, newest first.
-- **Settings** — where your machine lives and the key to reach it.
+### On the PC: double-click **Start Agent Builder**
 
-## The one thing to understand
+It is on your desktop (run `Install Autostart.cmd` once to put it there, and to
+start it automatically whenever you log in). It:
 
-Your PC's API listens on `127.0.0.1` — only that machine can reach it. Hosting the
-page on Vercel does not change that: the page runs in *your phone's* browser and
-talks straight to *your PC*. So the phone needs a path to the PC. Pick one:
+1. starts the local model,
+2. starts the builder,
+3. opens a tunnel so your phone can reach the machine from anywhere,
+4. prints a **QR code**.
 
-| Option | How it works | Trade-off |
+Scan that code with your phone's camera. The app opens already connected — no
+typing an address, no pasting a 67-character key.
+
+Leave the window open; closing it stops what it started. **Stop Agent Builder**
+does the same thing from a shortcut.
+
+### On the phone
+
+| Screen | What it is for |
+| --- | --- |
+| **Home** | The power button, troubleshooting, live status, and the latest activity. |
+| **Projects** | Every project on the machine. Tap for a briefing, or run Diagnose / Repair. |
+| **Research** | Start a topic, watch findings accumulate, pause or resume. |
+| **Feed** | Everything that has happened, newest first. |
+| **Settings** | Connection, how this works, and shutting the builder down. |
+
+Three buttons that are easy to confuse:
+
+- **Switch everything on** — starts the model, resumes research, refreshes projects.
+- **Pause work** — stops research and the project sweep so the GPU is free. The
+  builder stays reachable.
+- **Shut down** (in Settings) — stops the builder completely. Nothing in the app
+  can start it again; you need the launcher on the PC.
+
+## Install it as an app
+
+- **Android / desktop Chrome or Edge**: open the site, menu → *Install app*.
+- **iPhone**: Share → *Add to Home Screen*.
+- **Android APK**: `release/Agent Builder.apk`. Copy it to the phone and open it
+  (allow installing from unknown sources). Unsigned debug output — fine for your
+  own device, not for distribution. Rebuild with
+  `cd remote/android && ./gradlew assembleDebug`.
+
+## Reaching your machine
+
+The launcher's tunnel is the zero-effort option, but there are three:
+
+| Option | How | Trade-off |
 | --- | --- | --- |
-| **Tailscale** (recommended) | Install on PC and phone, same account. Use the PC's tailnet address, e.g. `http://100.x.y.z:4000`. | Nothing is exposed to the internet. Needs the app on both devices. |
-| **Cloudflare Tunnel** | `cloudflared tunnel --url http://127.0.0.1:4000` prints an `https://…trycloudflare.com` address. | Works on any network with no client app, but the address is public — your agent key is the only thing protecting it. |
-| **Home Wi-Fi** | The PC's LAN address, e.g. `http://192.168.1.20:4000`. Start the API with `HOST=0.0.0.0`. | Only works at home. |
+| **Cloudflare tunnel** (what the launcher uses) | Automatic. | The address changes every restart, so rescan the QR. The address is public — your key is what protects it. |
+| **Tailscale** | Install on PC and phone, same account; use the `100.x.y.z:4000` address. | Nothing is exposed to the internet, and the address never changes. Needs the app on both devices. |
+| **Home Wi-Fi** | The PC's LAN address; start the API with `HOST=0.0.0.0`. | Only works at home. |
 
-Whichever you choose, you paste that address plus a key into Settings once, and
-the device remembers it.
+The launcher isolates its tunnel from `~/.cloudflared/config.yml` deliberately:
+that config routes savestate.co.za and answers 404 to everything else, which a
+quick tunnel would otherwise inherit.
 
-## Deploy to Vercel
+## Keys
 
-The app is a static export — there is no server side, so no secret ever reaches
-Vercel.
-
-1. Push this repository to GitHub.
-2. In Vercel: **New Project** → pick the repo.
-3. Set **Root Directory** to `remote`.
-4. Framework preset: Next.js. Leave the build command and output directory alone.
-5. Deploy.
-
-Nothing else to configure: the app asks for your machine's address on first run.
-
-Locally: `npm --prefix remote run dev -- -p 3003`.
-
-## Get a key
-
-On the PC, in the Agent Builder folder:
+The launcher mints one for your phone on first run and keeps it in
+`data/phone-key.txt`, so the QR keeps working across restarts. To make one by
+hand, or for another device:
 
 ```
 npm run key:agent -- --name phone --scopes read,write,execute
 ```
 
-It prints the key once. Paste it into Settings. Rerun the command to rotate it,
-which stops the old one working immediately. `--list` shows what exists,
-`--revoke` kills one.
+`--list` shows what exists, `--revoke` kills one, rerunning rotates it. Scopes:
+`read` looks, `write` reports issues and rescans, `execute` runs diagnoses and
+repairs.
 
-Scopes: `read` sees everything, `write` reports issues and rescans, `execute`
-runs diagnoses and repairs. A phone that should only look gets `read`.
+## Hosting it yourself
 
-## Install it as an app
+Already deployed, but to redeploy or fork it: the app is a static export with no
+server side, so no secret ever reaches the host.
 
-- **Android / desktop Chrome or Edge**: menu → *Install app*.
-- **iPhone**: Share → *Add to Home Screen*.
-- **Android APK**: `remote/android` is a Capacitor wrapper around the same build.
-  `cd remote/android && ./gradlew assembleDebug` produces
-  `app/build/outputs/apk/debug/app-debug.apk`. Copy it to the phone and open it
-  (allow installing from unknown sources). It is unsigned debug output — fine for
-  your own device, not for distribution.
+```
+cd remote
+vercel deploy --prod
+```
 
-Installed, it runs full screen with its own icon, and the interface still loads
-without a signal (the data needs your machine, of course).
+Or in the Vercel dashboard: New Project → this repo → **Root Directory: `remote`**.
 
-## Security
-
-- **The key is the credential.** It is sent as an `x-agent-key` header and stored
-  only in that device's browser storage.
-- **CORS** allows any origin *for key-authenticated requests*, which is what lets
-  a page hosted on Vercel talk to your machine. A page without the key can do
-  nothing, and no cookies are involved, so there is nothing to ride on.
-- **Over a tunnel, the address is public.** Treat the key like an SSH key: rotate
-  it if you paste it somewhere you should not have.
-- The API still binds loopback by default. Only `HOST=0.0.0.0` changes that, and
-  then only inside your LAN.
+Locally: `npm --prefix remote run dev -- -p 3003`.
 
 ## Limits worth knowing
 
-- **The PC has to be awake and the API running.** A phone cannot start a sleeping
-  machine. Keep the desktop app running, or set the API to start with Windows.
-- **The power button starts what surrounds the API** — the model server, research,
-  the project sweep. It cannot start the API itself; the API is what answers the
-  request.
-- **Repairs take minutes** and run on the PC. You can leave the screen; come back
-  to the Feed.
-- **iPhone home-screen apps** get no background notifications here — you check the
-  app, it does not ping you.
+- **A phone cannot wake a sleeping PC.** The machine has to be on with the
+  builder running. Autostart plus leaving the PC awake is the way around it.
+- **The power button starts what surrounds the builder**, not the builder itself —
+  that is the thing answering your request.
+- **A free tunnel gets a new address every restart.** Rescan the QR, or use
+  Tailscale for a fixed one.
+- **Repairs take minutes** and run on the PC. Leave the screen; check the Feed.
+- **The key is the credential.** It lives in your device's browser storage and is
+  sent as a header. Treat it like an SSH key; rotate it if it leaks.

@@ -14,6 +14,7 @@ export default function Home() {
   const [steps, setSteps] = useState<Array<{ service: string; action: string; ok: boolean }> | null>(null);
   const [problems, setProblems] = useState<Problem[] | null>(null);
   const [checking, setChecking] = useState(false);
+  const [pausing, setPausing] = useState(false);
 
   if (connected === false) return <NotConnected />;
 
@@ -32,6 +33,23 @@ export default function Home() {
       setSteps([{ service: "error", action: error instanceof Error ? error.message : String(error), ok: false }]);
     } finally {
       setStarting(false);
+    }
+  };
+
+  // Pausing frees the GPU without making the builder unreachable — the thing
+  // you want before gaming, and the thing you do not want to confuse with
+  // shutting down (which is in Settings, behind a confirmation).
+  const pauseWork = async () => {
+    setPausing(true);
+    setProblems(null);
+    try {
+      const result = await api.stopBackgroundWork();
+      setSteps(result.steps);
+      status.setData(result.status);
+    } catch (error) {
+      setSteps([{ service: "error", action: error instanceof Error ? error.message : String(error), ok: false }]);
+    } finally {
+      setPausing(false);
     }
   };
 
@@ -74,6 +92,9 @@ export default function Home() {
           <div className="btn-row" style={{ marginTop: 12 }}>
             <button className="btn" onClick={troubleshoot} disabled={checking}>
               {checking ? <Busy label="Checking…" /> : "Troubleshoot"}
+            </button>
+            <button className="btn" onClick={pauseWork} disabled={pausing}>
+              {pausing ? <Busy label="Pausing…" /> : "Pause work"}
             </button>
             <button className="btn ghost" onClick={() => void status.refresh()}>
               Refresh
@@ -151,6 +172,15 @@ export default function Home() {
                   </span>
                 </div>
               </div>
+              {data.publicUrl ? (
+                <div className="row">
+                  <span className="pill up" />
+                  <div className="body">
+                    <strong>Reachable from anywhere at</strong>
+                    <span>{data.publicUrl}</span>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </>
         ) : status.loading ? (

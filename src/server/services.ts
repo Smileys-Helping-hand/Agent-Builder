@@ -99,6 +99,22 @@ const diskSummary = (): { freeGb: number; detail: string } => {
   }
 };
 
+/**
+ * The public address of this machine, if the launcher opened a tunnel. Written
+ * to data/remote-url.txt by Start Agent Builder, so the app can show you where
+ * it can be reached from outside the house.
+ */
+const readPublicUrl = (): string | null => {
+  try {
+    const file = path.resolve("data/remote-url.txt");
+    if (!fs.existsSync(file)) return null;
+    const value = fs.readFileSync(file, "utf8").replace(/^﻿/, "").trim();
+    return value.startsWith("http") ? value : null;
+  } catch {
+    return null;
+  }
+};
+
 const researchSummary = () => {
   const topics = ResearchStore.listTopics();
   const running = topics.filter((topic) => topic.status === "running");
@@ -152,6 +168,7 @@ const collectStatus = async () => {
 
   return {
     services,
+    publicUrl: readPublicUrl(),
     gpu: await gpuSummary(),
     disk: disk.detail,
     host: os.hostname(),
@@ -321,6 +338,76 @@ export const registerServiceRoutes = (app: Express) => {
       .slice(0, limit);
 
     res.json({ feed });
+  });
+
+  /** Pause the background work without touching the machine. */
+  app.post("/api/services/stop", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const { services } = (req.body ?? {}) as { services?: string[] };
+    const wanted = (services?.length ? services : ["research", "ecosystem"]).map((name) => name.toLowerCase());
+    const steps: Array<{ service: string; action: string; ok: boolean }> = [];
+
+    if (wanted.includes("research")) {
+      let paused = 0;
+      for (const topic of ResearchStore.listTopics()) {
+        if (topic.status === "running" && ResearchEngine.getInstance().pause(topic.id)) paused += 1;
+      }
+      steps.push({ service: "research", action: `${paused} topic(s) paused`, ok: true });
+    }
+
+    if (wanted.includes("ecosystem")) {
+      EcosystemLoop.stop();
+      steps.push({ service: "ecosystem", action: "project sweep stopped", ok: true });
+    }
+
+    // Ollama is left alone unless asked for by name: other things on this
+    // machine may be using it, and it is cheap to leave running.
+    if (wanted.includes("ollama")) {
+      try {
+        await run("taskkill", ["/F", "/IM", "ollama.exe"], { timeout: 10_000, windowsHide: true });
+        steps.push({ service: "ollama", action: "stopped", ok: true });
+      } catch {
+        steps.push({ service: "ollama", action: "was not running", ok: true });
+      }
+    }
+
+    Logger.log("Services stopped from the remote app", { steps });
+    res.json({ steps, status: await collectStatus() });
+  });
+
+  /** Stop and start the background work in one go. */
+  app.post("/api/services/restart", authenticateAgent("execute"), async (_req: Request, res: Response) => {
+    const steps: Array<{ service: string; action: string; ok: boolean }> = [];
+    let paused = 0;
+    for (const topic of ResearchStore.listTopics()) {
+      if (topic.status === "running" && ResearchEngine.getInstance().pause(topic.id)) paused += 1;
+    }
+    EcosystemLoop.stop();
+    steps.push({ service: "research", action: `${paused} topic(s) paused`, ok: true });
+
+    const resumed = ResearchEngine.getInstance().resumeAll();
+    EcosystemLoop.start();
+    steps.push({ service: "research", action: `${resumed} topic(s) resumed`, ok: true });
+    steps.push({ service: "ecosystem", action: "project watch restarted", ok: true });
+
+    res.json({ steps, status: await collectStatus() });
+  });
+
+  /**
+   * Shut the builder down completely. Deliberately explicit (confirm: true),
+   * because nothing can start it again remotely — the machine has to run the
+   * launcher, or have autostart installed.
+   */
+  app.post("/api/services/shutdown", authenticateAgent("execute"), (req: Request, res: Response) => {
+    const { confirm } = (req.body ?? {}) as { confirm?: boolean };
+    if (confirm !== true) {
+      return res.status(400).json({
+        error: "Shutting down stops the API answering you. Send { \"confirm\": true } if you mean it."
+      });
+    }
+    Logger.log("Shutdown requested from the remote app");
+    res.json({ ok: true, message: "Shutting down. Start it again from the PC with Start Agent Builder." });
+    // Let the response flush before the process goes away.
+    setTimeout(() => process.exit(0), 400);
   });
 
   Logger.log("Service control routes registered");

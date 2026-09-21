@@ -102,6 +102,8 @@ export interface ServiceReport {
 
 export interface StatusResponse {
   services: ServiceReport[];
+  /** Set when the launcher opened a tunnel, so the app can show where it is reachable. */
+  publicUrl?: string | null;
   gpu: string;
   disk: string;
   host: string;
@@ -166,6 +168,25 @@ export const api = {
   status: () => request<StatusResponse>("/api/services/status"),
   feed: (limit = 40) => request<{ feed: FeedEntry[] }>(`/api/services/feed?limit=${limit}`),
   troubleshoot: () => request<{ problems: Problem[]; healthy: boolean }>("/api/services/troubleshoot", {}, 30000),
+  stopBackgroundWork: (services?: string[]) =>
+    request<{ steps: Array<{ service: string; action: string; ok: boolean }>; status: StatusResponse }>(
+      "/api/services/stop",
+      { method: "POST", body: JSON.stringify({ services }) },
+      60000
+    ),
+  restartBackgroundWork: () =>
+    request<{ steps: Array<{ service: string; action: string; ok: boolean }>; status: StatusResponse }>(
+      "/api/services/restart",
+      { method: "POST" },
+      60000
+    ),
+  shutdown: () =>
+    request<{ ok: boolean; message: string }>(
+      "/api/services/shutdown",
+      { method: "POST", body: JSON.stringify({ confirm: true }) },
+      20000
+    ),
+
   startEverything: () =>
     request<{ steps: Array<{ service: string; action: string; ok: boolean }>; status: StatusResponse }>(
       "/api/services/start",

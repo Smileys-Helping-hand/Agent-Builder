@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 
-import { clearConnection, loadConnection, saveConnection, testConnection } from "@/lib/api";
+import Link from "next/link";
+
+import { api, clearConnection, loadConnection, saveConnection, testConnection } from "@/lib/api";
 import { Banner, Busy, Header } from "../ui";
 
 export default function Settings() {
@@ -12,13 +14,43 @@ export default function Settings() {
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [saved, setSaved] = useState(false);
 
+  const [shuttingDown, setShuttingDown] = useState(false);
+  const [shutdownNote, setShutdownNote] = useState<string | null>(null);
+
   useEffect(() => {
+    // The launcher's QR code carries the address and key, so scanning it
+    // connects this device without anyone typing a 64-character key on a phone.
+    const params = new URLSearchParams(window.location.search);
+    const fromLink = { address: params.get("address") ?? "", key: params.get("key") ?? "" };
+    if (fromLink.address && fromLink.key) {
+      saveConnection(fromLink);
+      setAddress(fromLink.address);
+      setKey(fromLink.key);
+      setSaved(true);
+      // Drop the credentials out of the address bar once they are stored.
+      window.history.replaceState({}, "", window.location.pathname);
+      void testConnection(fromLink.address, fromLink.key).then(setResult);
+      return;
+    }
     const existing = loadConnection();
     if (existing) {
       setAddress(existing.address);
       setKey(existing.key);
     }
   }, []);
+
+  const shutDown = async () => {
+    setShuttingDown(true);
+    setShutdownNote(null);
+    try {
+      const result = await api.shutdown();
+      setShutdownNote(result.message);
+    } catch (error) {
+      setShutdownNote(error instanceof Error ? error.message : String(error));
+    } finally {
+      setShuttingDown(false);
+    }
+  };
 
   const check = async () => {
     setTesting(true);
@@ -93,6 +125,14 @@ export default function Settings() {
         </div>
 
         <div className="card">
+          <h2>New here?</h2>
+          <p className="hint">A short, plain-language walkthrough of starting, using and stopping everything.</p>
+          <Link href="/help">
+            <button className="btn primary">How this works</button>
+          </Link>
+        </div>
+
+        <div className="card">
           <h2>How to reach your machine from anywhere</h2>
           <p className="hint">Pick one. The first is the easiest to keep secure.</p>
 
@@ -139,6 +179,18 @@ export default function Settings() {
             It prints the key once. Paste it above. Rerun the command any time to replace it — the old one stops working
             immediately.
           </p>
+        </div>
+
+        <div className="card">
+          <h2>Shut the builder down</h2>
+          <p className="hint">
+            Stops it completely on the PC. Nothing here can start it again — you will need the launcher on the machine
+            itself. To free the GPU without losing access, use <strong>Pause work</strong> on Home instead.
+          </p>
+          <button className="btn" onClick={shutDown} disabled={shuttingDown}>
+            {shuttingDown ? <Busy label="Shutting down…" /> : "Shut down the builder"}
+          </button>
+          {shutdownNote ? <Banner kind="info">{shutdownNote}</Banner> : null}
         </div>
 
         <div className="card">
