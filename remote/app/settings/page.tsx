@@ -1,203 +1,275 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import Link from "next/link";
-
 import { api, clearConnection, loadConnection, saveConnection, testConnection } from "@/lib/api";
-import { Banner, Busy, Header } from "../ui";
+import { Banner, Busy, Header, Icon, useToast } from "../ui";
+
+/**
+ * Pull an address and key out of whatever was pasted: the whole connection link
+ * from the QR code, or just the two values. Typing a 67-character key on a
+ * phone is the thing this screen exists to avoid.
+ */
+const parsePasted = (text: string): { address: string; key: string } | null => {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    const address = url.searchParams.get("address");
+    const key = url.searchParams.get("key");
+    if (address && key) return { address, key };
+  } catch {
+    // Not a URL - fall through to the loose match below.
+  }
+  const address = trimmed.match(/https?:\/\/[^\s"'<>]+/)?.[0];
+  const key = trimmed.match(/ab_[a-f0-9]{64}/)?.[0];
+  if (address && key) return { address: address.replace(/[?&]key=.*$/, ""), key };
+  return null;
+};
 
 export default function Settings() {
+  const toast = useToast();
   const [address, setAddress] = useState("");
   const [key, setKey] = useState("");
+  const [pasted, setPasted] = useState("");
+  const [manual, setManual] = useState(false);
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
-  const [saved, setSaved] = useState(false);
-
+  const [connected, setConnected] = useState(false);
   const [shuttingDown, setShuttingDown] = useState(false);
-  const [shutdownNote, setShutdownNote] = useState<string | null>(null);
 
   useEffect(() => {
     // The launcher's QR code carries the address and key, so scanning it
-    // connects this device without anyone typing a 64-character key on a phone.
+    // connects this device without anyone typing anything.
     const params = new URLSearchParams(window.location.search);
     const fromLink = { address: params.get("address") ?? "", key: params.get("key") ?? "" };
     if (fromLink.address && fromLink.key) {
       saveConnection(fromLink);
       setAddress(fromLink.address);
       setKey(fromLink.key);
-      setSaved(true);
-      // Drop the credentials out of the address bar once they are stored.
+      setConnected(true);
       window.history.replaceState({}, "", window.location.pathname);
-      void testConnection(fromLink.address, fromLink.key).then(setResult);
+      void testConnection(fromLink.address, fromLink.key).then((outcome) => {
+        setResult(outcome);
+        toast(outcome.ok ? "Connected" : outcome.message, outcome.ok ? "ok" : "error");
+      });
       return;
     }
     const existing = loadConnection();
     if (existing) {
       setAddress(existing.address);
       setKey(existing.key);
+      setConnected(true);
     }
-  }, []);
+  }, [toast]);
 
-  const shutDown = async () => {
-    setShuttingDown(true);
-    setShutdownNote(null);
-    try {
-      const result = await api.shutdown();
-      setShutdownNote(result.message);
-    } catch (error) {
-      setShutdownNote(error instanceof Error ? error.message : String(error));
-    } finally {
-      setShuttingDown(false);
+  const connectFromPaste = async () => {
+    const parsed = parsePasted(pasted);
+    if (!parsed) {
+      toast("That does not look like a connection link", "error");
+      return;
     }
-  };
-
-  const check = async () => {
     setTesting(true);
-    setResult(null);
-    setResult(await testConnection(address, key));
+    const outcome = await testConnection(parsed.address, parsed.key);
+    setResult(outcome);
+    if (outcome.ok) {
+      saveConnection(parsed);
+      setAddress(parsed.address);
+      setKey(parsed.key);
+      setConnected(true);
+      setPasted("");
+      toast("Connected", "ok");
+    } else {
+      toast(outcome.message, "error");
+    }
     setTesting(false);
   };
 
-  const save = () => {
-    saveConnection({ address, key });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+  const saveManual = async () => {
+    setTesting(true);
+    const outcome = await testConnection(address, key);
+    setResult(outcome);
+    if (outcome.ok) {
+      saveConnection({ address, key });
+      setConnected(true);
+      toast("Connected", "ok");
+    } else {
+      toast(outcome.message, "error");
+    }
+    setTesting(false);
   };
 
   const forget = () => {
     clearConnection();
     setAddress("");
     setKey("");
+    setConnected(false);
     setResult(null);
+    toast("This device is no longer connected");
+  };
+
+  const shutDown = async () => {
+    setShuttingDown(true);
+    try {
+      const outcome = await api.shutdown();
+      toast(outcome.message, "info");
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error), "error");
+    } finally {
+      setShuttingDown(false);
+    }
   };
 
   return (
     <>
-      <Header title="Settings" sub="Where your machine lives, and the key to reach it" />
+      <Header title="Settings" sub={connected ? "Connected to your machine" : "Not connected yet"} state={connected ? "up" : "down"} />
+
       <div className="wrap">
+        {!connected ? (
+          <section className="hero">
+            <div className="hero-label">Step 1</div>
+            <h2 className="hero-title">Scan the QR code</h2>
+            <p className="hero-sub">
+              On your PC, double-click <strong>Start Agent Builder</strong>. It shows a QR code — scan it with your
+              camera and this app connects itself.
+            </p>
+          </section>
+        ) : null}
+
         <div className="card">
-          <h2>Connection</h2>
-          <p className="hint">Stored on this device only. Nothing is sent anywhere else.</p>
+          <h2>{connected ? "Connection" : "Or paste the link"}</h2>
+          <p className="hint">
+            {connected
+              ? `Connected to ${address.replace(/^https?:\/\//, "")}. Stored on this device only.`
+              : "Copy the link under the QR code and paste it here - it carries the address and the key."}
+          </p>
 
-          <label className="field">
-            <span>Address of your machine</span>
-            <input
-              value={address}
-              onChange={(event) => setAddress(event.target.value)}
-              placeholder="http://100.x.y.z:4000"
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-              inputMode="url"
-            />
-          </label>
-
-          <label className="field">
-            <span>Agent key</span>
-            <input
-              value={key}
-              onChange={(event) => setKey(event.target.value)}
-              placeholder="ab_…"
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-              type="password"
-            />
-          </label>
-
-          <div className="btn-row">
-            <button className="btn" onClick={check} disabled={testing || !address || !key}>
-              {testing ? <Busy label="Testing…" /> : "Test"}
-            </button>
-            <button className="btn primary" onClick={save} disabled={!address || !key}>
-              Save
-            </button>
-            {loadConnection() ? (
-              <button className="btn ghost" onClick={forget}>
-                Forget
+          {!connected ? (
+            <>
+              <label className="field">
+                <span>Connection link</span>
+                <input
+                  value={pasted}
+                  onChange={(event) => setPasted(event.target.value)}
+                  placeholder="https://agent-builder-remote.vercel.app/settings/?address=…"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                />
+              </label>
+              <div className="btn-row">
+                <button className="btn primary" onClick={connectFromPaste} disabled={testing || !pasted}>
+                  {testing ? <Busy label="Connecting…" /> : <>{Icon.check} Connect</>}
+                </button>
+                <button className="btn ghost" onClick={() => setManual((value) => !value)}>
+                  {manual ? "Hide" : "Enter by hand"}
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="btn-row">
+              <button className="btn" onClick={() => setManual((value) => !value)}>
+                {Icon.gear} {manual ? "Hide details" : "Change address or key"}
               </button>
-            ) : null}
-          </div>
+              <button className="btn ghost" onClick={forget}>
+                Forget this device
+              </button>
+            </div>
+          )}
+
+          {manual ? (
+            <div className="fade-in" style={{ marginTop: 6 }}>
+              <label className="field">
+                <span>Address of your machine</span>
+                <input
+                  value={address}
+                  onChange={(event) => setAddress(event.target.value)}
+                  placeholder="http://100.x.y.z:4000"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  inputMode="url"
+                />
+              </label>
+              <label className="field">
+                <span>Agent key</span>
+                <input
+                  value={key}
+                  onChange={(event) => setKey(event.target.value)}
+                  placeholder="ab_…"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  type="password"
+                />
+              </label>
+              <button className="btn primary" onClick={saveManual} disabled={testing || !address || !key}>
+                {testing ? <Busy label="Testing…" /> : "Test and save"}
+              </button>
+            </div>
+          ) : null}
 
           {result ? <Banner kind={result.ok ? "ok" : "error"}>{result.message}</Banner> : null}
-          {saved ? <Banner kind="ok">Saved on this device.</Banner> : null}
         </div>
 
         <div className="card">
           <h2>New here?</h2>
-          <p className="hint">A short, plain-language walkthrough of starting, using and stopping everything.</p>
+          <p className="hint">A short walkthrough of starting, using and stopping everything.</p>
           <Link href="/help">
-            <button className="btn primary">How this works</button>
+            <button className="btn primary">{Icon.book} How this works</button>
           </Link>
         </div>
 
+        <div className="section-title">Reaching your machine</div>
         <div className="card">
-          <h2>How to reach your machine from anywhere</h2>
-          <p className="hint">Pick one. The first is the easiest to keep secure.</p>
-
           <div className="row">
             <span className="pill up" />
             <div className="body">
-              <strong>Tailscale (recommended)</strong>
+              <strong>Tailscale (address never changes)</strong>
               <span>
-                Install it on the PC and this phone, both signed into the same account. Then use the PC&apos;s tailnet
-                address, e.g. <code>http://100.x.y.z:4000</code>. Nothing is exposed to the internet.
+                Install it on the PC and this phone, signed into the same account, then use the PC&apos;s
+                <code> 100.x.y.z:4000 </code> address. Nothing is exposed to the internet.
               </span>
             </div>
           </div>
-
           <div className="row">
             <span className="pill degraded" />
             <div className="body">
-              <strong>Cloudflare Tunnel</strong>
-              <span>
-                <code>cloudflared tunnel --url http://127.0.0.1:4000</code> gives you an https address that works
-                anywhere. It is public, so the key is the only thing protecting it — keep it secret and rotate it if in
-                doubt.
-              </span>
+              <strong>The launcher&apos;s tunnel</strong>
+              <span>Works anywhere with no setup, but the address changes each restart - rescan the QR.</span>
             </div>
           </div>
-
           <div className="row">
             <span className="pill up" />
             <div className="body">
               <strong>At home</strong>
               <span>
-                Your PC&apos;s LAN address, e.g. <code>http://192.168.1.20:4000</code>. Requires the API to listen
-                beyond loopback: start it with <code>HOST=0.0.0.0</code>.
+                The PC&apos;s Wi-Fi address, e.g. <code>http://192.168.1.20:4000</code>. Start the builder with
+                <code> HOST=0.0.0.0</code>.
               </span>
             </div>
           </div>
         </div>
 
-        <div className="card">
-          <h2>Get a key</h2>
-          <p className="hint">On the PC, in the Agent Builder folder:</p>
-          <pre className="md">npm run key:agent -- --name phone --scopes read,write,execute</pre>
-          <p className="hint" style={{ marginTop: 10, marginBottom: 0 }}>
-            It prints the key once. Paste it above. Rerun the command any time to replace it — the old one stops working
-            immediately.
-          </p>
-        </div>
-
-        <div className="card">
-          <h2>Shut the builder down</h2>
-          <p className="hint">
-            Stops it completely on the PC. Nothing here can start it again — you will need the launcher on the machine
-            itself. To free the GPU without losing access, use <strong>Pause work</strong> on Home instead.
-          </p>
-          <button className="btn" onClick={shutDown} disabled={shuttingDown}>
-            {shuttingDown ? <Busy label="Shutting down…" /> : "Shut down the builder"}
-          </button>
-          {shutdownNote ? <Banner kind="info">{shutdownNote}</Banner> : null}
-        </div>
+        {connected ? (
+          <div className="card">
+            <h2>Shut the builder down</h2>
+            <p className="hint">
+              Stops it completely on the PC. Nothing here can start it again - you would need the launcher on the
+              machine. To free the GPU without losing access, use <strong>Pause work</strong> on Home.
+            </p>
+            <button className="btn danger" onClick={shutDown} disabled={shuttingDown}>
+              {shuttingDown ? <Busy label="Shutting down…" /> : "Shut down the builder"}
+            </button>
+          </div>
+        ) : null}
 
         <div className="card">
           <h2>Install as an app</h2>
           <p className="hint" style={{ marginBottom: 0 }}>
-            Android or desktop Chrome: menu → <em>Install app</em> (or <em>Add to Home screen</em>). iPhone: Share →{" "}
-            <em>Add to Home Screen</em>. It then opens full screen, like any other app.
+            Android or desktop Chrome: menu → <em>Install app</em>. iPhone: Share → <em>Add to Home Screen</em>. It then
+            opens full screen, like any other app.
           </p>
         </div>
       </div>

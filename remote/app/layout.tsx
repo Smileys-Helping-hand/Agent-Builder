@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 
 import "./globals.css";
 import { Nav } from "./nav";
+import { ToastHost } from "./ui";
 
 export const metadata: Metadata = {
   title: "Agent Builder",
@@ -12,7 +13,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0a0f1a",
+  themeColor: "#070b14",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover"
@@ -22,7 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
-        {children}
+        <ToastHost>{children}</ToastHost>
         <Nav />
         <script
           // Registers the offline shell. Inline and tiny so it costs nothing and

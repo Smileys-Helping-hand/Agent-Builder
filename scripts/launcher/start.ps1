@@ -75,13 +75,36 @@ if (Test-Endpoint "http://localhost:11434/api/tags") {
     }
 }
 
+# --- 1b. a stable address, if Tailscale is set up -----------------------------
+# Tailscale gives this machine an address that never changes, which beats a
+# quick tunnel whose hostname is different on every restart.
+$tailscaleIp = $null
+$tailscaleExe = @(
+    "C:\Program Files\Tailscale\tailscale.exe",
+    "$env:LOCALAPPDATA\Tailscale\tailscale.exe"
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+if ($tailscaleExe) {
+    $candidate = (& $tailscaleExe ip -4 2>$null | Select-Object -First 1)
+    if ($candidate -and $candidate -match "^100\.") {
+        $tailscaleIp = $candidate.Trim()
+        Write-Good "Tailscale is connected ($tailscaleIp) - using the address that never changes"
+    } else {
+        Write-Host "  Tailscale is installed but not signed in. Run: tailscale up" -ForegroundColor Yellow
+    }
+}
+
 # --- 2. the builder -----------------------------------------------------------
 if (Test-Endpoint "http://127.0.0.1:4000/api/update/check") {
     Write-Good "Builder already running"
 } else {
     Write-Step "Starting the builder..."
+    # Bind beyond loopback when Tailscale is present: a tailnet address cannot
+    # reach a server listening only on 127.0.0.1. Everything here needs an agent
+    # key or a login regardless of which interface it is reached on.
+    $bindHost = if ($tailscaleIp) { "0.0.0.0" } else { "127.0.0.1" }
     $process = Start-Process -FilePath "cmd.exe" `
-        -ArgumentList "/c npx tsx src/server/server.ts > `"$apiLog`" 2>&1" `
+        -ArgumentList "/c set HOST=$bindHost&& npx tsx src/server/server.ts > `"$apiLog`" 2>&1" `
         -WorkingDirectory $repo -WindowStyle Hidden -PassThru
     $started.api = $process.Id
     if (Wait-For "http://127.0.0.1:4000/api/update/check" 90 "The builder") {
@@ -93,7 +116,14 @@ if (Test-Endpoint "http://127.0.0.1:4000/api/update/check") {
 
 # --- 3. a way in from outside -------------------------------------------------
 $address = "http://127.0.0.1:4000"
-if (-not $NoTunnel) {
+if ($tailscaleIp) {
+    $address = "http://${tailscaleIp}:4000"
+    [System.IO.File]::WriteAllText($urlFile, $address)
+    if (-not (Test-Endpoint $address 4)) {
+        Write-Host "  The builder is running but only on this PC. Use Stop Agent Builder, then start again," -ForegroundColor Yellow
+        Write-Host "  so it listens on the Tailscale address too." -ForegroundColor Yellow
+    }
+} elseif (-not $NoTunnel) {
     $cloudflared = Get-Command cloudflared -ErrorAction SilentlyContinue
     if ($cloudflared) {
         Write-Step "Opening a tunnel so your phone can reach this machine..."
