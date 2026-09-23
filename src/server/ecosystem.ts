@@ -18,6 +18,7 @@ import { ContextPack } from "../ecosystem/ContextPack.js";
 import { EcosystemLoop } from "../ecosystem/EcosystemLoop.js";
 import { EcosystemStore, type IssueSeverity, type IssueStatus } from "../ecosystem/EcosystemStore.js";
 import { AiSessions } from "../ecosystem/AiSessions.js";
+import { JarvisClient } from "../integrations/JarvisClient.js";
 import { GitHubClient } from "../ecosystem/GitHubClient.js";
 import { GitLog } from "../ecosystem/GitLog.js";
 import { ProjectDoctor } from "../ecosystem/ProjectDoctor.js";
@@ -272,6 +273,16 @@ export const registerEcosystemRoutes = (app: Express) => {
       signature
     });
     EcosystemStore.recordEvent(projectId, "issue", `${request.actor ?? "someone"} reported: ${issue.title}`);
+    // Skip issues Jarvis reported himself; he does not need them echoed back.
+    if (request.agent?.name !== "jarvis") {
+      void JarvisClient.send({
+        type: "issue",
+        project: projectId ?? null,
+        subject: `[${issue.severity}] ${issue.title}`,
+        body: issue.detail ?? "No detail was given.",
+        metadata: { issueId: issue.id, source: issue.source }
+      });
+    }
     Logger.log("Ecosystem issue reported", { actor: request.actor, project: projectId, title: issue.title });
     res.status(201).json({ issue });
   });

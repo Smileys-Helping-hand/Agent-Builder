@@ -5,12 +5,15 @@ import { usePathname } from "next/navigation";
 
 import { Icon } from "./ui";
 
+// Six is the most that stays legible across the bottom of a phone. Research,
+// Feed, Settings and Help live one tap deeper, under Control.
 const items = [
   { href: "/", label: "Home", icon: Icon.power },
+  { href: "/build", label: "Build", icon: Icon.sparkle },
+  { href: "/orders", label: "Orders", icon: Icon.list },
   { href: "/projects", label: "Projects", icon: Icon.folder },
   { href: "/research", label: "Research", icon: Icon.flask },
-  { href: "/feed", label: "Feed", icon: Icon.list },
-  { href: "/settings", label: "Settings", icon: Icon.gear }
+  { href: "/control", label: "Control", icon: Icon.gear }
 ];
 
 export const Nav = () => {

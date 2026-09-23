@@ -49,6 +49,8 @@ import { registerAutonomousRoutes } from "./autonomous.js";
 import { registerResearchRoutes } from "./research.js";
 import { registerEcosystemRoutes } from "./ecosystem.js";
 import { registerServiceRoutes } from "./services.js";
+import { registerJarvisRoutes } from "./jarvis.js";
+import { registerOrderRoutes } from "./orders.js";
 
 const warnIfNoAccountsExist = () => {
   if (!ConfigVault.isConfigured() && UserModel.count() === 0) {
@@ -182,6 +184,8 @@ registerAutonomousRoutes(app);
 registerResearchRoutes(app);
 registerEcosystemRoutes(app);
 registerServiceRoutes(app);
+registerJarvisRoutes(app);
+registerOrderRoutes(app);
 app.use("/api/env", authenticate, authorizeRoles(["admin", "owner"]), envRouter);
 const healthMonitor = new HealthMonitor();
 registerHealthRoute(app, healthMonitor);

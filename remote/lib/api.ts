@@ -178,6 +178,110 @@ export interface TimelineEntry {
   detail: string | null;
 }
 
+export interface BuildGuidance {
+  text: string;
+  at: string;
+  from: string;
+  appliedAtIteration: number | null;
+}
+
+export interface BuildIterationDetail {
+  iteration: number;
+  qualityScore: number;
+  objectiveScore: number;
+  status: string;
+  improvements: string[];
+  metrics: {
+    completeness: number;
+    security: number;
+    performance: number;
+    usability: number;
+    testCoverage: number;
+  };
+}
+
+export interface Build {
+  buildId: string;
+  projectName: string;
+  description: string;
+  startedAt: string;
+  finishedAt: string | null;
+  state: "running" | "paused" | "completed" | "stopped" | "error";
+  iterations: number;
+  qualityScore: number;
+  outputDir: string;
+  startedBy: string;
+  /** Set when this build is serving a customer order. */
+  orderId: string | null;
+  error?: string;
+  live: boolean;
+  /** What the current iteration is doing right now. */
+  stage?: string;
+  guidance: BuildGuidance[];
+  iterationDetail: BuildIterationDetail[];
+}
+
+export type OrderStatus =
+  | "received"
+  | "accepted"
+  | "building"
+  | "review"
+  | "delivered"
+  | "maintained"
+  | "failed"
+  | "cancelled";
+
+export interface Order {
+  id: string;
+  externalId: string | null;
+  source: "site" | "manual" | "jarvis" | "api";
+  customerName: string;
+  customerEmail: string | null;
+  productType: string;
+  title: string;
+  brief: string;
+  budget: string | null;
+  timeline: string | null;
+  status: OrderStatus;
+  buildId: string | null;
+  deliverablePath: string | null;
+  deliverableUrl: string | null;
+  qualityScore: number;
+  attempts: number;
+  autoImprove: boolean;
+  receivedAt: string;
+  deliveredAt: string | null;
+  updatedAt: string;
+  /** Present on list responses when a build is attached. */
+  build?: Build | null;
+}
+
+export interface OrderNote {
+  id: number;
+  kind: string;
+  message: string;
+  createdAt: string;
+}
+
+export interface PipelineStatus {
+  running: boolean;
+  site: { configured: boolean; site: string | null };
+  autoStart: boolean;
+  autoImprove: boolean;
+  maxConcurrent: number;
+  lastIntakeAt: string | null;
+  lastIntakeCount: number;
+  counts: Record<OrderStatus, number>;
+}
+
+export interface JarvisStatus {
+  configured: boolean;
+  url: string | null;
+  owner: string | null;
+  queued: number;
+  last: { at: string; ok: boolean; detail: string } | null;
+}
+
 export interface Topic {
   id: string;
   title: string;
@@ -251,6 +355,77 @@ export const api = {
     ),
   continueTimeline: () =>
     request<{ timeline: TimelineEntry[]; unfinished: Project[] }>("/api/ecosystem/continue", {}, 60000),
+
+  // --- builds ---
+  builds: () => request<{ count: number; active: number; builds: Build[] }>("/api/autonomous/builds"),
+  build: (id: string) => request<Build>(`/api/autonomous/${id}/status`),
+  startBuild: (config: {
+    projectName: string;
+    description: string;
+    targetPlatforms?: string[];
+    profile?: "fast" | "balanced" | "deep";
+    qualityThreshold?: number;
+    maxIterations?: number;
+  }) => request<{ buildId: string }>("/api/autonomous/start", { method: "POST", body: JSON.stringify(config) }, 60000),
+  /** Add an instruction to a build that is already running. */
+  guideBuild: (id: string, text: string) =>
+    request<{ note: BuildGuidance; guidance: BuildGuidance[] }>(
+      `/api/autonomous/${id}/guidance`,
+      { method: "POST", body: JSON.stringify({ text }) }
+    ),
+  pauseBuild: (id: string) => request<unknown>(`/api/autonomous/${id}/pause`, { method: "POST" }),
+  resumeBuild: (id: string) => request<unknown>(`/api/autonomous/${id}/resume`, { method: "POST" }),
+  stopBuild: (id: string) => request<unknown>(`/api/autonomous/${id}/stop`, { method: "POST" }),
+  hardware: () =>
+    request<{
+      specs: {
+        cpuCores?: number;
+        /** Bytes, not gigabytes — the server reports os.totalmem() raw. */
+        totalMemory?: number;
+        freeMemory?: number;
+        optimalConcurrency?: number;
+        recommendedModelSize?: string;
+        vramMB?: number | null;
+        vramSource?: string;
+      };
+      utilization: { cpuUsage?: number; memoryUsage?: number; freeMemory?: number; recommendation?: string };
+      recommendations: { model: string; tokens: number; delay: number; batchSize: number };
+    }>("/api/autonomous/hardware"),
+
+  // --- customer orders ---
+  orders: (status?: OrderStatus[]) =>
+    request<{ orders: Order[]; counts: Record<OrderStatus, number> }>(
+      status?.length ? `/api/orders?status=${status.join(",")}` : "/api/orders"
+    ),
+  order: (id: string) => request<{ order: Order; notes: OrderNote[]; build: Build | null }>(`/api/orders/${id}`),
+  pipeline: () => request<PipelineStatus>("/api/orders/status"),
+  addOrder: (order: {
+    customerName: string;
+    customerEmail?: string;
+    productType?: string;
+    title?: string;
+    brief: string;
+    budget?: string;
+    timeline?: string;
+  }) => request<{ order: Order; created: boolean }>("/api/orders", { method: "POST", body: JSON.stringify(order) }),
+  pullOrders: () => request<{ found: number; created: number }>("/api/orders/intake", { method: "POST" }, 45000),
+  acceptOrder: (id: string) => request<{ order: Order }>(`/api/orders/${id}/accept`, { method: "POST" }),
+  buildOrder: (id: string) => request<{ order: Order }>(`/api/orders/${id}/build`, { method: "POST" }, 45000),
+  instructOrder: (id: string, text: string) =>
+    request<{ success: boolean }>(`/api/orders/${id}/instruct`, { method: "POST", body: JSON.stringify({ text }) }),
+  deliverOrder: (id: string, url?: string) =>
+    request<{ order: Order }>(`/api/orders/${id}/deliver`, { method: "POST", body: JSON.stringify({ url }) }),
+  cancelOrder: (id: string, reason: string) =>
+    request<{ order: Order }>(`/api/orders/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason }) }),
+  setOrderAutoImprove: (id: string, autoImprove: boolean) =>
+    request<{ order: Order }>(`/api/orders/${id}`, { method: "PATCH", body: JSON.stringify({ autoImprove }) }),
+  improveNow: () => request<{ started: string[] }>("/api/orders/improve", { method: "POST" }, 45000),
+
+  // --- Jarvis ---
+  jarvis: () => request<JarvisStatus>("/api/jarvis/status"),
+  testJarvis: () =>
+    request<{ ok: boolean; detail: string; connection: JarvisStatus }>("/api/jarvis/test", { method: "POST" }, 45000),
+  sendHandoff: () => request<{ ok: boolean; detail: string }>("/api/jarvis/handoff", { method: "POST" }, 60000),
 
   topics: () => request<{ topics: Topic[] }>("/api/research/topics"),
   startResearch: (title: string, question: string) =>

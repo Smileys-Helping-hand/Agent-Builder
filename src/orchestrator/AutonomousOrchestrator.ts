@@ -30,6 +30,15 @@ export interface BuildIteration {
   verification?: VerificationReport;
 }
 
+/** A further instruction given while the build is already running. */
+export interface BuildGuidance {
+  text: string;
+  at: string;
+  from: string;
+  /** Which iteration first saw it; null until one does. */
+  appliedAtIteration: number | null;
+}
+
 export type BuildProfile = "fast" | "balanced" | "deep";
 
 export interface AutonomousConfig {
@@ -74,6 +83,15 @@ export class AutonomousOrchestrator extends EventEmitter {
   private packagingAgent: PackagingAgent;
   private workspace: Workspace;
 
+  // Further instructions given mid-build. They are cumulative direction rather
+  // than a queue of one-shot commands, so every later iteration keeps seeing
+  // all of them — an instruction you gave at iteration 3 still holds at 30.
+  private guidance: BuildGuidance[] = [];
+
+  // Set by stop(), so the run loop can tell "the user ended this" apart
+  // from "it finished" - both leave the loop the same way.
+  private stoppedByUser = false;
+
   // Ratchet: never let the workspace end an iteration worse than its best-known state.
   private bestObjectiveScore: number = -1;
   private bestCommitHash?: string;
@@ -103,6 +121,7 @@ export class AutonomousOrchestrator extends EventEmitter {
 
     this.isRunning = true;
     this.isPaused = false;
+    this.stoppedByUser = false;
     this.currentIteration = 0;
 
     Logger.log("Starting autonomous orchestration", { 
@@ -170,11 +189,18 @@ export class AutonomousOrchestrator extends EventEmitter {
         Logger.warn("Max iterations reached", { iterations: this.currentIteration });
       }
 
-      this.emit("completed", { 
-        buildId: this.buildId, 
-        iterations: this.currentIteration,
-        finalQuality: this.iterations[this.iterations.length - 1]?.qualityScore 
-      });
+      // stop() leaves the loop by clearing isRunning, which lands here just the
+      // same as finishing properly. Emitting "completed" for it told everything
+      // downstream the work was done — for a customer order that meant a
+      // cancelled job was announced as ready to hand over. stop() emits
+      // "stopped" itself, so there is nothing more to say here.
+      if (!this.stoppedByUser) {
+        this.emit("completed", {
+          buildId: this.buildId,
+          iterations: this.currentIteration,
+          finalQuality: this.iterations[this.iterations.length - 1]?.qualityScore ?? 0
+        });
+      }
 
     } catch (error: any) {
       Logger.error("Autonomous orchestration failed", { error: error.message });
@@ -679,8 +705,45 @@ ${context.iteration > 1 ? `
 Previous Issues to Address:
 ${context.previousIssues.join("\n")}
 ` : ""}
-Generate the application now. Remember: every file as FILE: path/to/file.ext
+${this.guidanceBlock(context.iteration)}Generate the application now. Remember: every file as FILE: path/to/file.ext
 followed immediately by a fenced code block on the next line — no other format.`;
+  }
+
+  /**
+   * Render outstanding guidance for the prompt, and record which iteration
+   * first saw each note. Returns an empty string when there is none, so the
+   * prompt stays byte-identical for builds nobody has steered — which matters,
+   * because a changed prefix costs the whole prompt cache.
+   */
+  private guidanceBlock(iteration: number): string {
+    if (this.guidance.length === 0) return "";
+    for (const note of this.guidance) {
+      if (note.appliedAtIteration === null) note.appliedAtIteration = iteration;
+    }
+    const lines = this.guidance.map((note, index) => `${index + 1}. ${note.text}`).join("\n");
+    return `
+Further instructions from the person who asked for this app. Where they
+conflict with the generic requirements above, these win, and they still apply
+on every later iteration:
+${lines}
+
+`;
+  }
+
+  /**
+   * Give a running build a further instruction. It takes effect on the next
+   * iteration — the current one is already generating against the old prompt.
+   */
+  addGuidance(text: string, from: string = "user"): BuildGuidance {
+    const note: BuildGuidance = { text, at: new Date().toISOString(), from, appliedAtIteration: null };
+    this.guidance.push(note);
+    Logger.log("Build guidance added", { buildId: this.buildId, iteration: this.currentIteration, text });
+    this.emit("guidance", note);
+    return note;
+  }
+
+  listGuidance(): BuildGuidance[] {
+    return [...this.guidance];
   }
 
   /**
@@ -833,6 +896,7 @@ followed immediately by a fenced code block on the next line — no other format
    * Stop the autonomous process
    */
   stop(): void {
+    this.stoppedByUser = true;
     this.isRunning = false;
     this.isPaused = false;
     Logger.log("Orchestrator stopped", { iteration: this.currentIteration });
@@ -852,6 +916,7 @@ followed immediately by a fenced code block on the next line — no other format
       isPaused: this.isPaused,
       currentIteration: this.currentIteration,
       iterations: this.iterations,
+      guidance: this.guidance,
       outputDir: this.outputDir
     };
   }

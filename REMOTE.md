@@ -1,6 +1,7 @@
 # Remote app — run your builder from anywhere
 
 **Live at: https://agent-builder-remote.vercel.app**
+**Also at: https://builder.arpcloudsolutions.co.za** once the DNS record is in (an `A` record, host `builder`, value `76.76.21.21`, at the registrar holding `arpcloudsolutions.co.za`).
 
 The app is the interface. Everything actually runs on your PC — building,
 researching, repairing. The app shows you what is happening and tells the PC what
@@ -29,18 +30,34 @@ does the same from a shortcut.
 | Screen | What it is for |
 | --- | --- |
 | **Home** | Status at a glance, the power button, and one-tap troubleshoot / pause / scan. |
+| **Build** | Describe an app or site and it gets built. Watch each pass, and tell it things while it works. |
+| **Orders** | Customer orders, from arriving to handed over. See [ORDERS.md](ORDERS.md). |
 | **Projects** | Every project, filtered by what needs a look. Tap for a briefing, Diagnose or Repair. |
 | **Research** | Start a topic, watch findings accumulate, pause or resume. |
-| **Feed** | Everything that has happened, grouped by day. |
-| **Settings** | Connection, how it all works, and shutting the builder down. |
+| **Control** | The machine room: every service, the hardware, the Jarvis connection, and the way to Feed, Settings and Help. |
+
+Feed, Settings and Help moved one tap deeper, under **Control** — six tabs is
+as many as stays readable across the bottom of a phone.
 
 Three buttons that are easy to confuse:
 
 - **Switch everything on** — starts the model, resumes research, refreshes projects.
 - **Pause work** — stops research and the project sweep so the GPU is free. The
   builder stays reachable.
-- **Shut down** (Settings) — stops the builder completely. Nothing in the app can
+- **Shut down** (Control) — stops the builder completely. Nothing in the app can
   start it again; you need the launcher on the PC.
+
+## Building something from your phone
+
+**Build** → give it a name and describe what you want → pick how hard it should
+try → **Build it**. It writes the code, runs the tests, fixes what fails and goes
+round again, raising the quality score each pass.
+
+While it runs you can **send it an instruction**. It joins the prompt from the
+next pass and stays there for the rest of the build, so it is standing direction
+rather than a one-off. Pause frees the GPU without losing the work; Stop ends it.
+
+You can close the app. The build keeps going on the PC.
 
 ## Reaching your machine
 

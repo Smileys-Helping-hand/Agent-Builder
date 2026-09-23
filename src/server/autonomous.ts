@@ -1,379 +1,176 @@
+/**
+ * Build control — start a build, watch it, steer it, stop it.
+ *
+ * Auth is `authenticateAgent` rather than `authenticate` + roles, so one
+ * implementation serves three callers: the dashboard (a signed-in user), the
+ * remote web app (an agent key over the tunnel or the tailnet), and Jarvis.
+ * Starting, steering and stopping need the `execute` scope; watching needs
+ * `read`.
+ *
+ * The bookkeeping itself lives in BuildService — these are only its routes.
+ */
 import type { Express, Request, Response } from "express";
-import { AutonomousOrchestrator, type AutonomousConfig, type BuildIteration } from "../orchestrator/AutonomousOrchestrator.js";
-import { authenticate, authorizeRoles } from "./auth.js";
+
+import { BuildService, buildEvents, type BuildRecord } from "../orchestrator/BuildService.js";
+import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
+import { JarvisClient } from "../integrations/JarvisClient.js";
 import { Logger } from "../utils/Logger.js";
 
-// Store active orchestrator instances
-const activeOrchestrators = new Map<string, AutonomousOrchestrator>();
+const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/**
+ * Tell Jarvis when a build ends. Registered once, here, rather than per build:
+ * BuildService emits for every build whatever started it, so an order-driven
+ * build is reported exactly like one started from the phone.
+ */
+let reportingWired = false;
+const wireJarvisReporting = (): void => {
+  if (reportingWired) return;
+  reportingWired = true;
+
+  buildEvents.on("completed", (record: BuildRecord) => {
+    void JarvisClient.send({
+      type: "build",
+      project: record.projectName,
+      subject: `Build finished: ${record.projectName} (quality ${Math.round(record.qualityScore)})`,
+      body: [
+        `Agent Builder finished building ${record.projectName}.`,
+        `What it was asked for: ${record.description}`,
+        `Final quality score: ${Math.round(record.qualityScore)}`,
+        `Passes: ${record.iterations}`,
+        `Output: ${record.outputDir}`,
+        record.orderId ? `This was for order ${record.orderId}.` : ""
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      metadata: { buildId: record.buildId, quality: record.qualityScore, orderId: record.orderId }
+    });
+  });
+
+  buildEvents.on("failed", (record: BuildRecord) => {
+    void JarvisClient.send({
+      type: "build",
+      project: record.projectName,
+      subject: `Build failed: ${record.projectName}`,
+      body: [
+        `Agent Builder could not finish ${record.projectName}.`,
+        `What went wrong: ${record.error ?? "no reason was recorded"}`,
+        `It got to pass ${record.iterations}.`,
+        record.orderId ? `This was for order ${record.orderId}.` : ""
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      metadata: { buildId: record.buildId, orderId: record.orderId }
+    });
+  });
+};
 
 export const registerAutonomousRoutes = (app: Express) => {
-  
+  wireJarvisReporting();
+
   /**
-   * Start a new autonomous build
+   * Start a build.
    * POST /api/autonomous/start
-   * Body: {
-   *   projectName: string,
-   *   description: string,
-   *   targetPlatforms: string[],
-   *   qualityThreshold?: number,
-   *   maxIterations?: number,
-   *   enableContinuousLearning?: boolean,
-   *   hardwareOptimization?: boolean,
-   *   autoPackaging?: boolean
-   * }
+   * Body: { projectName, description, targetPlatforms?, profile?, ... }
    */
-  app.post(
-    "/api/autonomous/start",
-    authenticate,
-    authorizeRoles(["editor", "admin", "owner"]),
-    async (req: Request, res: Response) => {
-      try {
-        const config = req.body as Partial<AutonomousConfig>;
+  app.post("/api/autonomous/start", authenticateAgent("execute"), (req: Request, res: Response) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const projectName = typeof body.projectName === "string" ? body.projectName.trim() : "";
+      const description = typeof body.description === "string" ? body.description.trim() : "";
 
-        // Validate required fields
-        if (!config.projectName || !config.description) {
-          return res.status(400).json({
-            error: "Missing required fields: projectName, description"
-          });
+      if (!projectName || !description) {
+        return res.status(400).json({ error: "Both projectName and description are required." });
+      }
+
+      const record = BuildService.start({
+        ...body,
+        projectName,
+        description,
+        startedBy: (req as AgentRequest).actor ?? "unknown"
+      });
+
+      res.json({ success: true, buildId: record.buildId, message: "Build started.", build: record });
+    } catch (error) {
+      Logger.error("Failed to start build", { error: errorMessage(error) });
+      res.status(500).json({ error: "Failed to start the build.", details: errorMessage(error) });
+    }
+  });
+
+  /**
+   * Give a running build a further instruction — the "actually, also do X"
+   * route. The note joins the prompt from the next pass onward and stays in it.
+   * POST /api/autonomous/:buildId/guidance  Body: { text }
+   */
+  app.post("/api/autonomous/:buildId/guidance", authenticateAgent("execute"), (req: Request, res: Response) => {
+    const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+    if (!text) return res.status(400).json({ error: "Provide the instruction as { text }." });
+    if (text.length > 2000) return res.status(400).json({ error: "Keep an instruction under 2000 characters." });
+
+    const note = BuildService.guide(req.params.buildId, text, (req as AgentRequest).actor ?? "user");
+    if (!note) return res.status(404).json({ error: "That build is not running, so there is nothing to steer." });
+
+    res.json({
+      success: true,
+      note,
+      appliesFrom: "the next pass",
+      guidance: BuildService.guidance(req.params.buildId)
+    });
+  });
+
+  const control = (action: "pause" | "resume" | "stop") => (req: Request, res: Response) => {
+    if (!BuildService.control(req.params.buildId, action)) {
+      return res.status(404).json({ error: "Build not found, or it already finished." });
+    }
+    res.json({ success: true, buildId: req.params.buildId, state: action });
+  };
+
+  app.post("/api/autonomous/:buildId/pause", authenticateAgent("execute"), control("pause"));
+  app.post("/api/autonomous/:buildId/resume", authenticateAgent("execute"), control("resume"));
+  app.post("/api/autonomous/:buildId/stop", authenticateAgent("execute"), control("stop"));
+
+  app.get("/api/autonomous/:buildId/status", authenticateAgent("read"), (req: Request, res: Response) => {
+    const build = BuildService.view(req.params.buildId);
+    if (!build) return res.status(404).json({ error: "Unknown build." });
+    res.json(build);
+  });
+
+  app.get("/api/autonomous/:buildId/iterations", authenticateAgent("read"), (req: Request, res: Response) => {
+    const build = BuildService.view(req.params.buildId);
+    if (!build) return res.status(404).json({ error: "Unknown build." });
+    res.json({ buildId: build.buildId, totalIterations: build.iterationDetail.length, iterations: build.iterationDetail });
+  });
+
+  app.get("/api/autonomous/active", authenticateAgent("read"), (_req: Request, res: Response) => {
+    const builds = BuildService.active();
+    res.json({ count: builds.length, builds });
+  });
+
+  /** Everything, newest first, including builds that have finished. */
+  app.get("/api/autonomous/builds", authenticateAgent("read"), (_req: Request, res: Response) => {
+    const builds = BuildService.list();
+    res.json({ count: builds.length, active: BuildService.active().length, builds });
+  });
+
+  app.get("/api/autonomous/hardware", authenticateAgent("read"), async (_req: Request, res: Response) => {
+    try {
+      const { HardwareScaler } = await import("../utils/HardwareScaler.js");
+      const scaler = new HardwareScaler();
+      res.json({
+        specs: scaler.specs,
+        utilization: await scaler.getUtilization(),
+        recommendations: {
+          model: scaler.specs.recommendedModelSize,
+          tokens: scaler.getOptimalTokens(),
+          delay: scaler.getOptimalDelay(),
+          batchSize: scaler.getOptimalBatchSize()
         }
-
-        // Set defaults
-        const fullConfig: AutonomousConfig = {
-          projectName: config.projectName,
-          description: config.description,
-          targetPlatforms: config.targetPlatforms || ["windows", "macos", "linux"],
-          qualityThreshold: config.qualityThreshold || 90,
-          maxIterations: config.maxIterations || 100,
-          enableContinuousLearning: config.enableContinuousLearning !== false,
-          hardwareOptimization: config.hardwareOptimization !== false,
-          autoPackaging: config.autoPackaging !== false,
-          profile: config.profile,
-          maxRepairAttempts: config.maxRepairAttempts
-        };
-
-        const orchestrator = new AutonomousOrchestrator(fullConfig);
-        const buildId = (orchestrator as any).buildId;
-
-        // Store orchestrator instance
-        activeOrchestrators.set(buildId, orchestrator);
-
-        // Set up event listeners for logging
-        orchestrator.on("started", () => {
-          Logger.log("Autonomous build started", { buildId, projectName: fullConfig.projectName });
-        });
-
-        orchestrator.on("iteration-complete", (iteration: BuildIteration) => {
-          Logger.log("Iteration complete", {
-            buildId,
-            iteration: iteration.iteration,
-            qualityScore: iteration.qualityScore
-          });
-        });
-
-        orchestrator.on("completed", ({ finalQuality }) => {
-          Logger.log("Autonomous build completed", { buildId, finalQuality });
-          // Clean up after completion
-          setTimeout(() => activeOrchestrators.delete(buildId), 60000); // Keep for 1 min
-        });
-
-        orchestrator.on("error", (error: Error) => {
-          Logger.error("Autonomous build error", { buildId, error: error.message });
-        });
-
-        orchestrator.on("stopped", () => {
-          Logger.log("Autonomous build stopped by user", { buildId });
-          activeOrchestrators.delete(buildId);
-        });
-
-        // Start the autonomous process (non-blocking)
-        orchestrator.start().catch((error) => {
-          Logger.error("Autonomous orchestration failed", { buildId, error: error.message });
-        });
-
-        res.json({
-          success: true,
-          buildId,
-          message: "Autonomous build started",
-          config: fullConfig
-        });
-
-      } catch (error: any) {
-        Logger.error("Failed to start autonomous build", { error: error.message });
-        res.status(500).json({
-          error: "Failed to start autonomous build",
-          details: error.message
-        });
-      }
+      });
+    } catch (error) {
+      Logger.error("Failed to get hardware info", { error: errorMessage(error) });
+      res.status(500).json({ error: "Failed to read hardware info.", details: errorMessage(error) });
     }
-  );
+  });
 
-  /**
-   * Pause an active autonomous build
-   * POST /api/autonomous/:buildId/pause
-   */
-  app.post(
-    "/api/autonomous/:buildId/pause",
-    authenticate,
-    authorizeRoles(["editor", "admin", "owner"]),
-    (req: Request, res: Response) => {
-      try {
-        const { buildId } = req.params;
-        const orchestrator = activeOrchestrators.get(buildId);
-
-        if (!orchestrator) {
-          return res.status(404).json({
-            error: "Build not found or already completed"
-          });
-        }
-
-        orchestrator.pause();
-
-        res.json({
-          success: true,
-          message: "Build paused",
-          buildId
-        });
-
-      } catch (error: any) {
-        Logger.error("Failed to pause build", { error: error.message });
-        res.status(500).json({
-          error: "Failed to pause build",
-          details: error.message
-        });
-      }
-    }
-  );
-
-  /**
-   * Resume a paused autonomous build
-   * POST /api/autonomous/:buildId/resume
-   */
-  app.post(
-    "/api/autonomous/:buildId/resume",
-    authenticate,
-    authorizeRoles(["editor", "admin", "owner"]),
-    (req: Request, res: Response) => {
-      try {
-        const { buildId } = req.params;
-        const orchestrator = activeOrchestrators.get(buildId);
-
-        if (!orchestrator) {
-          return res.status(404).json({
-            error: "Build not found or already completed"
-          });
-        }
-
-        orchestrator.resume();
-
-        res.json({
-          success: true,
-          message: "Build resumed",
-          buildId
-        });
-
-      } catch (error: any) {
-        Logger.error("Failed to resume build", { error: error.message });
-        res.status(500).json({
-          error: "Failed to resume build",
-          details: error.message
-        });
-      }
-    }
-  );
-
-  /**
-   * Stop an autonomous build completely
-   * POST /api/autonomous/:buildId/stop
-   */
-  app.post(
-    "/api/autonomous/:buildId/stop",
-    authenticate,
-    authorizeRoles(["editor", "admin", "owner"]),
-    (req: Request, res: Response) => {
-      try {
-        const { buildId } = req.params;
-        const orchestrator = activeOrchestrators.get(buildId);
-
-        if (!orchestrator) {
-          return res.status(404).json({
-            error: "Build not found or already completed"
-          });
-        }
-
-        orchestrator.stop();
-        activeOrchestrators.delete(buildId);
-
-        res.json({
-          success: true,
-          message: "Build stopped",
-          buildId
-        });
-
-      } catch (error: any) {
-        Logger.error("Failed to stop build", { error: error.message });
-        res.status(500).json({
-          error: "Failed to stop build",
-          details: error.message
-        });
-      }
-    }
-  );
-
-  /**
-   * Get status of an autonomous build
-   * GET /api/autonomous/:buildId/status
-   */
-  app.get(
-    "/api/autonomous/:buildId/status",
-    authenticate,
-    authorizeRoles(["viewer", "editor", "admin", "owner"]),
-    (req: Request, res: Response) => {
-      try {
-        const { buildId } = req.params;
-        const orchestrator = activeOrchestrators.get(buildId);
-
-        if (!orchestrator) {
-          return res.status(404).json({
-            error: "Build not found or already completed"
-          });
-        }
-
-        const status = {
-          buildId,
-          isRunning: (orchestrator as any).isRunning,
-          isPaused: (orchestrator as any).isPaused,
-          currentIteration: (orchestrator as any).currentIteration,
-          config: (orchestrator as any).config,
-          iterations: (orchestrator as any).iterations || [],
-          startTime: (orchestrator as any).startTime,
-          latestQualityScore: (orchestrator as any).iterations?.[(orchestrator as any).iterations.length - 1]?.qualityScore || 0
-        };
-
-        res.json(status);
-
-      } catch (error: any) {
-        Logger.error("Failed to get build status", { error: error.message });
-        res.status(500).json({
-          error: "Failed to get build status",
-          details: error.message
-        });
-      }
-    }
-  );
-
-  /**
-   * List all active autonomous builds
-   * GET /api/autonomous/active
-   */
-  app.get(
-    "/api/autonomous/active",
-    authenticate,
-    authorizeRoles(["viewer", "editor", "admin", "owner"]),
-    (_req: Request, res: Response) => {
-      try {
-        const activeBuildIds = Array.from(activeOrchestrators.keys());
-        
-        const builds = activeBuildIds.map(buildId => {
-          const orchestrator = activeOrchestrators.get(buildId);
-          if (!orchestrator) return null;
-
-          return {
-            buildId,
-            projectName: (orchestrator as any).config.projectName,
-            isRunning: (orchestrator as any).isRunning,
-            isPaused: (orchestrator as any).isPaused,
-            currentIteration: (orchestrator as any).currentIteration,
-            qualityScore: (orchestrator as any).iterations?.[(orchestrator as any).iterations.length - 1]?.qualityScore || 0
-          };
-        }).filter(Boolean);
-
-        res.json({
-          count: builds.length,
-          builds
-        });
-
-      } catch (error: any) {
-        Logger.error("Failed to list active builds", { error: error.message });
-        res.status(500).json({
-          error: "Failed to list active builds",
-          details: error.message
-        });
-      }
-    }
-  );
-
-  /**
-   * Get detailed iteration history for a build
-   * GET /api/autonomous/:buildId/iterations
-   */
-  app.get(
-    "/api/autonomous/:buildId/iterations",
-    authenticate,
-    authorizeRoles(["viewer", "editor", "admin", "owner"]),
-    (req: Request, res: Response) => {
-      try {
-        const { buildId } = req.params;
-        const orchestrator = activeOrchestrators.get(buildId);
-
-        if (!orchestrator) {
-          return res.status(404).json({
-            error: "Build not found or already completed"
-          });
-        }
-
-        const iterations = (orchestrator as any).iterations || [];
-
-        res.json({
-          buildId,
-          totalIterations: iterations.length,
-          iterations
-        });
-
-      } catch (error: any) {
-        Logger.error("Failed to get iterations", { error: error.message });
-        res.status(500).json({
-          error: "Failed to get iterations",
-          details: error.message
-        });
-      }
-    }
-  );
-
-  /**
-   * Get hardware status and recommendations
-   * GET /api/autonomous/hardware
-   */
-  app.get(
-    "/api/autonomous/hardware",
-    authenticate,
-    authorizeRoles(["viewer", "editor", "admin", "owner"]),
-    async (_req: Request, res: Response) => {
-      try {
-        const { HardwareScaler } = await import("../utils/HardwareScaler.js");
-        const scaler = new HardwareScaler();
-        
-        const utilization = await scaler.getUtilization();
-        
-        res.json({
-          specs: scaler.specs,
-          utilization,
-          recommendations: {
-            model: scaler.specs.recommendedModelSize,
-            tokens: scaler.getOptimalTokens(),
-            delay: scaler.getOptimalDelay(),
-            batchSize: scaler.getOptimalBatchSize()
-          }
-        });
-
-      } catch (error: any) {
-        Logger.error("Failed to get hardware info", { error: error.message });
-        res.status(500).json({
-          error: "Failed to get hardware info",
-          details: error.message
-        });
-      }
-    }
-  );
-
-  Logger.log("Autonomous orchestration routes registered");
+  Logger.log("Build control routes registered");
 };

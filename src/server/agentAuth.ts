@@ -24,7 +24,9 @@ export interface AgentRequest extends Request {
 const HUMAN_ROLES_FOR_SCOPE: Record<AgentScope, string[]> = {
   read: ["viewer", "developer", "editor", "admin", "owner"],
   write: ["developer", "editor", "admin", "owner"],
-  execute: ["developer", "admin", "owner"]
+  // "editor" is here because the build routes it already governed moved onto
+  // this middleware; dropping it would have quietly demoted existing accounts.
+  execute: ["developer", "editor", "admin", "owner"]
 };
 
 const presentedKey = (req: Request): string | null => {

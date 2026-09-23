@@ -18,6 +18,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 
 import { EcosystemStore } from "./EcosystemStore.js";
+import { JarvisClient } from "../integrations/JarvisClient.js";
 import { LessonMemory } from "../learning/LessonMemory.js";
 import { Logger } from "../utils/Logger.js";
 import { ModelRouter } from "../tools/ModelRouter.js";
@@ -243,6 +244,22 @@ export const ProjectDoctor = {
         // Leaving the branch is not fatal; the caller is told what happened.
       }
     }
+
+    // Tell Jarvis what happened; delivery is best-effort and never blocks.
+    void JarvisClient.send({
+      type: "repair",
+      project: project.name,
+      subject: `${outcome.passed ? "Fixed" : "Attempted a fix in"} ${project.name}`,
+      body: [
+        `Project: ${project.name} (${project.path})`,
+        `Failing check: ${outcome.failingCheck ?? "unknown"}`,
+        `Score: ${outcome.startScore} -> ${outcome.finalScore}`,
+        outcome.branch ? `Branch: ${outcome.branch}` : "No branch was kept.",
+        outcome.changedFiles.length > 0 ? `Changed: ${outcome.changedFiles.join(", ")}` : "No files were changed.",
+        outcome.reason ?? ""
+      ].join("\n"),
+      metadata: { passed: outcome.passed, attempts: outcome.attempts }
+    });
 
     EcosystemStore.recordEvent(
       projectId,
