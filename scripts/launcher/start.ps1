@@ -119,7 +119,10 @@ $address = "http://127.0.0.1:4000"
 if ($tailscaleIp) {
     $address = "http://${tailscaleIp}:4000"
     [System.IO.File]::WriteAllText($urlFile, $address)
-    if (-not (Test-Endpoint $address 4)) {
+    # Test a real endpoint: the API has no route at / and answers 404 there,
+    # which Test-Endpoint reads as unreachable - that produced a false warning
+    # saying the builder was only reachable on this PC when it was not true.
+    if (-not (Test-Endpoint "$address/api/update/check" 5)) {
         Write-Host "  The builder is running but only on this PC. Use Stop Agent Builder, then start again," -ForegroundColor Yellow
         Write-Host "  so it listens on the Tailscale address too." -ForegroundColor Yellow
     }
