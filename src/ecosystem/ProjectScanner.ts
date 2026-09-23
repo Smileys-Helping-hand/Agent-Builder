@@ -219,15 +219,41 @@ export const ProjectScanner = {
     const repositories = findRepositories(roots);
     const keptPaths: string[] = [];
 
+    const scanned: Array<Omit<EcosystemProject, "scannedAt">> = [];
     for (const repository of repositories) {
       const root = roots.find((candidate) => repository.startsWith(candidate.replace(/\\/g, "/"))) ?? path.dirname(repository);
       try {
-        const project = await scanRepository(repository, root);
-        EcosystemStore.upsertProject(project);
-        keptPaths.push(project.path);
+        scanned.push(await scanRepository(repository, root));
       } catch (error) {
         Logger.log("Project scan failed", { repository, error: error instanceof Error ? error.message : String(error) });
       }
+    }
+
+    // Names come from package.json, and several projects here share one
+    // ("nextn" for two different apps), which makes the list and every briefing
+    // ambiguous. Where a name is not unique, the folder name is the honest label.
+    const nameCounts = new Map<string, number>();
+    for (const project of scanned) {
+      nameCounts.set(project.name, (nameCounts.get(project.name) ?? 0) + 1);
+    }
+    for (const project of scanned) {
+      if ((nameCounts.get(project.name) ?? 0) > 1) project.name = path.basename(project.path);
+    }
+
+    // Some projects are cloned in two places and share a folder name too
+    // (VerifiedBizLink lives on both drives). Add the drive so the list is
+    // unambiguous about which copy you are looking at.
+    const folderCounts = new Map<string, number>();
+    for (const project of scanned) {
+      folderCounts.set(project.name, (folderCounts.get(project.name) ?? 0) + 1);
+    }
+    for (const project of scanned) {
+      if ((folderCounts.get(project.name) ?? 0) > 1) {
+        const drive = project.path.slice(0, 2).toUpperCase();
+        project.name = `${project.name} (${drive})`;
+      }
+      EcosystemStore.upsertProject(project);
+      keptPaths.push(project.path);
     }
 
     // Prune only within the roots we just scanned. Scanning one root must not

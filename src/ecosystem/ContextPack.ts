@@ -15,12 +15,16 @@ import path from "path";
 
 import { EcosystemStore, type EcosystemIssue, type EcosystemProject } from "./EcosystemStore.js";
 import { GitHubClient, repoFromRemote, type GitHubRepoStatus } from "./GitHubClient.js";
+import { AiSessions, type AiSession } from "./AiSessions.js";
+import { GitLog, type Commit } from "./GitLog.js";
 import { ProjectScanner } from "./ProjectScanner.js";
 import { LessonMemory, type Lesson } from "../learning/LessonMemory.js";
 import { ResearchStore } from "../research/ResearchStore.js";
 
 export interface ProjectContext {
   project: EcosystemProject;
+  commits: Commit[];
+  aiSessions: AiSession[];
   openIssues: EcosystemIssue[];
   github: GitHubRepoStatus | null;
   lessons: Lesson[];
@@ -89,6 +93,8 @@ const nextSteps = (project: EcosystemProject, issues: EcosystemIssue[], github: 
 
 const buildMarkdown = (
   project: EcosystemProject,
+  commits: Commit[],
+  aiSessions: AiSession[],
   issues: EcosystemIssue[],
   github: GitHubRepoStatus | null,
   lessons: Lesson[],
@@ -120,6 +126,23 @@ const buildMarkdown = (
     lines.push("");
     lines.push("## Uncommitted work");
     for (const entry of uncommitted.slice(0, 20)) lines.push(`- \`${entry}\``);
+  }
+
+  if (commits.length > 0) {
+    lines.push("");
+    lines.push("## Recent commits");
+    for (const commit of commits.slice(0, 10)) {
+      lines.push(`- \`${commit.hash}\` ${commit.subject} (${commit.relative}, ${commit.author})`);
+    }
+  }
+
+  if (aiSessions.length > 0) {
+    lines.push("");
+    lines.push("## What Claude and Gemini were doing here");
+    for (const session of aiSessions.slice(0, 6)) {
+      lines.push(`- **${session.source}** ${session.title} (${session.updatedAt.slice(0, 10)})`);
+      if (session.summary) lines.push(`  - ${session.summary}`);
+    }
   }
 
   if (issues.length > 0) {
@@ -190,6 +213,10 @@ export const ContextPack = {
     const query = [project.name, project.kind, project.stack.join(" ")].join(" ");
     const lessons = LessonMemory.relevant("build", query, 5);
     const research = ResearchStore.search(query, 4).map((hit) => ({ title: hit.title, snippet: hit.snippet }));
+    const [commits, aiSessions] = await Promise.all([
+      GitLog.commits(project.path, 10),
+      Promise.resolve(AiSessions.forProject(id, 6))
+    ]);
     const uncommitted = listUncommitted(project.path);
     const notes = readProjectNotes(project.path);
     const recentActivity = EcosystemStore.listEvents(10, id).map((event) => ({
@@ -201,13 +228,15 @@ export const ContextPack = {
 
     return {
       project,
+      commits,
+      aiSessions,
       openIssues,
       github,
       lessons,
       research,
       recentActivity,
       suggestedNextSteps,
-      markdown: buildMarkdown(project, openIssues, github, lessons, research, uncommitted, notes, suggestedNextSteps)
+      markdown: buildMarkdown(project, commits, aiSessions, openIssues, github, lessons, research, uncommitted, notes, suggestedNextSteps)
     };
   },
 
@@ -268,6 +297,19 @@ export const ContextPack = {
       for (const issue of issues.slice(0, 20)) {
         const project = issue.projectId ? EcosystemStore.getProject(issue.projectId) : null;
         lines.push(`- [${issue.severity}] ${project?.name ?? "ecosystem"}: ${issue.title} (${issue.status})`);
+      }
+    }
+
+    const sessions = AiSessions.recent(8);
+    if (sessions.length > 0) {
+      lines.push("");
+      lines.push("## Latest Claude and Gemini sessions");
+      for (const session of sessions) {
+        const project = session.projectId ? EcosystemStore.getProject(session.projectId) : null;
+        lines.push(
+          `- **${session.source}** ${session.title}${project ? ` — ${project.name}` : ""} (${session.updatedAt.slice(0, 16).replace("T", " ")})`
+        );
+        if (session.summary) lines.push(`  - ${session.summary}`);
       }
     }
 

@@ -17,7 +17,9 @@ import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
 import { ContextPack } from "../ecosystem/ContextPack.js";
 import { EcosystemLoop } from "../ecosystem/EcosystemLoop.js";
 import { EcosystemStore, type IssueSeverity, type IssueStatus } from "../ecosystem/EcosystemStore.js";
+import { AiSessions } from "../ecosystem/AiSessions.js";
 import { GitHubClient } from "../ecosystem/GitHubClient.js";
+import { GitLog } from "../ecosystem/GitLog.js";
 import { ProjectDoctor } from "../ecosystem/ProjectDoctor.js";
 import { ProjectScanner, projectRoots } from "../ecosystem/ProjectScanner.js";
 import { ResearchStore } from "../research/ResearchStore.js";
@@ -148,6 +150,94 @@ export const registerEcosystemRoutes = (app: Express) => {
       res.json({ project: project.id, path: relative, size: stat.size, content: fs.readFileSync(resolved, "utf8") });
     } catch (error) {
       res.status(404).json({ error: errorMessage(error) });
+    }
+  });
+
+  /** What was committed here, and what is still uncommitted. */
+  app.get("/api/ecosystem/projects/:id/commits", authenticateAgent("read"), async (req: Request, res: Response) => {
+    const project = EcosystemStore.getProject(req.params.id);
+    if (!project) return res.status(404).json({ error: "Unknown project." });
+    const limit = Math.min(Number(req.query.limit) || 15, 100);
+    try {
+      const [commits, changes, unpushed] = await Promise.all([
+        GitLog.commits(project.path, limit),
+        GitLog.workingChanges(project.path),
+        GitLog.unpushed(project.path)
+      ]);
+      res.json({ project: project.id, commits, workingChanges: changes, unpushed });
+    } catch (error) {
+      res.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  /** What Claude and Gemini have been doing - everywhere, or in one project. */
+  app.get("/api/ecosystem/ai-sessions", authenticateAgent("read"), (req: Request, res: Response) => {
+    const limit = Math.min(Number(req.query.limit) || 30, 120);
+    const projectId = typeof req.query.project === "string" ? req.query.project : null;
+    const sessions = projectId ? AiSessions.forProject(projectId, limit) : AiSessions.recent(limit);
+    res.json({ sessions, available: AiSessions.available() });
+  });
+
+  /**
+   * One timeline of everything that has happened lately: commits, assistant
+   * sessions and the builder's own activity, newest first. This is the "carry
+   * on where I left off" view.
+   */
+  app.get("/api/ecosystem/continue", authenticateAgent("read"), async (_req: Request, res: Response) => {
+    try {
+      const projects = EcosystemStore.listProjects();
+      const recentProjects = projects
+        .filter((project) => project.lastCommitAt)
+        .sort((a, b) => (a.lastCommitAt! < b.lastCommitAt! ? 1 : -1))
+        .slice(0, 6);
+
+      const commitGroups = await Promise.all(
+        recentProjects.map(async (project) => ({
+          project,
+          commits: await GitLog.commits(project.path, 3)
+        }))
+      );
+
+      const timeline = [
+        ...commitGroups.flatMap((group) =>
+          group.commits.map((commit) => ({
+            kind: "commit" as const,
+            at: commit.at,
+            projectId: group.project.id,
+            projectName: group.project.name,
+            title: commit.subject,
+            detail: `${commit.hash} · ${commit.author}`
+          }))
+        ),
+        ...AiSessions.recent(12).map((session) => ({
+          kind: session.source,
+          at: session.updatedAt,
+          projectId: session.projectId,
+          projectName: session.projectId ? EcosystemStore.getProject(session.projectId)?.name ?? null : null,
+          title: session.title,
+          detail: session.summary
+        })),
+        // Routine sweeps ("Scanned 62 projects") happen every half hour and
+        // would crowd out the things you actually did.
+        ...EcosystemStore.listEvents(30)
+          .filter((event) => event.kind !== "scan")
+          .slice(0, 8)
+          .map((event) => ({
+            kind: "builder" as const,
+            at: event.createdAt,
+            projectId: event.projectId,
+            projectName: event.projectId ? EcosystemStore.getProject(event.projectId)?.name ?? null : null,
+            title: event.message,
+            detail: event.kind
+          }))
+      ]
+        .filter((entry) => entry.at)
+        .sort((a, b) => (a.at < b.at ? 1 : -1))
+        .slice(0, 40);
+
+      res.json({ timeline, unfinished: projects.filter((p) => p.gitDirty > 0 || p.gitAhead > 0).slice(0, 10) });
+    } catch (error) {
+      res.status(500).json({ error: errorMessage(error) });
     }
   });
 

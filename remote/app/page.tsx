@@ -13,6 +13,7 @@ export default function Home() {
   const toast = useToast();
   const status = useRemote(() => api.status(), 15000);
   const feed = useRemote(() => api.feed(6), 20000);
+  const carryOn = useRemote(() => api.continueTimeline(), 60000);
   const [working, setWorking] = useState<string | null>(null);
   const [steps, setSteps] = useState<Step[] | null>(null);
   const [problems, setProblems] = useState<Problem[] | null>(null);
@@ -219,6 +220,43 @@ export default function Home() {
           </>
         ) : status.loading ? (
           <Skeleton rows={4} />
+        ) : null}
+
+        <div className="section-title">Pick up where you left off</div>
+        {carryOn.data && carryOn.data.timeline.length > 0 ? (
+          <div className="card">
+            {carryOn.data.timeline.slice(0, 8).map((entry, index) => (
+              <div key={`${entry.kind}-${entry.at}-${index}`} className="feed-item">
+                <span
+                  className={`tag ${
+                    entry.kind === "commit" ? "good" : entry.kind === "builder" ? "" : "warn"
+                  }`}
+                >
+                  {entry.kind}
+                </span>
+                <div className="text">
+                  <p>
+                    {entry.projectName ? <strong>{entry.projectName}: </strong> : null}
+                    {entry.title}
+                  </p>
+                  <time>{ago(entry.at)}</time>
+                </div>
+              </div>
+            ))}
+            {carryOn.data.unfinished.length > 0 ? (
+              <div className="chips" style={{ marginTop: 12 }}>
+                {carryOn.data.unfinished.slice(0, 6).map((project) => (
+                  <span key={project.id} className="chip warn">
+                    {project.name}
+                    {project.gitDirty > 0 ? ` · ${project.gitDirty} uncommitted` : ""}
+                    {project.gitAhead > 0 ? ` · ${project.gitAhead} unpushed` : ""}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : carryOn.loading ? (
+          <Skeleton rows={3} />
         ) : null}
 
         <div className="section-title">Latest</div>

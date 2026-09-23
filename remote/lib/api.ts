@@ -152,6 +152,32 @@ export interface Issue {
   updatedAt: string;
 }
 
+export interface Commit {
+  hash: string;
+  subject: string;
+  author: string;
+  at: string;
+  relative: string;
+}
+
+export interface AiSession {
+  source: "claude" | "gemini";
+  id: string;
+  title: string;
+  summary: string | null;
+  projectId: string | null;
+  updatedAt: string;
+}
+
+export interface TimelineEntry {
+  kind: string;
+  at: string;
+  projectId: string | null;
+  projectName: string | null;
+  title: string;
+  detail: string | null;
+}
+
 export interface Topic {
   id: string;
   title: string;
@@ -210,6 +236,21 @@ export const api = {
   issues: (status = "open") => request<{ issues: Issue[] }>(`/api/ecosystem/issues?status=${status}`),
   updateIssue: (id: number, patch: { status?: string; resolution?: string }) =>
     request<{ issue: Issue }>(`/api/ecosystem/issues/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+
+  commits: (id: string) =>
+    request<{ commits: Commit[]; workingChanges: Array<{ status: string; path: string }>; unpushed: Commit[] }>(
+      `/api/ecosystem/projects/${id}/commits`,
+      {},
+      45000
+    ),
+  aiSessions: (projectId?: string) =>
+    request<{ sessions: AiSession[]; available: { claude: boolean; gemini: boolean } }>(
+      projectId ? `/api/ecosystem/ai-sessions?project=${projectId}` : "/api/ecosystem/ai-sessions",
+      {},
+      45000
+    ),
+  continueTimeline: () =>
+    request<{ timeline: TimelineEntry[]; unfinished: Project[] }>("/api/ecosystem/continue", {}, 60000),
 
   topics: () => request<{ topics: Topic[] }>("/api/research/topics"),
   startResearch: (title: string, question: string) =>

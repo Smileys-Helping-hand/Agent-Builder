@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { api, type Project } from "@/lib/api";
+import { api, type AiSession, type Commit, type Project } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
 
 type Filter = "all" | "attention" | "dirty" | "unpushed";
@@ -31,10 +31,28 @@ export default function Projects() {
   const [busy, setBusy] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Record<string, { kind: "ok" | "error" | "info"; text: string }>>({});
   const [context, setContext] = useState<Record<string, string>>({});
+  const [history, setHistory] = useState<Record<string, { commits: Commit[]; sessions: AiSession[] }>>({});
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
 
   if (connected === false) return <NotConnected />;
+
+  // Opening a project pulls its recent commits and what Claude or Gemini were
+  // doing in it - the two things you need to remember where you left off.
+  const openProject = async (project: Project) => {
+    const next = open === project.id ? null : project.id;
+    setOpen(next);
+    if (!next || history[project.id]) return;
+    try {
+      const [commitData, sessionData] = await Promise.all([api.commits(project.id), api.aiSessions(project.id)]);
+      setHistory((current) => ({
+        ...current,
+        [project.id]: { commits: commitData.commits, sessions: sessionData.sessions }
+      }));
+    } catch {
+      // The panel still works without history; the actions matter more.
+    }
+  };
 
   const act = async (project: Project, what: "diagnose" | "repair" | "context") => {
     setBusy(`${project.id}:${what}`);
@@ -121,7 +139,7 @@ export default function Projects() {
           const result = outcome[project.id];
           return (
             <div key={project.id} className="card">
-              <div className="project" onClick={() => setOpen(isOpen ? null : project.id)}>
+              <div className="project" onClick={() => void openProject(project)}>
                 <div className="project-icon">{initials(project.name)}</div>
                 <div className="body">
                   <strong style={{ fontSize: 15 }}>{project.name}</strong>
@@ -164,6 +182,42 @@ export default function Projects() {
                     <p className="hint" style={{ marginTop: 10, marginBottom: 0 }}>
                       This runs on your PC and can take several minutes. You can leave this screen.
                     </p>
+                  ) : null}
+
+                  {history[project.id]?.commits.length ? (
+                    <div style={{ marginTop: 14 }}>
+                      <div className="section-title" style={{ margin: "0 0 4px" }}>
+                        Recent commits
+                      </div>
+                      {history[project.id].commits.slice(0, 6).map((commit) => (
+                        <div key={commit.hash} className="feed-item">
+                          <span className="tag good">{commit.hash}</span>
+                          <div className="text">
+                            <p>{commit.subject}</p>
+                            <time>
+                              {commit.relative} · {commit.author}
+                            </time>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {history[project.id]?.sessions.length ? (
+                    <div style={{ marginTop: 14 }}>
+                      <div className="section-title" style={{ margin: "0 0 4px" }}>
+                        Claude &amp; Gemini here
+                      </div>
+                      {history[project.id].sessions.slice(0, 5).map((session) => (
+                        <div key={session.id} className="feed-item">
+                          <span className={`tag ${session.source === "claude" ? "" : "warn"}`}>{session.source}</span>
+                          <div className="text">
+                            <p>{session.title}</p>
+                            <time>{ago(session.updatedAt)}</time>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   ) : null}
 
                   {result ? <Banner kind={result.kind}>{result.text}</Banner> : null}
