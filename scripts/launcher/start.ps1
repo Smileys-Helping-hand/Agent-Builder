@@ -8,6 +8,10 @@
 
 param(
     [switch]$NoTunnel,
+    # Use the public tunnel even when Tailscale is connected - needed when the
+    # phone is signed into a different Tailscale account, and so on a different
+    # tailnet, and therefore cannot see this machine.
+    [switch]$ForceTunnel,
     [switch]$Quiet
 )
 
@@ -88,7 +92,11 @@ if ($tailscaleExe) {
     $candidate = (& $tailscaleExe ip -4 2>$null | Select-Object -First 1)
     if ($candidate -and $candidate -match "^100\.") {
         $tailscaleIp = $candidate.Trim()
-        Write-Good "Tailscale is connected ($tailscaleIp) - using the address that never changes"
+        if ($ForceTunnel) {
+            Write-Good "Tailscale is connected ($tailscaleIp), but -ForceTunnel was asked for - using a public tunnel"
+        } else {
+            Write-Good "Tailscale is connected ($tailscaleIp) - using the address that never changes"
+        }
     } else {
         Write-Host "  Tailscale is installed but not signed in. Run: tailscale up" -ForegroundColor Yellow
     }
@@ -116,7 +124,7 @@ if (Test-Endpoint "http://127.0.0.1:4000/api/update/check") {
 
 # --- 3. a way in from outside -------------------------------------------------
 $address = "http://127.0.0.1:4000"
-if ($tailscaleIp) {
+if ($tailscaleIp -and -not $ForceTunnel) {
     $address = "http://${tailscaleIp}:4000"
     [System.IO.File]::WriteAllText($urlFile, $address)
     # Test a real endpoint: the API has no route at / and answers 404 there,
@@ -127,6 +135,7 @@ if ($tailscaleIp) {
         Write-Host "  so it listens on the Tailscale address too." -ForegroundColor Yellow
     }
 } elseif (-not $NoTunnel) {
+    # Either Tailscale is not set up, or -ForceTunnel asked for a public address.
     $cloudflared = Get-Command cloudflared -ErrorAction SilentlyContinue
     if ($cloudflared) {
         Write-Step "Opening a tunnel so your phone can reach this machine..."
