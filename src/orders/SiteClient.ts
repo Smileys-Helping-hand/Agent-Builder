@@ -28,6 +28,22 @@ export interface SiteOrder {
   timeline?: string;
   status?: string;
   createdAt?: number | string;
+  /** The catalogue item the customer picked, when they picked one. */
+  templateId?: string;
+  features?: string[];
+  /** The customer has paid on the site. */
+  paid?: boolean;
+  /** The reference the customer was given, e.g. ARP-1A2B3C. */
+  orderRef?: string;
+}
+
+/** What the builder tells the site each time it checks in. */
+export interface CheckIn {
+  items: unknown[];
+  version: string;
+  machine: string;
+  queueLength: number;
+  building: number;
 }
 
 const TIMEOUT_MS = 20_000;
@@ -86,7 +102,7 @@ export const SiteClient = {
    */
   async reportProgress(
     externalId: string,
-    update: { status: string; message?: string; qualityScore?: number; previewUrl?: string | null }
+    update: { status: string; message?: string; qualityScore?: number; previewUrl?: string | null; downloadUrl?: string | null }
   ): Promise<boolean> {
     const url = base();
     if (!url || !key()) return false;
@@ -101,6 +117,46 @@ export const SiteClient = {
     } catch (error) {
       Logger.log("Order progress not reported", { externalId, detail: errorMessage(error) });
       return false;
+    }
+  },
+
+  /**
+   * Send the site the catalogue and how busy we are. The site shows the
+   * catalogue to customers and reads the check-in as "the PC is on".
+   */
+  async checkIn(payload: CheckIn): Promise<{ ok: boolean; status: number; message: string }> {
+    const url = base();
+    if (!url || !key()) return { ok: false, status: 0, message: "SITE_URL or SITE_API_KEY is not configured." };
+    try {
+      const response = await fetch(`${url}/api/builder/catalog`, {
+        method: "POST",
+        headers: headers(),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+        body: JSON.stringify(payload)
+      });
+      if (response.ok) return { ok: true, status: response.status, message: `Published ${payload.items.length} items to ${url}` };
+      // 404 means the site is running a version without the builder routes.
+      return { ok: false, status: response.status, message: `Site returned HTTP ${response.status}` };
+    } catch (error) {
+      return { ok: false, status: 0, message: errorMessage(error) };
+    }
+  },
+
+  /** Ping the site to test authorization and responsiveness. */
+  async testConnection(): Promise<{ ok: boolean; status: number; message: string }> {
+    const url = base();
+    if (!url || !key()) return { ok: false, status: 0, message: "SITE_URL or SITE_API_KEY is not configured." };
+    try {
+      const response = await fetch(`${url}/api/builder/orders`, {
+        headers: headers(),
+        signal: AbortSignal.timeout(8000)
+      });
+      if (response.ok) {
+        return { ok: true, status: response.status, message: `Connected to ${url} (HTTP ${response.status})` };
+      }
+      return { ok: false, status: response.status, message: `Site returned HTTP ${response.status}` };
+    } catch (error) {
+      return { ok: false, status: 0, message: errorMessage(error) };
     }
   }
 };

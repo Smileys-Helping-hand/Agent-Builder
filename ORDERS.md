@@ -8,10 +8,11 @@ delivered. This is how that fits together and how you drive it.
 ```
 arpcloudsolutions.co.za          your PC                          the app
 ─────────────────────────        ──────────────────────           ──────────────
-customer fills in the form
-you accept it in the admin
+shows what the PC can build ◀── builder publishes its catalogue
+customer orders / pays, or
+you accept their quote
                           ──▶  builder polls and takes it in  ──▶  shows as New
-                                you accept it                       one tap
+                                paid? queued straight away          or one tap
                                 it builds, checks, repairs    ──▶  live progress
                                                                     you can steer it
                                 it finishes                   ──▶  Ready to check
@@ -36,14 +37,63 @@ On the PC, in `.env`:
 
 ```bash
 SITE_URL=https://arpcloudsolutions.co.za
-SITE_API_KEY=hub_agentbuilder_<the rest of the key>
+SITE_API_KEY=mak_agentbuilder_<the rest of the key>
 ```
 
 Make the key in the site's admin → **API keys** → new master key for the app
 `agentbuilder`. The key is shown once.
 
 Then restart the builder. **Control → Customer pipeline** should say *site
-connected*.
+connected*. Within a minute the site's admin → **Agent Builder** tab shows the PC
+as online, and the home page grows a **Ready to build** section listing the
+catalogue.
+
+## What the site shows: the catalogue
+
+Every time the builder checks the site for orders (every 5 minutes, and 10
+seconds after it starts) it also posts its catalogue there. That post is the
+site's "PC online" signal too. The site shows the catalogue under **Ready to
+build**, with an *Order this* button on each item, and uses it to work out
+which template a payment was for.
+
+Manage it in the app: **Orders → Templates**. **New template**, **Edit**,
+**Hide** and **Delete** change what the site sells, and each change is sent to
+the site straight away (a built-in template is hidden rather than deleted, so it
+can come back).
+
+A template can have a **source folder**: its actual code on the PC. Then a
+customer's build starts from a copy of that code and tailors it to their brief,
+instead of generating everything from nothing.
+
+- **Build the code** (no source folder yet) builds the template from its
+  description; when it finishes, that build becomes its source folder.
+- **Change the code** works on a copy of the source folder, the same way as
+  carrying on with a project: look at the changes, then apply them.
+- **Build for a customer** makes an order from the template and starts it.
+
+A rebuild or an improvement pass on an order starts from what was built last
+time, not from scratch.
+
+Behind the app, the built-in list is in `src/orders/Catalog.ts` and your
+changes are kept in `data/catalog.json`, an array merged by `id`:
+
+```json
+[
+  { "id": "invitation", "name": "Digital Invitation", "kind": "template", "category": "Events",
+    "description": "An online invitation with RSVPs.", "price": 1500, "timeframe": "3-5 days",
+    "features": ["RSVP tracking", "Map and schedule"], "keywords": ["wedding", "invite", "rsvp"] },
+  { "id": "blog", "price": 8000 },
+  { "id": "restaurant", "hidden": true }
+]
+```
+
+`kind` is `website`, `app` or `template`. `buildNotes` is extra direction for
+the build and is never sent to the site. A price only shows on the site when the
+currency is ZAR. **Orders → Check now** in the app publishes straight away.
+
+When an order names a catalogue item, the build prompt carries that item's
+description and features after the customer's own words, and the customer's
+words win where they disagree.
 
 ## The states an order goes through
 
@@ -57,8 +107,19 @@ connected*.
 | **Delivered · improving** | Handed over, still getting better | Turn improving off if you want it frozen |
 | **Needs you** | Three builds failed | Read the brief; it may be too vague |
 
-Only requests the site has at **in-progress** are handed over — "new" means the
-job has not been quoted or agreed, and the builder must not start on it.
+What the site hands over:
+
+- **A quote you accepted** (moved to *in-progress*, which "Convert to project"
+  does). It arrives as **New**, for you to accept.
+- **Anything paid for through PayFast.** It arrives already **Queued**. If the
+  builder already had it from the accepted quote, the payment reaches it on the
+  next check and moves it from New to Queued.
+- **A test build** from the site's admin → Agent Builder tab.
+
+A configurator order that is neither paid nor accepted waits on the site as
+*Awaiting payment*: "new" means nothing has been agreed, and the builder must not
+start on it. One purchase is one build: the quote, the deposit and the final
+payment all find the same one.
 
 ## Steering a build
 
@@ -98,6 +159,7 @@ everything with `ORDER_AUTO_IMPROVE=false`.
 | `ORDER_AUTO_START` | `true` | Accepted orders start building on their own |
 | `ORDER_AUTO_IMPROVE` | `true` | Delivered products keep being improved |
 | `ORDER_MAX_CONCURRENT_BUILDS` | `1` | One GPU, one build — raise only if you have room |
+| `ORDER_AUTO_ACCEPT_PAID` | `true` | Orders paid for on the site skip New and are queued |
 
 ## The routes, if you are driving it from somewhere else
 
@@ -108,6 +170,9 @@ that moves an order needs `execute`.
 GET    /api/orders                  every order, with its build
 GET    /api/orders/:id              one order, its notes and its build
 GET    /api/orders/status           is the site connected, what is where
+GET    /api/orders/templates        the catalogue
+POST   /api/orders/templates/publish   send the catalogue to the site now
+POST   /api/orders/templates/:id/build start a build from a catalogue item
 POST   /api/orders                  add one by hand (or let the site push)
 POST   /api/orders/intake           check the site now
 POST   /api/orders/:id/accept       queue it
@@ -122,6 +187,8 @@ POST   /api/orders/improve          run an improvement pass now
 And on the site, for the builder only (master key, `Authorization: Bearer`):
 
 ```
-GET    /api/builder/orders          the queue
+GET    /api/builder/orders          the queue (queued jobs, plus paid ones not yet acknowledged)
 PATCH  /api/builder/orders/:id      { status, message, qualityScore, previewUrl }
+POST   /api/builder/catalog         { items, version, machine, queueLength, building }
+GET    /api/catalog                 the published catalogue (public, no key)
 ```

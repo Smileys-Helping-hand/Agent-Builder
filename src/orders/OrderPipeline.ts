@@ -18,9 +18,14 @@
  * prepares the deliverable and moves the order to "review"; a person decides
  * when it actually goes out.
  */
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { BuildService, buildEvents, type BuildRecord } from "../orchestrator/BuildService.js";
 import { JarvisClient } from "../integrations/JarvisClient.js";
 import { Logger } from "../utils/Logger.js";
+import { copyForBuild } from "../ecosystem/ProjectBuilds.js";
+import { Catalog } from "./Catalog.js";
 import { OrderStore, type Order } from "./OrderStore.js";
 import { SiteClient, type SiteOrder } from "./SiteClient.js";
 
@@ -48,10 +53,32 @@ const autoStart = (): boolean => (process.env.ORDER_AUTO_START ?? "true").toLowe
 /** Whether the improve loop runs at all. */
 const autoImprove = (): boolean => (process.env.ORDER_AUTO_IMPROVE ?? "true").toLowerCase() !== "false";
 
+/**
+ * An order the customer has already paid for on the site skips "New" and goes
+ * straight into the queue. Money changing hands is the acceptance.
+ */
+const autoAcceptPaid = (): boolean => (process.env.ORDER_AUTO_ACCEPT_PAID ?? "true").toLowerCase() !== "false";
+
+/** Our version, for the site's admin to show beside "online". */
+const appVersion = (() => {
+  let cached: string | null = null;
+  return (): string => {
+    if (cached) return cached;
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.resolve("package.json"), "utf8")) as { version?: string };
+      cached = pkg.version ?? "unknown";
+    } catch {
+      cached = "unknown";
+    }
+    return cached;
+  };
+})();
+
 const timers: NodeJS.Timeout[] = [];
 let started = false;
 let lastIntakeAt: string | null = null;
 let lastIntakeCount = 0;
+let lastPublish: { at: string; ok: boolean; message: string; count: number } | null = null;
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -61,7 +88,11 @@ const normalize = (raw: SiteOrder): Parameters<typeof OrderStore.create>[0] | nu
   const customerName = (raw.customerName ?? raw.name ?? "").trim();
   if (!brief || !customerName) return null;
 
-  const productType = (raw.productType ?? raw.serviceType ?? "website").trim() || "website";
+  // A catalogue pick is recorded by its id, the same way a template started
+  // from the phone is, so buildPrompt can find the template again.
+  const template = Catalog.get(raw.templateId);
+  const productType = template?.id ?? ((raw.productType ?? raw.serviceType ?? "website").trim() || "website");
+  const features = (raw.features ?? []).filter((feature) => typeof feature === "string" && !brief.includes(feature));
   return {
     externalId: raw.id,
     source: "site",
@@ -70,8 +101,8 @@ const normalize = (raw: SiteOrder): Parameters<typeof OrderStore.create>[0] | nu
     productType,
     // The site rarely collects a title, so fall back to something a human can
     // scan in a list: what they want, for whom.
-    title: (raw.title ?? "").trim() || `${productType} for ${customerName}`,
-    brief,
+    title: (raw.title ?? "").trim() || `${template?.name ?? productType} for ${customerName}`,
+    brief: features.length > 0 ? `${brief}\n\nFeatures they chose: ${features.join(", ")}.` : brief,
     budget: raw.budget ?? null,
     timeline: raw.timeline ?? null
   };
@@ -82,13 +113,31 @@ const normalize = (raw: SiteOrder): Parameters<typeof OrderStore.create>[0] | nu
  * orchestrator needs to know and keeps the customer's words intact and first,
  * so nothing it asked for gets paraphrased away.
  */
-const buildPrompt = (order: Order): string =>
-  [
-    `Build a ${order.productType} for a paying customer.`,
+/** Where a build starts: nothing, the template's code, or what was built last time. */
+type StartingPoint = "scratch" | "template" | "previous";
+
+const buildPrompt = (order: Order, from: StartingPoint = "scratch"): string => {
+  const template = Catalog.get(order.productType);
+  return [
+    from === "previous"
+      ? `This ${template?.name ?? order.productType} was built for a paying customer. Improve it: finish anything missing, fix what is broken, and polish it. Do not start again.`
+      : from === "template"
+        ? `The project is our "${template?.name}" template. Tailor it for a paying customer: their content, their business, what they asked for.`
+        : `Build a ${template?.name ?? order.productType} for a paying customer.`,
     "",
     "What the customer asked for, in their words:",
     order.brief,
     "",
+    ...(template
+      ? [
+          `They chose "${template.name}" from our catalogue: ${template.description}`,
+          template.features.length > 0 ? `It comes with: ${template.features.join("; ")}.` : "",
+          template.techStack?.length ? `Build it with: ${template.techStack.join(", ")}.` : "",
+          template.buildNotes ?? "",
+          "Where the customer's words and the template disagree, the customer wins.",
+          ""
+        ]
+      : []),
     order.timeline ? `They expect it by: ${order.timeline}.` : "",
     "This is going to a real customer, so it has to be finished, not a sketch:",
     "- Every page and link in the brief must exist and work.",
@@ -99,6 +148,7 @@ const buildPrompt = (order: Order): string =>
   ]
     .filter(Boolean)
     .join("\n");
+};
 
 const notifyJarvis = (order: Order, subject: string, body: string): void => {
   void JarvisClient.send({
@@ -157,13 +207,49 @@ export const OrderPipeline = {
         Logger.log("Order skipped: not enough detail", { externalId: candidate.id });
         continue;
       }
-      const { created: isNew } = this.record(normalized);
+      const { order, created: isNew } = this.record(normalized);
       if (isNew) created += 1;
+      if (!candidate.paid) continue;
+
+      // Paid for on the site. Often we already had it — the quote was accepted
+      // before the customer paid — and the site sends it again to say so.
+      if (order.status === "received" && autoAcceptPaid()) {
+        this.accept(order.id, `payment on the site${candidate.orderRef ? ` (${candidate.orderRef})` : ""}`);
+      }
+      // Tell the site we know, or it keeps sending it. (A new order's own
+      // "received" report, from record(), already said so.)
+      if (!isNew && order.externalId && (order.status === "received" || order.status === "accepted")) {
+        OrderStore.note(order.id, "paid", "Paid for on the site.");
+        const queued = OrderStore.get(order.id)?.status === "accepted";
+        void SiteClient.reportProgress(order.externalId, {
+          status: "received",
+          message: queued ? "Payment seen; it is in the build queue." : "Payment seen; waiting to be accepted on the PC."
+        });
+      }
     }
 
     lastIntakeAt = new Date().toISOString();
     lastIntakeCount = raw.length;
     return { found: raw.length, created };
+  },
+
+  /**
+   * Tell the site what we can build and how busy we are. Runs with every
+   * intake, so the site's "PC online" light and its catalogue stay current.
+   */
+  async publish(): Promise<{ ok: boolean; message: string; count: number }> {
+    const items = Catalog.forSite();
+    const counts = OrderStore.counts();
+    const result = await SiteClient.checkIn({
+      items,
+      version: appVersion(),
+      machine: os.hostname(),
+      queueLength: counts.received + counts.accepted,
+      building: counts.building
+    });
+    lastPublish = { at: new Date().toISOString(), ok: result.ok, message: result.message, count: items.length };
+    if (!result.ok) Logger.log("Catalogue not published to the site", { detail: result.message });
+    return { ok: result.ok, message: result.message, count: items.length };
   },
 
   /** Move an order to accepted, so the work loop will pick it up. */
@@ -193,26 +279,50 @@ export const OrderPipeline = {
    * Start building an order now, regardless of the work loop. Returns null if
    * the order cannot be built (unknown, already building, or cancelled).
    */
-  startBuild(orderId: string, by = "pipeline"): { order: Order; build: BuildRecord } | null {
+  async startBuild(orderId: string, by = "pipeline"): Promise<{ order: Order; build: BuildRecord } | null> {
     const order = OrderStore.get(orderId);
     if (!order) return null;
     if (order.buildId && BuildService.isRunning(order.buildId)) return null;
     if (order.status === "cancelled" || order.status === "delivered") return null;
 
+    // Carry on from what was built last time (an improvement pass, or a rebuild
+    // after review); failing that, from the template's own code; failing that,
+    // from nothing.
+    const template = Catalog.get(order.productType);
+    const previous = order.deliverablePath && fs.existsSync(order.deliverablePath) ? order.deliverablePath : null;
+    const source = previous ?? (template?.sourcePath && fs.existsSync(template.sourcePath) ? template.sourcePath : null);
+    const from: StartingPoint = previous ? "previous" : source ? "template" : "scratch";
+
+    let workingDir: string | undefined;
+    if (source) {
+      try {
+        ({ workDir: workingDir } = await copyForBuild(source, order.title, "order"));
+      } catch (error) {
+        OrderStore.note(orderId, "building", `Could not copy ${source} (${errorMessage(error)}); building from scratch instead.`);
+      }
+    }
+
     const attempts = OrderStore.recordAttempt(orderId);
     const build = BuildService.start({
       projectName: order.title,
-      description: buildPrompt(order),
+      description: buildPrompt(order, workingDir ? from : "scratch"),
       targetPlatforms: ["web"],
       // A customer deliverable is worth the slow profile; this is exactly the
       // "trade time for quality" case the whole app exists for.
       profile: "deep",
       qualityThreshold: 92,
+      // Working on code that exists is a bounded job, not an open-ended one.
+      maxIterations: workingDir ? 8 : undefined,
+      workingDir,
       startedBy: `order:${order.id} (${by})`,
       orderId: order.id
     });
 
-    OrderStore.note(orderId, "building", `Build ${build.buildId} started (attempt ${attempts}).`);
+    OrderStore.note(
+      orderId,
+      "building",
+      `Build ${build.buildId} started (attempt ${attempts})${workingDir ? `, from ${from === "previous" ? "the last build" : "the template's code"}` : ""}.`
+    );
     const updated = OrderStore.update(orderId, { status: "building", buildId: build.buildId });
     if (order.externalId) {
       void SiteClient.reportProgress(order.externalId, {
@@ -283,7 +393,7 @@ export const OrderPipeline = {
    * Start work on whatever is next in the queue, up to the concurrency limit.
    * Oldest accepted order first — a queue people can predict.
    */
-  work(): { started: string[] } {
+  async work(): Promise<{ started: string[] }> {
     if (!autoStart()) return { started: [] };
 
     const busy = BuildService.active().filter((build) => build.orderId !== null).length;
@@ -297,7 +407,7 @@ export const OrderPipeline = {
 
     const started: string[] = [];
     for (const order of queue) {
-      const result = this.startBuild(order.id, "queue");
+      const result = await this.startBuild(order.id, "queue");
       if (result) started.push(order.id);
     }
     return { started };
@@ -307,7 +417,7 @@ export const OrderPipeline = {
    * Put a delivered product through another pass. This is the "it must not end
    * there" half: what was shipped keeps being worked on.
    */
-  improve(): { started: string[] } {
+  async improve(): Promise<{ started: string[] }> {
     if (!autoImprove()) return { started: [] };
 
     const busy = BuildService.active().length;
@@ -325,7 +435,7 @@ export const OrderPipeline = {
     const target = candidates.sort((a, b) => a.qualityScore - b.qualityScore)[0];
     if (!target) return { started: [] };
 
-    const result = this.startBuild(target.id, "improvement");
+    const result = await this.startBuild(target.id, "improvement");
     if (!result) return { started: [] };
     OrderStore.note(target.id, "improving", `Improvement pass started at quality ${Math.round(target.qualityScore)}.`);
     return { started: [target.id] };
@@ -338,8 +448,10 @@ export const OrderPipeline = {
       autoStart: autoStart(),
       autoImprove: autoImprove(),
       maxConcurrent: maxConcurrent(),
+      autoAcceptPaid: autoAcceptPaid(),
       lastIntakeAt,
       lastIntakeCount,
+      catalog: lastPublish,
       counts: OrderStore.counts()
     };
   },
@@ -421,7 +533,19 @@ export const OrderPipeline = {
       timers.push(timer);
     };
 
-    run("intake", () => this.intake(), INTAKE_EVERY_MS);
+    const intakeAndCheckIn = async () => {
+      if (!SiteClient.isConfigured()) return;
+      await this.intake();
+      await this.publish();
+    };
+    run("intake", intakeAndCheckIn, INTAKE_EVERY_MS);
+    // Once shortly after start too, so a restart shows up on the site in
+    // seconds rather than five minutes.
+    const first = setTimeout(() => {
+      intakeAndCheckIn().catch((error) => Logger.error("Order pipeline first check-in failed", { error: errorMessage(error) }));
+    }, 10_000);
+    first.unref?.();
+    timers.push(first);
     run("work", () => this.work(), WORK_EVERY_MS);
     run("improve", () => this.improve(), IMPROVE_EVERY_MS);
 

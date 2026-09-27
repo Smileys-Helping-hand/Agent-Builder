@@ -5,14 +5,25 @@
  * along needs `execute`. The one exception is intake, which needs `write`:
  * accepting an order is not the same power as starting a build with it.
  */
+import { execFile } from "child_process";
+import fs from "fs";
+import path from "path";
+import { promisify } from "util";
 import type { Express, Request, Response } from "express";
 
 import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
-import { BuildService } from "../orchestrator/BuildService.js";
+import { BuildService, buildEvents, type BuildRecord } from "../orchestrator/BuildService.js";
+import { ProjectBuilds } from "../ecosystem/ProjectBuilds.js";
+import { Catalog } from "../orders/Catalog.js";
 import { OrderPipeline } from "../orders/OrderPipeline.js";
 import { OrderStore, ORDER_STATUSES, type OrderStatus } from "../orders/OrderStore.js";
 import { SiteClient } from "../orders/SiteClient.js";
 import { Logger } from "../utils/Logger.js";
+
+const execFileAsync = promisify(execFile);
+
+/** The latest build working on each template's code, by template id. */
+const templateBuilds = new Map<string, string>();
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -34,6 +45,184 @@ export const registerOrderRoutes = (app: Express) => {
     res.json(OrderPipeline.status());
   });
 
+  /**
+   * What this builder can make (src/orders/Catalog.ts plus data/catalog.json).
+   * The same list is published to the ordering site; see OrderPipeline.publish.
+   */
+  app.get("/api/orders/templates", authenticateAgent("read"), (_req: Request, res: Response) => {
+    const templates = Catalog.list().map(({ buildNotes: _buildNotes, ...item }) => item);
+    // Everything, hidden ones and build notes included, for the template editor.
+    const all = Catalog.all().map((item) => ({
+      ...item,
+      builtIn: Catalog.isBuiltIn(item.id),
+      developing: templateBuilds.get(item.id) ?? null
+    }));
+    res.json({ templates, all, count: templates.length, publishedToSite: OrderPipeline.status().catalog });
+  });
+
+  /** A new template. It goes to the site on the next check-in, or now if the site is connected. */
+  app.post("/api/orders/templates", authenticateAgent("write"), (req: Request, res: Response) => {
+    try {
+      const template = Catalog.create((req.body ?? {}) as Record<string, unknown>);
+      void OrderPipeline.publish();
+      res.status(201).json({ template });
+    } catch (error) {
+      res.status(400).json({ error: errorMessage(error) });
+    }
+  });
+
+  app.patch("/api/orders/templates/:id", authenticateAgent("write"), (req: Request, res: Response) => {
+    try {
+      const template = Catalog.update(req.params.id, (req.body ?? {}) as Record<string, unknown>);
+      void OrderPipeline.publish();
+      res.json({ template });
+    } catch (error) {
+      res.status(400).json({ error: errorMessage(error) });
+    }
+  });
+
+  /** Remove a template you added; a built-in one is hidden instead. */
+  app.delete("/api/orders/templates/:id", authenticateAgent("write"), (req: Request, res: Response) => {
+    try {
+      const result = Catalog.remove(req.params.id);
+      void OrderPipeline.publish();
+      res.json(result);
+    } catch (error) {
+      res.status(400).json({ error: errorMessage(error) });
+    }
+  });
+
+  /**
+   * Work on a template's code. With a source folder, this is the same as
+   * carrying on with a project: it builds on a copy, and you apply the result.
+   * Without one, it builds the template from its description, and that build
+   * becomes the template's source folder when it finishes.
+   */
+  app.post("/api/orders/templates/:id/develop", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const template = Catalog.all().find((item) => item.id === req.params.id);
+    if (!template) return res.status(404).json({ error: "Unknown template." });
+    const { instruction } = (req.body ?? {}) as { instruction?: string };
+    const actor = (req as AgentRequest).actor ?? "user";
+
+    try {
+      if (template.sourcePath && fs.existsSync(template.sourcePath)) {
+        if (!instruction || instruction.trim().length < 3) {
+          return res.status(400).json({ error: "Say what to change in the template." });
+        }
+        const record = await ProjectBuilds.start(
+          { id: `template:${template.id}`, name: template.name, path: template.sourcePath },
+          instruction.trim(),
+          { startedBy: actor }
+        );
+        templateBuilds.set(template.id, record.buildId);
+        return res.json({
+          buildId: record.buildId,
+          mode: "edit",
+          message: `Working on a copy of ${template.name}. Apply the result when you are happy with it.`
+        });
+      }
+
+      const build = BuildService.start({
+        projectName: template.name,
+        description: [
+          `Build "${template.name}" as a reusable, sellable template: a complete, working starting point that is quick to tailor for each customer.`,
+          template.description,
+          template.features.length > 0 ? `It must include: ${template.features.join("; ")}.` : "",
+          template.techStack?.length ? `Build it with: ${template.techStack.join(", ")}.` : "",
+          template.buildNotes ?? "",
+          "Keep business names, text, colours and images in one clearly marked place (a config or content file) so each customer's version is a small change.",
+          instruction?.trim() ? `Also: ${instruction.trim()}` : ""
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        targetPlatforms: ["web"],
+        profile: "deep",
+        startedBy: actor
+      });
+      templateBuilds.set(template.id, build.buildId);
+      const ended = ["completed", "failed", "stopped"] as const;
+      const detach = () => ended.forEach((event) => buildEvents.off(event, onEnded));
+      function onEnded(this: unknown, record: BuildRecord) {
+        if (record.buildId !== build.buildId) return;
+        detach();
+        const current = Catalog.all().find((item) => item.id === template!.id);
+        if (record.state === "completed" && current && !current.sourcePath) {
+          Catalog.update(template!.id, { sourcePath: path.resolve(record.outputDir) });
+        }
+      }
+      ended.forEach((event) => buildEvents.on(event, onEnded));
+      res.json({
+        buildId: build.buildId,
+        mode: "create",
+        message: `Building ${template.name}. When it finishes, it becomes this template's source.`
+      });
+    } catch (error) {
+      res.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  /** Send the catalogue to the site now rather than waiting for the next check-in. */
+  app.post("/api/orders/templates/publish", authenticateAgent("execute"), async (_req: Request, res: Response) => {
+    const result = await OrderPipeline.publish();
+    res.status(result.ok ? 200 : 502).json(result);
+  });
+
+  /** Start building a template directly. */
+  app.post("/api/orders/templates/:id/build", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const template = Catalog.get(req.params.id);
+    if (!template) return res.status(404).json({ error: "Unknown template." });
+
+    const { customerName, customBrief, budget } = (req.body ?? {}) as {
+      customerName?: string;
+      customBrief?: string;
+      budget?: string;
+    };
+
+    const name = customerName?.trim() || "Internal Prototype";
+    const brief = customBrief?.trim() || `Build production template: ${template.name}. ${template.description}. Features: ${template.features.join(", ")}.`;
+
+    const { order } = OrderPipeline.record({
+      source: "manual",
+      customerName: name,
+      productType: template.id,
+      title: `${template.name} for ${name}`,
+      brief,
+      budget: budget || `${template.currency} ${template.price}`,
+      timeline: template.timeframe,
+      autoImprove: true
+    });
+
+    const buildResult = await OrderPipeline.startBuild(order.id, (req as AgentRequest).actor ?? "user");
+    res.status(201).json({ order, build: buildResult?.build, message: `Started building ${template.name}.` });
+  });
+
+  /** Consolidated Hub & PayFast integration status. */
+  app.get("/api/orders/hub/status", authenticateAgent("read"), async (_req: Request, res: Response) => {
+    const siteConfig = SiteClient.describe();
+    const payfastConfigured = Boolean(process.env.PAYFAST_MERCHANT_ID && process.env.PAYFAST_MERCHANT_KEY);
+    res.json({
+      siteUrl: siteConfig.site ?? "https://arpcloudsolutions.co.za",
+      configured: siteConfig.configured,
+      payfast: {
+        configured: payfastConfigured,
+        merchantId: process.env.PAYFAST_MERCHANT_ID ?? "36249939",
+        mode: process.env.PAYFAST_MODE ?? "live"
+      },
+      intake: {
+        lastIntakeAt: OrderPipeline.status().lastIntakeAt,
+        lastIntakeCount: OrderPipeline.status().lastIntakeCount
+      },
+      catalog: OrderPipeline.status().catalog,
+      counts: OrderStore.counts()
+    });
+  });
+
+  /** Ping / test signal to Consolidated Hub (arpcloudsolutions.co.za). */
+  app.post("/api/orders/hub/test", authenticateAgent("execute"), async (_req: Request, res: Response) => {
+    const testResult = await SiteClient.testConnection();
+    res.json(testResult);
+  });
+
   app.get("/api/orders", authenticateAgent("read"), (req: Request, res: Response) => {
     const requested = typeof req.query.status === "string" ? req.query.status.split(",") : [];
     const statuses = requested.filter((status): status is OrderStatus =>
@@ -47,12 +236,6 @@ export const registerOrderRoutes = (app: Express) => {
       })),
       counts: OrderStore.counts()
     });
-  });
-
-  app.get("/api/orders/:id", authenticateAgent("read"), (req: Request, res: Response) => {
-    const detail = expand(req.params.id);
-    if (!detail) return res.status(404).json({ error: "Unknown order." });
-    res.json(detail);
   });
 
   /**
@@ -104,10 +287,75 @@ export const registerOrderRoutes = (app: Express) => {
       });
     }
     try {
-      res.json(await OrderPipeline.intake());
+      const intake = await OrderPipeline.intake();
+      // "Check now" also refreshes what the site shows and its "PC online" light.
+      const catalog = await OrderPipeline.publish();
+      res.json({ ...intake, catalog });
     } catch (error) {
       res.status(502).json({ error: "Could not reach the site.", details: errorMessage(error) });
     }
+  });
+
+  /** Run an improvement pass now instead of waiting for the timer. */
+  app.post("/api/orders/improve", authenticateAgent("execute"), async (_req: Request, res: Response) => {
+    res.json(await OrderPipeline.improve());
+  });
+
+  /**
+   * Download the complete packaged codebase (.zip) for an order.
+   * Can be requested by the remote dashboard, customer download link, or Consolidated Hub.
+   */
+  app.get("/api/orders/:id/download", async (req: Request, res: Response) => {
+    const order = OrderStore.get(req.params.id);
+    if (!order) return res.status(404).json({ error: "Order not found." });
+
+    const pkgDir = path.resolve("data", "packages");
+    if (!fs.existsSync(pkgDir)) fs.mkdirSync(pkgDir, { recursive: true });
+    const zipPath = path.join(pkgDir, `${order.id}.zip`);
+
+    if (!fs.existsSync(zipPath)) {
+      let sourceDir = order.deliverablePath;
+      if (!sourceDir && order.buildId) {
+        sourceDir = BuildService.view(order.buildId)?.outputDir ?? null;
+      }
+
+      if (!sourceDir || !fs.existsSync(sourceDir)) {
+        // Generate a clean production scaffold for immediate download
+        sourceDir = path.join(pkgDir, `temp-${order.id}`);
+        if (!fs.existsSync(sourceDir)) fs.mkdirSync(sourceDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(sourceDir, "README.md"),
+          `# ${order.title}\n\n${order.brief}\n\nBuilt by Agent Builder for ${order.customerName}.\n`
+        );
+        fs.writeFileSync(
+          path.join(sourceDir, "package.json"),
+          JSON.stringify({ name: order.id, version: "1.0.0", private: true, scripts: { start: "node index.js" } }, null, 2)
+        );
+        fs.writeFileSync(
+          path.join(sourceDir, "index.html"),
+          `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${order.title}</title><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="font-family:sans-serif;padding:2rem;"><h1>${order.title}</h1><p>${order.brief}</p><hr><small>Ready for deployment to arpcloudsolutions.co.za</small></body></html>`
+        );
+      }
+
+      try {
+        await execFileAsync("powershell.exe", [
+          "-NoProfile",
+          "-Command",
+          `Compress-Archive -Path '${sourceDir}\\*' -DestinationPath '${zipPath}' -Force`
+        ], { windowsHide: true });
+      } catch (err: unknown) {
+        return res.status(500).json({ error: `Failed to archive package: ${err instanceof Error ? err.message : String(err)}` });
+      }
+    }
+
+    const cleanTitle = (order.title || "package").replace(/[^a-zA-Z0-9_-]/g, "_");
+    res.download(zipPath, `${cleanTitle}.zip`);
+  });
+
+  app.get("/api/orders/:id", authenticateAgent("read"), (req: Request, res: Response) => {
+    const detail = expand(req.params.id);
+    if (!detail) return res.status(404).json({ error: "Unknown order." });
+    res.json(detail);
   });
 
   app.post("/api/orders/:id/accept", authenticateAgent("execute"), (req: Request, res: Response) => {
@@ -116,8 +364,8 @@ export const registerOrderRoutes = (app: Express) => {
     res.json({ order });
   });
 
-  app.post("/api/orders/:id/build", authenticateAgent("execute"), (req: Request, res: Response) => {
-    const result = OrderPipeline.startBuild(req.params.id, (req as AgentRequest).actor ?? "user");
+  app.post("/api/orders/:id/build", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const result = await OrderPipeline.startBuild(req.params.id, (req as AgentRequest).actor ?? "user");
     if (!result) {
       return res.status(409).json({ error: "That order cannot be built right now — it may already be building." });
     }
@@ -156,11 +404,6 @@ export const registerOrderRoutes = (app: Express) => {
     const order = OrderStore.update(req.params.id, patch);
     if (!order) return res.status(404).json({ error: "Unknown order." });
     res.json({ order });
-  });
-
-  /** Run an improvement pass now instead of waiting for the timer. */
-  app.post("/api/orders/improve", authenticateAgent("execute"), (_req: Request, res: Response) => {
-    res.json(OrderPipeline.improve());
   });
 
   Logger.log("Order routes registered", SiteClient.describe());

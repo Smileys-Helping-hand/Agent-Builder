@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { api, type Order, type OrderStatus } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
+import { TemplateStudio } from "./templates";
 
 /**
  * What each state means, in the customer's terms rather than the code's.
@@ -33,6 +34,7 @@ export default function Orders() {
   const toast = useToast();
   const orders = useRemote(() => api.orders(), 15000);
   const pipeline = useRemote(() => api.pipeline(), 30000);
+  const hub = useRemote(() => api.hubStatus(), 30000);
 
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
@@ -49,7 +51,7 @@ export default function Orders() {
     try {
       await run();
       toast(label, "ok");
-      await Promise.all([orders.refresh(), pipeline.refresh()]);
+      await Promise.all([orders.refresh(), pipeline.refresh(), hub.refresh()]);
     } catch (error) {
       fail(error);
     } finally {
@@ -85,14 +87,15 @@ export default function Orders() {
   const counts = orders.data?.counts;
   const attention = (counts?.received ?? 0) + (counts?.review ?? 0) + (counts?.failed ?? 0);
   const site = pipeline.data?.site;
+  const hubData = hub.data;
 
   return (
     <>
       <Header
-        title="Orders"
+        title="Orders & Templates"
         sub={
           list.length === 0
-            ? "No orders yet"
+            ? "No orders yet · Templates ready"
             : attention > 0
               ? `${attention} need you · ${list.length} total`
               : `${list.length} orders · all handled`
@@ -103,10 +106,72 @@ export default function Orders() {
       <div className="wrap">
         {orders.error ? <Banner kind="error">{orders.error}</Banner> : null}
 
+        {/* Consolidated Hub & PayFast Integration Banner */}
+        <section
+          className="card"
+          style={{
+            marginTop: 16,
+            marginBottom: 16,
+            border: "1px solid rgba(61, 220, 154, 0.35)",
+            background: "linear-gradient(135deg, rgba(61, 220, 154, 0.08), rgba(20, 30, 51, 0.8))"
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 14 }}>
+            <div style={{ flex: 1, minWidth: 260 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
+                <span className="pill up" style={{ width: 10, height: 10, borderRadius: "50%", background: "var(--good)" }} />
+                <strong style={{ fontSize: 16 }}>Consolidated Hub · arpcloudsolutions.co.za</strong>
+                <span className="chip accent">
+                  PayFast {hubData?.payfast?.mode ? hubData.payfast.mode.toUpperCase() : "LIVE"} ({hubData?.payfast?.merchantId || "36249939"})
+                </span>
+              </div>
+              <p style={{ margin: "7px 0 0", color: "var(--muted)", fontSize: 13.5, lineHeight: 1.45 }}>
+                Direct customer intake & PayFast payment processing. Template purchases or client website requests dispatch builds autonomously, package the codebase into downloadable archives, and deliver to the client.
+              </p>
+              {hubData?.intake?.lastIntakeAt ? (
+                <small style={{ color: "var(--faint)", display: "block", marginTop: 6 }}>
+                  Last sync: {ago(hubData.intake.lastIntakeAt)} · {hubData.intake.lastIntakeCount} intake passes recorded
+                </small>
+              ) : null}
+              {hubData?.catalog ? (
+                <small style={{ color: hubData.catalog.ok ? "var(--faint)" : "var(--bad)", display: "block", marginTop: 4 }}>
+                  {hubData.catalog.ok
+                    ? `On the site: ${hubData.catalog.count} templates, published ${ago(hubData.catalog.at)}`
+                    : `Templates not on the site yet: ${hubData.catalog.message}`}
+                </small>
+              ) : null}
+            </div>
+
+            <div style={{ display: "flex", gap: 9, flexWrap: "wrap", alignSelf: "center" }}>
+              <button
+                className="btn"
+                disabled={busy}
+                onClick={() => act("Checked Consolidated Hub.", () => api.pullOrders())}
+              >
+                {Icon.refresh} Pull Hub Orders
+              </button>
+              <button
+                className="btn accent"
+                disabled={busy}
+                onClick={() =>
+                  act("Signal verified to Consolidated Hub.", async () => {
+                    const res = await api.testHub();
+                    if (!res.ok) throw new Error(res.message || "Failed to reach Consolidated Hub");
+                  })
+                }
+              >
+                {Icon.sparkle} Test Signal
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <TemplateStudio />
+
         <section className="hero">
-          <div className="hero-label">Customer pipeline</div>
+          <div className="hero-label">Manual Order Intake</div>
           <h2 className="hero-title">
-            {site?.configured ? "Connected to your site" : "Not connected to your site yet"}
+            {site?.configured ? "Connected to your site" : "Add custom project or order"}
           </h2>
           <p className="hero-sub">
             {site?.configured
@@ -256,6 +321,18 @@ export default function Orders() {
                             >
                               {order.autoImprove ? "Stop improving" : "Keep improving"}
                             </button>
+                          ) : null}
+                          {(order.deliverablePath || ["review", "delivered", "maintained"].includes(order.status)) ? (
+                            <a
+                              className="btn accent"
+                              href={api.downloadPackageUrl(order.id)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="Download complete codebase as .zip archive"
+                              style={{ display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none" }}
+                            >
+                              {Icon.folder} Download .zip
+                            </a>
                           ) : null}
                           <button className="btn" onClick={() => setOpen(expanded ? null : order.id)}>
                             {expanded ? "Less" : "The brief"}
