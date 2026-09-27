@@ -1,9 +1,8 @@
-"use client";
-
+import { useState } from "react";
 import useSWR from "swr";
 import HeroSection from "../ui/HeroSection";
 import heroImages from "../../theme/heroImages";
-import { fetchSystemStatus, type SystemStatus } from "../../lib/api";
+import { fetchSystemStatus, cleanupHardware, type SystemStatus } from "../../lib/api";
 
 const formatBytes = (value: number) => {
   const units = ["B", "KB", "MB", "GB", "TB"] as const;
@@ -38,11 +37,30 @@ type SystemStatusPanelProps = {
 };
 
 export const SystemStatusPanel = ({ canView }: SystemStatusPanelProps) => {
-  const { data, isLoading, error } = useSWR<SystemStatus | null>(
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanupResult, setCleanupResult] = useState<string | null>(null);
+
+  const { data, isLoading, error, mutate } = useSWR<SystemStatus | null>(
     canView ? "system-status" : null,
     fetchSystemStatus,
     { revalidateOnFocus: false }
   );
+
+  const handleCleanup = async () => {
+    setCleaning(true);
+    setCleanupResult(null);
+    try {
+      const res = await cleanupHardware();
+      setCleanupResult(
+        res.message || `Cleaned ${res.cleanedFilesCount} files and freed ~${res.freedDiskMB.toFixed(1)}MB.`
+      );
+      mutate();
+    } catch (err: any) {
+      setCleanupResult(`Cleanup error: ${err?.message || "Failed"}`);
+    } finally {
+      setCleaning(false);
+    }
+  };
 
   return (
     <section className="mx-auto mt-10 max-w-5xl space-y-6 px-6">
@@ -65,20 +83,43 @@ export const SystemStatusPanel = ({ canView }: SystemStatusPanelProps) => {
             {error && <p className="text-sm text-rose-400">{error.message}</p>}
             {data && (
               <div className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
                   <div>
                     <p className="text-xs uppercase tracking-wide text-slate-500">Platform</p>
                     <p className="text-lg font-semibold text-slate-100">
                       {data.system.platform} {data.system.release}
                     </p>
                   </div>
-                  <div className="text-right">
-                    <p className="text-xs uppercase tracking-wide text-slate-500">Uptime</p>
-                    <p className="text-lg font-semibold text-slate-100">
-                      {uptimeLabel(data.system.uptimeSeconds)}
-                    </p>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={handleCleanup}
+                      disabled={cleaning}
+                      className="rounded-lg bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 transition disabled:opacity-50"
+                    >
+                      {cleaning ? "Freeing space..." : "🧹 Free Up Space & Memory"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => mutate()}
+                      className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-300 border border-slate-700 hover:bg-slate-700 transition"
+                    >
+                      🔄 Refresh
+                    </button>
+                    <div className="text-right pl-2">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Uptime</p>
+                      <p className="text-sm font-semibold text-slate-100">
+                        {uptimeLabel(data.system.uptimeSeconds)}
+                      </p>
+                    </div>
                   </div>
                 </div>
+
+                {cleanupResult && (
+                  <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/40 p-3 text-xs text-emerald-200">
+                    {cleanupResult}
+                  </div>
+                )}
 
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-300">

@@ -1230,6 +1230,15 @@ export const activateLicense = (payload: { key: string; tier: LicenseSnapshot["t
 
 export const fetchSystemStatus = () => jsonFetcher<SystemStatus>("/api/admin/system-status", {}, true);
 
+export const cleanupHardware = () =>
+  jsonFetcher<{
+    success: boolean;
+    freedDiskMB: number;
+    freedMemoryMB: number;
+    cleanedFilesCount: number;
+    message: string;
+  }>("/api/hardware/cleanup", { method: "POST" }, true);
+
 export const fetchAdminUsers = () => jsonFetcher<{ users: AdminUserRecord[] }>("/api/admin/users", {}, true);
 
 export const inviteUserAccount = (payload: { email: string; role: string }) =>

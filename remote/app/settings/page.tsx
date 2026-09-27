@@ -180,6 +180,42 @@ export default function Settings() {
 
           {manual ? (
             <div className="fade-in" style={{ marginTop: 6 }}>
+              <div style={{ marginBottom: 12 }}>
+                <small style={{ color: "var(--muted)", display: "block", marginBottom: 6 }}>Quick presets:</small>
+                <div className="btn-row" style={{ flexWrap: "wrap", gap: 6 }}>
+                  <button
+                    type="button"
+                    className="btn small"
+                    onClick={() => {
+                      setAddress("https://agent.savestate.co.za");
+                      if (!key) setKey("ab_7e788c69319f5d4fb24ee4bb33ff3c5df19fb3d0407b16b1479e02308716cad9");
+                    }}
+                  >
+                    🌐 agent.savestate.co.za
+                  </button>
+                  <button
+                    type="button"
+                    className="btn small"
+                    onClick={() => {
+                      setAddress("https://builder.savestate.co.za");
+                      if (!key) setKey("ab_7e788c69319f5d4fb24ee4bb33ff3c5df19fb3d0407b16b1479e02308716cad9");
+                    }}
+                  >
+                    🌐 builder.savestate.co.za
+                  </button>
+                  <button
+                    type="button"
+                    className="btn small"
+                    onClick={() => {
+                      setAddress("http://127.0.0.1:4000");
+                      if (!key) setKey("ab_7e788c69319f5d4fb24ee4bb33ff3c5df19fb3d0407b16b1479e02308716cad9");
+                    }}
+                  >
+                    💻 Localhost:4000
+                  </button>
+                </div>
+              </div>
+
               <label className="field">
                 <span>Address of your machine</span>
                 <input

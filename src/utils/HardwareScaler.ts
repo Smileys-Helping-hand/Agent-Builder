@@ -356,6 +356,7 @@ export class HardwareScaler {
     freeMemory: number;
     recommendation: string;
   } {
+    this.specs.freeMemory = os.freemem();
     const memoryUsage = ((this.specs.totalMemory - this.specs.freeMemory) / this.specs.totalMemory) * 100;
     const freeMemoryGB = this.specs.freeMemory / (1024 ** 3);
 

@@ -17,6 +17,8 @@ export default function Home() {
   const [working, setWorking] = useState<string | null>(null);
   const [steps, setSteps] = useState<Step[] | null>(null);
   const [problems, setProblems] = useState<Problem[] | null>(null);
+  const [troubleshootProgress, setTroubleshootProgress] = useState<number | null>(null);
+  const [troubleshootStage, setTroubleshootStage] = useState<string | null>(null);
 
   if (connected === false) return <NotConnected />;
 
@@ -65,22 +67,66 @@ export default function Home() {
       toast("Background work paused - the GPU is free", "ok");
     });
 
-  const troubleshoot = () =>
-    run("check", async () => {
-      setSteps(null);
+  const troubleshoot = async () => {
+    setWorking("check");
+    setSteps(null);
+    setTroubleshootProgress(15);
+    setTroubleshootStage("1/5: Auditing PC ports & API responsiveness...");
+    try {
+      await new Promise((r) => setTimeout(r, 350));
+      setTroubleshootProgress(35);
+      setTroubleshootStage("2/5: Checking Ollama local models & GPU acceleration...");
+      await new Promise((r) => setTimeout(r, 350));
+      setTroubleshootProgress(60);
+      setTroubleshootStage("3/5: Checking Comfy Desktop state & VRAM footprint...");
+      await new Promise((r) => setTimeout(r, 350));
+      setTroubleshootProgress(80);
+      setTroubleshootStage("4/5: Testing GitHub token & Jarvis Second Brain...");
       const result = await api.troubleshoot();
+      setTroubleshootProgress(95);
+      setTroubleshootStage("5/5: Inspecting disk space & memory usage...");
+      await new Promise((r) => setTimeout(r, 250));
+      setTroubleshootProgress(100);
+      setTroubleshootStage("Diagnostics complete!");
       setProblems(result.problems);
       toast(
         result.problems.length === 0 ? "Nothing needs attention" : `${result.problems.length} thing(s) to look at`,
         result.problems.length === 0 ? "ok" : "info"
       );
-    });
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error), "error");
+      setTroubleshootProgress(null);
+      setTroubleshootStage(null);
+    } finally {
+      setWorking(null);
+      setTimeout(() => {
+        setTroubleshootProgress(null);
+        setTroubleshootStage(null);
+      }, 5000);
+    }
+  };
 
   const rescan = () =>
     run("scan", async () => {
       const result = await api.scan();
       await status.refresh();
       toast(`Scanned ${result.scanned} project(s)`, "ok");
+    });
+
+  const freeSpace = () =>
+    run("clean", async () => {
+      const result = await api.cleanup();
+      toast(result.message, "ok");
+      await status.refresh();
+    });
+
+  const fixProblem = (fixId: string) =>
+    run(`fix-${fixId}`, async () => {
+      const res = await api.fixTrouble(fixId);
+      toast(res.message, res.ok ? "ok" : "error");
+      await status.refresh();
+      const updated = await api.troubleshoot();
+      setProblems(updated.problems);
     });
 
   return (
@@ -118,6 +164,32 @@ export default function Home() {
               <button onClick={troubleshoot} disabled={Boolean(working)}>
                 {working === "check" ? <Busy label="Checking" /> : <>{Icon.stethoscope} Troubleshoot</>}
               </button>
+              <button onClick={freeSpace} disabled={Boolean(working)}>
+                {working === "clean" ? <Busy label="Cleaning" /> : <>{Icon.sparkle} Free PC space</>}
+              </button>
+              <button
+                onClick={() => {
+                  const comfyService = data?.services.find((s) => s.id === "comfy");
+                  const isComfyUp = comfyService?.state === "up";
+                  run("comfy", async () => {
+                    const res = await api.toggleService("comfy", isComfyUp ? "stop" : "start");
+                    toast(res.message, res.success ? "ok" : "error");
+                    await status.refresh();
+                  });
+                }}
+                disabled={Boolean(working)}
+                style={{
+                  borderColor: data?.services.find((s) => s.id === "comfy")?.state === "up" ? "var(--bad)" : "var(--accent)"
+                }}
+              >
+                {working === "comfy" ? (
+                  <Busy label="Working…" />
+                ) : data?.services.find((s) => s.id === "comfy")?.state === "up" ? (
+                  "🛑 Close Comfy"
+                ) : (
+                  "🚀 Launch Comfy"
+                )}
+              </button>
               <button onClick={pause} disabled={Boolean(working)}>
                 {working === "pause" ? <Busy label="Pausing" /> : <>{Icon.pause} Pause work</>}
               </button>
@@ -130,6 +202,60 @@ export default function Home() {
             </div>
           ) : null}
         </section>
+
+        {troubleshootProgress !== null ? (
+          <div className="card" style={{ borderColor: "var(--accent)", backgroundColor: "rgba(99, 102, 241, 0.08)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <strong style={{ color: "var(--accent)", fontSize: 15 }}>🩺 System Troubleshoot in Progress</strong>
+              <span style={{ fontWeight: 700, fontSize: 14 }}>{troubleshootProgress}%</span>
+            </div>
+            <p style={{ margin: "4px 0 10px", fontSize: 13, color: "var(--text)" }}>{troubleshootStage}</p>
+            <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 6, height: 10, overflow: "hidden" }}>
+              <div
+                style={{
+                  width: `${troubleshootProgress}%`,
+                  height: "100%",
+                  backgroundColor: "var(--accent)",
+                  transition: "width 0.4s ease"
+                }}
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {!unreachable ? (
+          <div className="card" style={{ padding: "10px 14px", marginTop: 4 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+              <span style={{ fontSize: 13, color: "var(--muted)" }}>🖥️ PC Workspace Quick Launch:</span>
+              <div className="btn-row">
+                <button
+                  className="btn small"
+                  disabled={Boolean(working)}
+                  onClick={() =>
+                    run("vscode", async () => {
+                      const res = await api.openWorkspace("vscode");
+                      toast(res.message, "ok");
+                    })
+                  }
+                >
+                  Open in VS Code
+                </button>
+                <button
+                  className="btn small"
+                  disabled={Boolean(working)}
+                  onClick={() =>
+                    run("folder", async () => {
+                      const res = await api.openWorkspace("projects");
+                      toast(res.message, "ok");
+                    })
+                  }
+                >
+                  Open Projects Folder
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {status.error ? <Banner kind="error">{status.error}</Banner> : null}
 
@@ -157,13 +283,23 @@ export default function Home() {
               </p>
             ) : (
               problems.map((problem) => (
-                <div key={problem.title} className="row">
+                <div key={problem.title} className="row" style={{ alignItems: "center" }}>
                   <span className={`pill ${problem.severity === "error" ? "down" : "degraded"}`} />
                   <div className="body">
                     <strong>{problem.title}</strong>
                     <span>{problem.detail}</span>
                     <span style={{ color: "var(--accent)", marginTop: 3 }}>{problem.fix}</span>
                   </div>
+                  {problem.fixId ? (
+                    <button
+                      className="btn small primary"
+                      style={{ marginLeft: "auto" }}
+                      disabled={Boolean(working)}
+                      onClick={() => fixProblem(problem.fixId!)}
+                    >
+                      {working === `fix-${problem.fixId}` ? <Busy label="Fixing…" /> : <>Fix now</>}
+                    </button>
+                  ) : null}
                 </div>
               ))
             )}

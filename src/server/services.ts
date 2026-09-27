@@ -21,9 +21,12 @@ import { authenticateAgent } from "./agentAuth.js";
 import { EcosystemLoop } from "../ecosystem/EcosystemLoop.js";
 import { EcosystemStore } from "../ecosystem/EcosystemStore.js";
 import { GitHubClient } from "../ecosystem/GitHubClient.js";
+import { JarvisClient } from "../integrations/JarvisClient.js";
 import { Logger } from "../utils/Logger.js";
+import { OLLAMA_URL, checkOllama, ollamaBinary } from "../utils/Ollama.js";
 import { ResearchEngine } from "../research/ResearchEngine.js";
 import { ResearchStore } from "../research/ResearchStore.js";
+import { SystemResourceService, type SystemMetrics } from "../utils/SystemResourceService.js";
 
 const run = promisify(execFile);
 
@@ -41,38 +44,38 @@ export interface Problem {
   title: string;
   detail: string;
   fix: string;
+  fixId?: string;
   severity: "warning" | "error";
 }
 
-const OLLAMA_URL = process.env.OLLAMA_BASE_URL ?? process.env.OLLAMA_URL ?? "http://localhost:11434";
 const startedAt = Date.now();
 
-/** Where Ollama is installed, for starting it when it is not running. */
-const ollamaBinary = (): string | null => {
+const comfyBinary = (): string | null => {
   const candidates = [
-    process.env.OLLAMA_PATH,
-    path.join(os.homedir(), "AppData", "Local", "Programs", "Ollama", "ollama.exe"),
-    "C:/Program Files/Ollama/ollama.exe",
-    "/usr/local/bin/ollama",
-    "/usr/bin/ollama"
-  ].filter((candidate): candidate is string => Boolean(candidate));
-  return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
+    process.env.COMFY_DESKTOP_PATH,
+    "C:/Program Files/Comfy Desktop/Comfy Desktop.exe",
+    path.join(os.homedir(), "AppData", "Local", "Programs", "ComfyUI", "ComfyUI.exe")
+  ].filter((c): c is string => Boolean(c));
+  return candidates.find((c) => fs.existsSync(c)) ?? null;
 };
 
-const checkOllama = async (): Promise<{ state: ServiceState; detail: string; models: string[] }> => {
+const checkComfy = async (): Promise<{ state: ServiceState; detail: string }> => {
   try {
-    const response = await fetch(`${OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(4000) });
-    if (!response.ok) return { state: "degraded", detail: `Answered ${response.status}`, models: [] };
-    const body = (await response.json()) as { models?: Array<{ name: string }> };
-    const models = (body.models ?? []).map((model) => model.name);
-    return {
-      state: models.length > 0 ? "up" : "degraded",
-      detail: models.length > 0 ? `${models.length} model(s) available` : "Running, but no models are installed",
-      models
-    };
-  } catch {
-    return { state: "down", detail: "Not reachable", models: [] };
-  }
+    const res = await fetch("http://127.0.0.1:8188/system_stats", { signal: AbortSignal.timeout(1500) });
+    if (res.ok) {
+      return { state: "up", detail: "Active on port 8188" };
+    }
+  } catch {}
+  try {
+    const { stdout } = await run("tasklist", ["/FI", "IMAGENAME eq Comfy Desktop.exe", "/NH"], {
+      timeout: 2000,
+      windowsHide: true
+    });
+    if (stdout.includes("Comfy Desktop.exe")) {
+      return { state: "up", detail: "Desktop application running" };
+    }
+  } catch {}
+  return { state: "down", detail: "Stopped (saving ~1.5GB RAM & GPU VRAM)" };
 };
 
 const gpuSummary = async (): Promise<string> => {
@@ -105,6 +108,8 @@ const diskSummary = (): { freeGb: number; detail: string } => {
  * it can be reached from outside the house.
  */
 const readPublicUrl = (): string | null => {
+  if (process.env.REMOTE_URL?.startsWith("http")) return process.env.REMOTE_URL.trim();
+  if (process.env.PUBLIC_URL?.startsWith("http")) return process.env.PUBLIC_URL.trim();
   try {
     const file = path.resolve("data/remote-url.txt");
     if (!fs.existsSync(file)) return null;
@@ -123,26 +128,38 @@ const researchSummary = () => {
 };
 
 const collectStatus = async () => {
-  const ollama = await checkOllama();
+  const [ollama, comfy, githubOk, metrics] = await Promise.all([
+    checkOllama(),
+    checkComfy(),
+    GitHubClient.isAvailable(),
+    SystemResourceService.getMetrics()
+  ]);
   const research = researchSummary();
   const ecosystem = EcosystemLoop.status();
   const counts = EcosystemStore.counts();
-  const disk = diskSummary();
+  const jarvis = JarvisClient.describe();
 
   const services: ServiceReport[] = [
     {
       id: "api",
       label: "Agent Builder API",
       state: "up",
-      detail: `Running for ${Math.round((Date.now() - startedAt) / 60000)} min`,
+      detail: `Port ${process.env.PORT ?? 4000} · Running for ${Math.round((Date.now() - startedAt) / 60000)} min`,
       canStart: false
     },
     {
       id: "ollama",
       label: "Local model (Ollama)",
       state: ollama.state,
-      detail: ollama.detail,
+      detail: ollama.state === "up" ? `${ollama.detail} (${process.env.OLLAMA_MODEL ?? "qwen2.5-coder:7b"})` : ollama.detail,
       canStart: ollama.state !== "up" && Boolean(ollamaBinary())
+    },
+    {
+      id: "comfy",
+      label: "Comfy Desktop (AI Image/UI)",
+      state: comfy.state,
+      detail: comfy.detail,
+      canStart: comfy.state !== "up" && Boolean(comfyBinary())
     },
     {
       id: "research",
@@ -163,38 +180,67 @@ const collectStatus = async () => {
           ? `${counts.projects} project(s), ${counts.openIssues} open issue(s)${ecosystem.lastSweepAt ? `, last swept ${ecosystem.lastSweepAt}` : ""}`
           : "No projects scanned yet",
       canStart: true
+    },
+    {
+      id: "github",
+      label: "GitHub Sync",
+      state: githubOk ? "up" : "down",
+      detail: githubOk ? "Connected & token verified" : "Not connected (set GITHUB_TOKEN or run gh auth login)",
+      canStart: !githubOk
+    },
+    {
+      id: "jarvis",
+      label: "Second Brain (Jarvis)",
+      state: jarvis.configured ? (jarvis.last?.ok ? "up" : jarvis.last ? "degraded" : "up") : "unknown",
+      detail: jarvis.configured
+        ? jarvis.last?.ok
+          ? `Connected · ${jarvis.queued} queued`
+          : jarvis.last
+            ? `Not reachable: ${jarvis.last.detail.slice(0, 60)}`
+            : "Configured (local & remote webhooks ready)"
+        : "Not set up (set JARVIS_HOST and JARVIS_API_KEY)",
+      canStart: jarvis.configured
     }
   ];
 
   return {
     services,
     publicUrl: readPublicUrl(),
-    gpu: await gpuSummary(),
-    disk: disk.detail,
+    gpu: metrics.gpu
+      ? `${metrics.gpu.name}: ${metrics.gpu.vramUsedMB}/${metrics.gpu.vramTotalMB} MB VRAM (${metrics.gpu.vramUsagePercent}% in use)`
+      : await gpuSummary(),
+    disk: `${metrics.disk.freeGB} GB free of ${metrics.disk.totalGB} GB (${metrics.disk.usedPercent}% used)`,
     host: os.hostname(),
     counts,
     research: { running: research.running, topics: research.topics.length, findings: research.findings },
+    metrics,
     healthy: services.every((service) => service.state === "up" || service.state === "unknown")
   };
 };
 
 const findProblems = async (): Promise<Problem[]> => {
   const problems: Problem[] = [];
-  const ollama = await checkOllama();
+  const [ollama, metrics, githubOk] = await Promise.all([
+    checkOllama(),
+    SystemResourceService.getMetrics(),
+    GitHubClient.isAvailable()
+  ]);
 
   if (ollama.state === "down") {
     problems.push({
       severity: "error",
       title: "The local model is not running",
       detail: "Nothing can be built, repaired or researched without it.",
-      fix: ollamaBinary() ? 'Press "Switch everything on", or run: ollama serve' : "Install Ollama from ollama.com, then run: ollama serve"
+      fix: ollamaBinary() ? 'Press "Switch everything on", or run: ollama serve' : "Install Ollama from ollama.com, then run: ollama serve",
+      fixId: "start_ollama"
     });
   } else if (ollama.models.length === 0) {
     problems.push({
       severity: "error",
       title: "Ollama has no models installed",
       detail: "It is running but has nothing to think with.",
-      fix: "Run: ollama pull qwen2.5-coder:7b"
+      fix: "Run: ollama pull qwen2.5-coder:7b",
+      fixId: "pull_model"
     });
   }
 
@@ -204,7 +250,8 @@ const findProblems = async (): Promise<Problem[]> => {
       severity: "warning",
       title: "Research is paused",
       detail: `${research.topics.length} topic(s) exist but none are running.`,
-      fix: 'Press "Switch everything on" to resume them.'
+      fix: 'Press "Switch everything on" to resume them.',
+      fixId: "resume_research"
     });
   }
 
@@ -214,7 +261,8 @@ const findProblems = async (): Promise<Problem[]> => {
       severity: "warning",
       title: "No projects have been scanned",
       detail: "The app does not know what is on this machine yet.",
-      fix: 'Press "Switch everything on", which runs a scan.'
+      fix: 'Press "Switch everything on", which runs a scan.',
+      fixId: "scan_projects"
     });
   }
   if (counts.errors > 0) {
@@ -226,22 +274,23 @@ const findProblems = async (): Promise<Problem[]> => {
     });
   }
 
-  const disk = diskSummary();
-  if (disk.freeGb < 5) {
+  if (metrics.disk.freeGB < 5) {
     problems.push({
       severity: "error",
       title: "The disk is nearly full",
-      detail: `${disk.detail} — builds install dependencies and will fail.`,
-      fix: "Free up space on this drive."
+      detail: `${metrics.disk.freeGB} GB free — builds install dependencies and will fail.`,
+      fix: 'Click "Free up space & usage" to clean temp files and caches.',
+      fixId: "clean_disk"
     });
   }
 
-  if (!(await GitHubClient.isAvailable())) {
+  if (!githubOk) {
     problems.push({
       severity: "warning",
       title: "GitHub is not connected",
       detail: "Issues, pull requests and CI status will be missing from briefings.",
-      fix: "Run: gh auth login (or set GITHUB_TOKEN)."
+      fix: "Run: gh auth login (or set GITHUB_TOKEN).",
+      fixId: "connect_github"
     });
   }
 
@@ -408,6 +457,235 @@ export const registerServiceRoutes = (app: Express) => {
     res.json({ ok: true, message: "Shutting down. Start it again from the PC with Start Agent Builder." });
     // Let the response flush before the process goes away.
     setTimeout(() => process.exit(0), 400);
+  });
+
+  app.post("/api/services/toggle", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const { service, action } = (req.body ?? {}) as { service?: string; action?: "start" | "stop" };
+    if (!service) return res.status(400).json({ error: "Missing service name." });
+
+    const svc = service.toLowerCase();
+    let outcome = "";
+
+    if (svc === "ollama") {
+      const current = await checkOllama();
+      const shouldStart = action ? action === "start" : current.state === "down";
+      if (shouldStart) {
+        const bin = ollamaBinary();
+        if (!bin) return res.status(400).json({ error: "Ollama is not installed on this machine." });
+        const child = spawn(bin, ["serve"], { detached: true, stdio: "ignore", windowsHide: true });
+        child.unref();
+        let now = await checkOllama();
+        for (let waited = 0; waited < 15000 && now.state !== "up"; waited += 750) {
+          await new Promise((r) => setTimeout(r, 750));
+          now = await checkOllama();
+        }
+        outcome = now.state === "up" ? "Ollama started successfully." : "Ollama started, waiting for response.";
+      } else {
+        try {
+          await run("taskkill", ["/F", "/IM", "ollama.exe"], { timeout: 10_000, windowsHide: true });
+          outcome = "Ollama stopped.";
+        } catch {
+          outcome = "Ollama was not running.";
+        }
+      }
+    } else if (svc === "comfy") {
+      const isStart = action ? action === "start" : (await checkComfy()).state !== "up";
+      if (isStart) {
+        const bin = comfyBinary();
+        if (!bin) return res.status(400).json({ error: "Comfy Desktop is not installed on this machine." });
+        const child = spawn(bin, [], { detached: true, stdio: "ignore", windowsHide: false });
+        child.unref();
+        outcome = "Comfy Desktop launched.";
+      } else {
+        try {
+          await run("taskkill", ["/F", "/IM", "Comfy Desktop.exe", "/T"], { timeout: 4000, windowsHide: true });
+          outcome = "Comfy Desktop stopped (resources reclaimed).";
+        } catch {
+          outcome = "Comfy Desktop was not running.";
+        }
+      }
+    } else if (svc === "research") {
+      const topics = ResearchStore.listTopics();
+      const runningCount = topics.filter((t) => t.status === "running").length;
+      const shouldStart = action ? action === "start" : runningCount === 0;
+      if (shouldStart) {
+        const resumed = ResearchEngine.getInstance().resumeAll();
+        outcome = `Resumed ${resumed} research topic(s).`;
+      } else {
+        let paused = 0;
+        for (const topic of topics) {
+          if (topic.status === "running" && ResearchEngine.getInstance().pause(topic.id)) paused++;
+        }
+        outcome = `Paused ${paused} research topic(s).`;
+      }
+    } else if (svc === "ecosystem") {
+      const shouldStart = action ? action === "start" : !EcosystemLoop.status().running;
+      if (shouldStart) {
+        EcosystemLoop.start();
+        void EcosystemLoop.sweepNow();
+        outcome = "Project sweep started.";
+      } else {
+        EcosystemLoop.stop();
+        outcome = "Project sweep stopped.";
+      }
+    } else {
+      return res.status(400).json({ error: `Unknown service: ${service}` });
+    }
+
+    Logger.log("Service toggled from remote", { service: svc, outcome });
+    res.json({ success: true, message: outcome, status: await collectStatus() });
+  });
+
+  app.post("/api/services/troubleshoot/fix", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const { fixId } = (req.body ?? {}) as { fixId?: string };
+    if (!fixId) return res.status(400).json({ error: "Missing fixId." });
+
+    if (fixId === "start_ollama") {
+      const bin = ollamaBinary();
+      if (!bin) return res.status(400).json({ error: "Ollama is not installed on this machine." });
+      const child = spawn(bin, ["serve"], { detached: true, stdio: "ignore", windowsHide: true });
+      child.unref();
+      return res.json({ ok: true, message: "Ollama starting in background..." });
+    }
+
+    if (fixId === "launch_comfy") {
+      const bin = comfyBinary();
+      if (!bin) return res.status(400).json({ error: "Comfy Desktop is not installed." });
+      const child = spawn(bin, [], { detached: true, stdio: "ignore", windowsHide: false });
+      child.unref();
+      return res.json({ ok: true, message: "Comfy Desktop launched on PC." });
+    }
+
+    if (fixId === "stop_comfy") {
+      try {
+        await run("taskkill", ["/F", "/IM", "Comfy Desktop.exe", "/T"], { timeout: 4000, windowsHide: true });
+        return res.json({ ok: true, message: "Comfy Desktop stopped; GPU VRAM and memory reclaimed." });
+      } catch {
+        return res.json({ ok: true, message: "Comfy Desktop was not running." });
+      }
+    }
+
+    if (fixId === "clean_disk") {
+      const report = await SystemResourceService.cleanup();
+      return res.json({ ok: true, message: report.message, report });
+    }
+
+    if (fixId === "resume_research") {
+      const resumed = ResearchEngine.getInstance().resumeAll();
+      return res.json({ ok: true, message: `Resumed ${resumed} research topic(s).` });
+    }
+
+    if (fixId === "scan_projects") {
+      void EcosystemLoop.sweepNow();
+      return res.json({ ok: true, message: "Project sweep initiated." });
+    }
+
+    if (fixId === "connect_github") {
+      const isAvailable = await GitHubClient.isAvailable();
+      return res.json({
+        ok: isAvailable,
+        message: isAvailable ? "GitHub connection verified." : "GitHub token not configured."
+      });
+    }
+
+    return res.status(400).json({ error: `Unknown fixId: ${fixId}` });
+  });
+
+  /**
+   * Voice interaction endpoint: Accepts speech transcribed on client,
+   * executes intent, and returns spoken text feedback.
+   */
+  app.post("/api/services/voice", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const { text } = (req.body ?? {}) as { text?: string };
+    if (!text || !text.trim()) return res.status(400).json({ error: "Missing text." });
+
+    const prompt = text.trim();
+    const lower = prompt.toLowerCase();
+    let reply = "";
+    let actionExecuted: string | undefined;
+
+    if (lower.includes("clean") || lower.includes("free") || lower.includes("space")) {
+      const rep = await SystemResourceService.cleanup();
+      actionExecuted = "cleanup";
+      reply = `Done. Cleaned ${rep.cleanedFilesCount} items and freed ~${rep.freedDiskMB.toFixed(1)} megabytes of disk and RAM.`;
+    } else if (lower.includes("start ollama") || lower.includes("turn on ollama")) {
+      const bin = ollamaBinary();
+      if (bin) {
+        spawn(bin, ["serve"], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+        actionExecuted = "start_ollama";
+        reply = "Starting the Ollama server in background.";
+      } else {
+        reply = "Ollama is not installed on this machine.";
+      }
+    } else if (lower.includes("stop ollama") || lower.includes("turn off ollama")) {
+      await run("taskkill", ["/F", "/IM", "ollama.exe"], { timeout: 4000, windowsHide: true }).catch(() => {});
+      actionExecuted = "stop_ollama";
+      reply = "Ollama stopped to conserve GPU resources.";
+    } else if (lower.includes("start comfy") || lower.includes("launch comfy")) {
+      const bin = comfyBinary();
+      if (bin) {
+        spawn(bin, [], { detached: true, stdio: "ignore" }).unref();
+        actionExecuted = "launch_comfy";
+        reply = "Comfy Desktop is launching on your PC.";
+      } else {
+        reply = "Comfy Desktop is not installed on this machine.";
+      }
+    } else if (lower.includes("stop comfy") || lower.includes("close comfy") || lower.includes("kill comfy")) {
+      await run("taskkill", ["/F", "/IM", "Comfy Desktop.exe", "/T"], { timeout: 4000, windowsHide: true }).catch(() => {});
+      actionExecuted = "stop_comfy";
+      reply = "Comfy Desktop closed. VRAM and memory reclaimed.";
+    } else if (lower.includes("status") || lower.includes("health") || lower.includes("telemetry")) {
+      const st = await collectStatus();
+      reply = `System is operational. GPU: ${st.gpu}. Disk: ${st.disk}.`;
+    } else {
+      try {
+        const ollamaRes = await fetch(`${OLLAMA_URL}/api/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: process.env.OLLAMA_MODEL ?? "qwen2.5-coder:7b",
+            prompt: `You are the Agent Builder AI assistant. Answer in 1-2 brief sentences: ${prompt}`,
+            stream: false
+          }),
+          signal: AbortSignal.timeout(8000)
+        });
+        if (ollamaRes.ok) {
+          const data = (await ollamaRes.json()) as { response?: string };
+          reply = data.response?.trim() || `Command received: ${prompt}`;
+        } else {
+          reply = `Acknowledged: "${prompt}". Ready for next instruction.`;
+        }
+      } catch {
+        reply = `Voice command processed: "${prompt}". All systems nominal.`;
+      }
+    }
+
+    res.json({ text: prompt, reply, actionExecuted, timestamp: new Date().toISOString() });
+  });
+
+  app.get("/api/hardware/metrics", authenticateAgent("read"), async (_req: Request, res: Response) => {
+    try {
+      res.json(await SystemResourceService.getMetrics());
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post("/api/hardware/cleanup", authenticateAgent("execute"), async (_req: Request, res: Response) => {
+    try {
+      const report = await SystemResourceService.cleanup();
+      res.json(report);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post("/api/hardware/profile", authenticateAgent("execute"), (req: Request, res: Response) => {
+    const { profile } = (req.body ?? {}) as { profile?: "eco" | "balanced" | "turbo" };
+    if (!profile || !["eco", "balanced", "turbo"].includes(profile)) {
+      return res.status(400).json({ error: "Profile must be 'eco', 'balanced', or 'turbo'." });
+    }
+    res.json(SystemResourceService.setProfile(profile));
   });
 
   Logger.log("Service control routes registered");

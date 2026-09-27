@@ -38,7 +38,12 @@ export const repoFromRemote = (remote: string | null): string | null => {
 };
 
 const gh = async (args: string[]): Promise<string> => {
-  const { stdout } = await run("gh", args, { timeout: 20_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...(token ? { GITHUB_TOKEN: token, GH_TOKEN: token } : {})
+  };
+  const { stdout } = await run("gh", args, { timeout: 20_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024, env });
   return stdout;
 };
 
@@ -47,11 +52,16 @@ let cliAvailable: boolean | null = null;
 export const GitHubClient = {
   async isAvailable(): Promise<boolean> {
     if (cliAvailable !== null) return cliAvailable;
+    const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+    if (token) {
+      cliAvailable = true;
+      return true;
+    }
     try {
       await gh(["auth", "status"]);
       cliAvailable = true;
     } catch {
-      cliAvailable = Boolean(process.env.GITHUB_TOKEN);
+      cliAvailable = false;
     }
     return cliAvailable;
   },

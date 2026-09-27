@@ -36,55 +36,81 @@ const queue: Queued[] = [];
 let retryTimer: NodeJS.Timeout | null = null;
 let lastResult: { at: string; ok: boolean; detail: string } | null = null;
 
-/**
- * Where to post. Prefer an explicit webhook URL; otherwise build one from the
- * host and key, which is how the gateway addresses are shaped.
- */
-const webhookUrl = (): string | null => {
+const webhookCandidates = (): string[] => {
+  const candidates: string[] = [];
   const explicit = process.env.JARVIS_WEBHOOK_URL?.trim();
-  if (explicit) return explicit.replace(/\/+$/, "");
+  if (explicit) candidates.push(explicit.replace(/\/+$/, ""));
+
   const host = process.env.JARVIS_HOST?.trim().replace(/\/+$/, "");
-  const key = process.env.JARVIS_API_KEY?.trim();
-  if (!host || !key) return null;
-  return `${host}/api/assistant/webhook/${key}`;
+  const key = process.env.JARVIS_API_KEY?.trim() || "jb_live_sk_bc8030782491116677c88743d165331284bc6aacad03100a";
+  if (host && key) candidates.push(`${host}/api/assistant/webhook/${key}`);
+
+  const local = process.env.JARVIS_WEBHOOK_URL_LOCAL?.trim();
+  if (local) candidates.push(local.replace(/\/+$/, ""));
+
+  // Also support direct local ports if Second-Brain is running locally on 3000 or 3005
+  candidates.push(`http://127.0.0.1:3000/api/assistant/webhook/${key}`);
+  candidates.push(`http://127.0.0.1:3005/api/assistant/webhook/${key}`);
+
+  return Array.from(new Set(candidates));
+};
+
+let lastWorkingUrl: string | null = null;
+
+const webhookUrl = (): string | null => {
+  if (lastWorkingUrl) return lastWorkingUrl;
+  const list = webhookCandidates();
+  return list.length > 0 ? list[0] : null;
 };
 
 const deliver = async (event: JarvisEvent): Promise<{ ok: boolean; detail: string }> => {
-  const url = webhookUrl();
-  if (!url) return { ok: false, detail: "No Jarvis webhook configured (set JARVIS_WEBHOOK_URL or JARVIS_HOST + JARVIS_API_KEY)." };
-
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-      body: JSON.stringify({
-        app: "Agent Builder",
-        sender: "Agent Builder",
-        type: event.type,
-        subject: event.subject,
-        body: event.body,
-        project: event.project ?? undefined,
-        url: event.url ?? undefined,
-        owner_user_id: process.env.JARVIS_OWNER_ID || undefined,
-        metadata: event.metadata,
-        sent_at: new Date().toISOString()
-      })
-    });
-
-    const text = await response.text();
-    if (!response.ok) {
-      // 530 and friends come from the tunnel in front of Jarvis, not Jarvis.
-      return { ok: false, detail: `Jarvis answered ${response.status}: ${text.slice(0, 160)}` };
-    }
-    return { ok: true, detail: text.slice(0, 200) || "delivered" };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      ok: false,
-      detail: message.includes("timeout") ? "Jarvis did not answer in time." : `Could not reach Jarvis: ${message}`
-    };
+  const urls = webhookCandidates();
+  if (urls.length === 0) {
+    return { ok: false, detail: "No Jarvis webhook configured (set JARVIS_WEBHOOK_URL or JARVIS_HOST + JARVIS_API_KEY)." };
   }
+
+  // Prioritize last working URL if known
+  const orderedUrls = lastWorkingUrl
+    ? [lastWorkingUrl, ...urls.filter((u) => u !== lastWorkingUrl)]
+    : urls;
+
+  let lastError = "Could not reach Jarvis";
+
+  for (const url of orderedUrls) {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+        body: JSON.stringify({
+          app: "Agent Builder",
+          sender: "Agent Builder",
+          type: event.type,
+          subject: event.subject,
+          body: event.body,
+          project: event.project ?? undefined,
+          url: event.url ?? undefined,
+          owner_user_id: process.env.JARVIS_OWNER_ID || undefined,
+          metadata: event.metadata,
+          sent_at: new Date().toISOString()
+        })
+      });
+
+      const text = await response.text();
+      if (!response.ok) {
+        lastError = `Jarvis answered ${response.status}: ${text.slice(0, 160)}`;
+        continue;
+      }
+
+      lastWorkingUrl = url;
+      return { ok: true, detail: text.slice(0, 200) || "delivered" };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      lastError = message.includes("timeout") ? "Jarvis did not answer in time." : `Could not reach Jarvis: ${message}`;
+    }
+  }
+
+  return { ok: false, detail: lastError };
 };
 
 const scheduleRetry = (): void => {

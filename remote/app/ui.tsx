@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 
-import { ApiError, loadConnection } from "@/lib/api";
+import { ApiError, loadConnection, saveConnection } from "@/lib/api";
 
 /* ---------------- time ---------------- */
 
@@ -112,29 +112,46 @@ export const Header = ({ title, sub, state }: { title: string; sub?: string; sta
   </header>
 );
 
-export const NotConnected = () => (
-  <>
-    <Header title="Agent Builder" sub="Let's connect to your PC" />
-    <div className="wrap">
-      <div className="hero">
-        <div className="hero-label">First time</div>
-        <div className="hero-title">Connect your machine</div>
-        <p className="hero-sub">
-          Start Agent Builder on your PC — it shows a QR code. Scan it and this app sets itself up.
-        </p>
-        <Link href="/settings">
-          <button className="power">{Icon.scan} Set up the connection</button>
-        </Link>
+export const NotConnected = () => {
+  const [connecting, setConnecting] = useState(false);
+  const handleQuickConnect = () => {
+    setConnecting(true);
+    saveConnection({
+      address: "https://agent.savestate.co.za",
+      key: "ab_7e788c69319f5d4fb24ee4bb33ff3c5df19fb3d0407b16b1479e02308716cad9"
+    });
+    window.location.reload();
+  };
+
+  return (
+    <>
+      <Header title="Agent Builder" sub="Let's connect to your PC" />
+      <div className="wrap">
+        <div className="hero">
+          <div className="hero-label">Remote Connection</div>
+          <div className="hero-title">Connect your machine</div>
+          <p className="hero-sub">
+            Connect to your PC directly over Cloudflare HTTPS tunnel or local address.
+          </p>
+          <div className="quick" style={{ marginTop: 14 }}>
+            <button className="primary" onClick={handleQuickConnect} disabled={connecting} style={{ fontWeight: 700, borderColor: "var(--accent)" }}>
+              {connecting ? "Connecting…" : "🚀 Connect to agent.savestate.co.za"}
+            </button>
+            <Link href="/settings">
+              <button className="power">{Icon.scan} Settings &amp; Custom Key</button>
+            </Link>
+          </div>
+        </div>
+        <div className="card">
+          <h2>Outside Wi-Fi &amp; Mobile Ready</h2>
+          <p className="hint" style={{ marginBottom: 0 }}>
+            Configured with SSL on <code>https://agent.savestate.co.za</code>. Never gets blocked by Mixed Content or firewall restrictions.
+          </p>
+        </div>
       </div>
-      <div className="card">
-        <h2>No PC in front of you?</h2>
-        <p className="hint" style={{ marginBottom: 0 }}>
-          You can paste the connection link (or the address and key) by hand in Settings.
-        </p>
-      </div>
-    </div>
-  </>
-);
+    </>
+  );
+};
 
 /* ---------------- data loading ---------------- */
 
@@ -176,7 +193,20 @@ export function useRemote<T>(loader: () => Promise<T>, pollMs = 0) {
 
 export const useConnected = (): boolean | null => {
   const [connected, setConnected] = useState<boolean | null>(null);
-  useEffect(() => setConnected(Boolean(loadConnection())), []);
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const address = params.get("address");
+      const key = params.get("key");
+      if (address && key) {
+        saveConnection({ address, key });
+        window.history.replaceState({}, "", window.location.pathname);
+        setConnected(true);
+        return;
+      }
+    }
+    setConnected(Boolean(loadConnection()));
+  }, []);
   return connected;
 };
 

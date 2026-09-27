@@ -45,7 +45,7 @@ export class ApiError extends Error {
   }
 }
 
-const request = async <T>(path: string, init: RequestInit = {}, timeoutMs = 20000): Promise<T> => {
+const request = async <T>(path: string, init: RequestInit = {}, timeoutMs = 45000): Promise<T> => {
   const connection = loadConnection();
   if (!connection) throw new ApiError("Not connected to a machine yet.", 0);
 
@@ -63,12 +63,20 @@ const request = async <T>(path: string, init: RequestInit = {}, timeoutMs = 2000
       signal: AbortSignal.timeout(timeoutMs)
     });
   } catch (error) {
-    // A network failure here almost always means the machine is asleep, the
-    // tunnel is down, or you are off the VPN — say so rather than "fetch failed".
+    const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
+    const isHttpAddr = connection.address.toLowerCase().startsWith("http://");
+
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new ApiError("Your machine did not answer in time (45s timeout).", 0);
+    }
+    if (isHttps && isHttpAddr) {
+      throw new ApiError(
+        "Mixed Content Block: This app is served over HTTPS, but your machine address is unencrypted HTTP. Mobile & outside Wi-Fi browsers block insecure HTTP requests. Connect via your Cloudflare HTTPS Tunnel address (https://...trycloudflare.com).",
+        0
+      );
+    }
     throw new ApiError(
-      error instanceof Error && error.name === "TimeoutError"
-        ? "Your machine did not answer in time."
-        : "Could not reach your machine. Is it awake, and are you on the same network or VPN?",
+      "Could not reach your machine. Is it awake, and are you using your public HTTPS tunnel or VPN?",
       0
     );
   }
@@ -100,6 +108,63 @@ export interface ServiceReport {
   canStart: boolean;
 }
 
+export interface GpuMetrics {
+  name: string;
+  vramTotalMB: number;
+  vramUsedMB: number;
+  vramFreeMB: number;
+  vramUsagePercent: number;
+  gpuUtilizationPercent: number;
+  temperatureC?: number;
+}
+
+export interface DiskMetrics {
+  totalBytes: number;
+  usedBytes: number;
+  freeBytes: number;
+  usedPercent: number;
+  freeGB: number;
+  totalGB: number;
+}
+
+export interface ProcessUsage {
+  name: string;
+  count: number;
+  totalMemoryMB: number;
+}
+
+export interface SystemMetrics {
+  cpuUsagePercent: number;
+  cpuCores: number;
+  totalMemoryBytes: number;
+  usedMemoryBytes: number;
+  freeMemoryBytes: number;
+  memoryUsagePercent: number;
+  disk: DiskMetrics;
+  gpu: GpuMetrics | null;
+  topProcesses: ProcessUsage[];
+  profile: "eco" | "balanced" | "turbo";
+  concurrency: number;
+  timestamp: string;
+}
+
+export interface CleanupReport {
+  success: boolean;
+  freedDiskMB: number;
+  freedMemoryMB: number;
+  cleanedFilesCount: number;
+  categories: Array<{ name: string; freedMB: number; count: number }>;
+  before: { freeDiskGB: number; freeMemoryGB: number };
+  after: { freeDiskGB: number; freeMemoryGB: number };
+  message: string;
+}
+
+export interface ProjectEntry {
+  name: string;
+  type: "file" | "directory";
+  path: string;
+}
+
 export interface StatusResponse {
   services: ServiceReport[];
   /** Set when the launcher opened a tunnel, so the app can show where it is reachable. */
@@ -109,6 +174,7 @@ export interface StatusResponse {
   host: string;
   counts: { projects: number; openIssues: number; errors: number };
   research: { running: number; topics: number; findings: number };
+  metrics?: SystemMetrics;
   healthy: boolean;
 }
 
@@ -124,6 +190,7 @@ export interface Problem {
   title: string;
   detail: string;
   fix: string;
+  fixId?: string;
   severity: "warning" | "error";
 }
 
@@ -231,6 +298,59 @@ export type OrderStatus =
   | "failed"
   | "cancelled";
 
+/** A carry-on build: work done on a copy of a project, waiting to be applied. */
+export interface ProjectBuild {
+  buildId: string;
+  projectId: string;
+  projectName: string;
+  projectPath: string;
+  workDir: string;
+  instruction: string;
+  createdAt: string;
+  appliedAt: string | null;
+  lastApply: ApplyResult | null;
+  /** "ended": finished before the builder last restarted, outcome not recorded. */
+  state: "running" | "paused" | "completed" | "stopped" | "error" | "ended";
+  qualityScore: number | null;
+  iterations: number | null;
+  changes: FileChange[];
+}
+
+export interface FileChange {
+  path: string;
+  change: "added" | "modified" | "deleted";
+}
+
+export interface ApplyResult {
+  applied: string[];
+  unchanged: string[];
+  conflicts: string[];
+}
+
+export type TemplateKind = "website" | "app" | "template";
+
+export interface Template {
+  id: string;
+  name: string;
+  kind: TemplateKind;
+  category: string;
+  description: string;
+  price: number;
+  currency: string;
+  timeframe: string;
+  icon: string;
+  features: string[];
+  techStack?: string[];
+  previewUrl?: string;
+  keywords?: string[];
+  buildNotes?: string;
+  sourcePath?: string;
+  hidden?: boolean;
+  builtIn?: boolean;
+  /** The latest build working on its code. */
+  developing?: string | null;
+}
+
 export interface Order {
   id: string;
   externalId: string | null;
@@ -323,6 +443,23 @@ export const api = {
       { method: "POST" },
       60000
     ),
+  toggleService: (service: string, action?: "start" | "stop") =>
+    request<{ success: boolean; message: string; status: StatusResponse }>("/api/services/toggle", {
+      method: "POST",
+      body: JSON.stringify({ service, action })
+    }),
+  fixTrouble: (fixId: string) =>
+    request<{ ok: boolean; message: string; report?: CleanupReport }>("/api/services/troubleshoot/fix", {
+      method: "POST",
+      body: JSON.stringify({ fixId })
+    }),
+  cleanup: () => request<CleanupReport>("/api/hardware/cleanup", { method: "POST" }, 60000),
+  hardwareMetrics: () => request<SystemMetrics>("/api/hardware/metrics"),
+  setProfile: (profile: "eco" | "balanced" | "turbo") =>
+    request<{ profile: string; concurrency: number }>("/api/hardware/profile", {
+      method: "POST",
+      body: JSON.stringify({ profile })
+    }),
 
   projects: () => request<{ projects: Project[] }>("/api/ecosystem/projects"),
   projectContext: (id: string) => request<{ markdown: string }>(`/api/ecosystem/projects/${id}/context?github=0`, {}, 45000),
@@ -336,6 +473,78 @@ export const api = {
       900000
     ),
   scan: () => request<{ scanned: number; removed: number }>("/api/ecosystem/scan", { method: "POST" }, 180000),
+  projectTree: (id: string, path = ".") =>
+    request<{ project: string; path: string; entries: ProjectEntry[] }>(
+      `/api/ecosystem/projects/${id}/tree?path=${encodeURIComponent(path)}`
+    ),
+  projectFile: (id: string, path: string) =>
+    request<{ project: string; path: string; size: number; content: string }>(
+      `/api/ecosystem/projects/${id}/file?path=${encodeURIComponent(path)}`
+    ),
+  editFile: (id: string, path: string, content: string) =>
+    request<{ success: boolean; project: string; path: string; size: number }>(`/api/ecosystem/projects/${id}/file`, {
+      method: "PUT",
+      body: JSON.stringify({ path, content })
+    }),
+  gitCommit: (id: string, message: string) =>
+    request<{ success: boolean; message: string }>(`/api/ecosystem/projects/${id}/git/commit`, {
+      method: "POST",
+      body: JSON.stringify({ message })
+    }),
+  gitSync: (id: string, action: "push" | "pull") =>
+    request<{ success: boolean; message: string }>(`/api/ecosystem/projects/${id}/git/sync`, {
+      method: "POST",
+      body: JSON.stringify({ action })
+    }),
+  instructProject: (id: string, instruction: string) =>
+    request<{ success: boolean; buildId: string; message: string }>(
+      `/api/ecosystem/projects/${id}/instruct`,
+      { method: "POST", body: JSON.stringify({ instruction }) },
+      // Copying a big project takes a moment before the build starts.
+      120000
+    ),
+  createProject: (data: { name: string; description?: string; root?: string; template?: string }) =>
+    request<{ success: boolean; path: string; name: string; message: string }>(
+      "/api/ecosystem/projects/create",
+      {
+        method: "POST",
+        body: JSON.stringify(data)
+      },
+      45000
+    ),
+  cloneProject: (data: { url: string; name?: string; instruction?: string }) =>
+    request<{ success: boolean; project: Project; buildId: string | null; message: string }>(
+      "/api/ecosystem/projects/clone",
+      { method: "POST", body: JSON.stringify(data) },
+      10 * 60 * 1000
+    ),
+  projectBuilds: (id: string) =>
+    request<{ builds: ProjectBuild[] }>(`/api/ecosystem/projects/${encodeURIComponent(id)}/builds`),
+  projectBuildDiff: (buildId: string) =>
+    request<{ changes: FileChange[]; diff: string }>(`/api/ecosystem/project-builds/${encodeURIComponent(buildId)}/diff`),
+  applyProjectBuild: (buildId: string) =>
+    request<{ success: boolean } & ApplyResult>(`/api/ecosystem/project-builds/${encodeURIComponent(buildId)}/apply`, {
+      method: "POST"
+    }),
+  openProject: (id: string, target?: "editor" | "folder") =>
+    request<{ success: boolean; message: string }>(`/api/ecosystem/projects/${id}/open`, {
+      method: "POST",
+      body: JSON.stringify({ target })
+    }),
+  openWorkspace: (target: "vscode" | "projects" | "ts" | "comfy") =>
+    request<{ success: boolean; message: string }>("/api/ecosystem/workspace/open", {
+      method: "POST",
+      body: JSON.stringify({ target })
+    }),
+  voiceCommand: (text: string) =>
+    request<{ text: string; reply: string; actionExecuted?: string; timestamp: string }>(
+      "/api/services/voice",
+      {
+        method: "POST",
+        body: JSON.stringify({ text })
+      },
+      45000
+    ),
 
   issues: (status = "open") => request<{ issues: Issue[] }>(`/api/ecosystem/issues?status=${status}`),
   updateIssue: (id: number, patch: { status?: string; resolution?: string }) =>
@@ -420,6 +629,53 @@ export const api = {
   setOrderAutoImprove: (id: string, autoImprove: boolean) =>
     request<{ order: Order }>(`/api/orders/${id}`, { method: "PATCH", body: JSON.stringify({ autoImprove }) }),
   improveNow: () => request<{ started: string[] }>("/api/orders/improve", { method: "POST" }, 45000),
+  hubStatus: () =>
+    request<{
+      siteUrl: string;
+      configured: boolean;
+      payfast: { configured: boolean; merchantId: string; mode: string };
+      intake: { lastIntakeAt: string | null; lastIntakeCount: number };
+      catalog: { at: string; ok: boolean; message: string; count: number } | null;
+      counts: Record<string, number>;
+    }>("/api/orders/hub/status"),
+  testHub: () => request<{ ok: boolean; status: number; message: string }>("/api/orders/hub/test", { method: "POST" }),
+  templates: () =>
+    request<{
+      templates: Template[];
+      all: Template[];
+      count: number;
+    }>("/api/orders/templates"),
+  createTemplate: (template: Partial<Template>) =>
+    request<{ template: Template }>("/api/orders/templates", { method: "POST", body: JSON.stringify(template) }),
+  updateTemplate: (id: string, patch: Partial<Template>) =>
+    request<{ template: Template }>(`/api/orders/templates/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch)
+    }),
+  deleteTemplate: (id: string) =>
+    request<{ removed: boolean; hidden: boolean }>(`/api/orders/templates/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  developTemplate: (id: string, instruction?: string) =>
+    request<{ buildId: string; mode: "edit" | "create"; message: string }>(
+      `/api/orders/templates/${encodeURIComponent(id)}/develop`,
+      { method: "POST", body: JSON.stringify({ instruction }) },
+      120000
+    ),
+  publishTemplates: () =>
+    request<{ ok: boolean; message: string; count: number }>("/api/orders/templates/publish", { method: "POST" }, 45000),
+  buildTemplate: (
+    id: string,
+    options?: { customerName?: string; customBrief?: string; budget?: string }
+  ) =>
+    request<{ order: Order; build?: Build; message: string }>(
+      `/api/orders/templates/${id}/build`,
+      { method: "POST", body: JSON.stringify(options ?? {}) },
+      45000
+    ),
+  downloadPackageUrl: (id: string) => {
+    const conn = loadConnection();
+    if (!conn) return "";
+    return `${conn.address}/api/orders/${encodeURIComponent(id)}/download?key=${encodeURIComponent(conn.key)}`;
+  },
 
   // --- Jarvis ---
   jarvis: () => request<JarvisStatus>("/api/jarvis/status"),
