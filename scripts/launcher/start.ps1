@@ -1,4 +1,4 @@
-﻿# Start Agent Builder - everything, in one go.
+# Start Agent Builder - everything, in one go.
 #
 # Starts the local model, the builder itself, and (unless told not to) a tunnel
 # so your phone can reach this machine from anywhere. Then prints a QR code that
@@ -12,7 +12,11 @@ param(
     # phone is signed into a different Tailscale account, and so on a different
     # tailnet, and therefore cannot see this machine.
     [switch]$ForceTunnel,
-    [switch]$Quiet
+    [switch]$Quiet,
+    [switch]$Daemon,
+    # Open the app in the browser once everything is up (the desktop's "Open
+    # Agent Builder" does this; starting at logon does not).
+    [switch]$Open
 )
 
 $ErrorActionPreference = "Stop"
@@ -106,6 +110,21 @@ if ($tailscaleExe) {
 if (Test-Endpoint "http://127.0.0.1:4000/api/update/check") {
     Write-Good "Builder already running"
 } else {
+    # Check if port 4000 is held by another application (e.g. RemoteDesk).
+    # RemoteDesk supports automatic scanning (4000-4009). If we restart it after
+    # Agent Builder starts, it will cleanly take port 4001 without conflict.
+    $restartRemoteDeskPath = $null
+    $port4000Conn = Get-NetTCPConnection -LocalPort 4000 -ErrorAction SilentlyContinue | Where-Object { $_.State -eq 'Listen' } | Select-Object -First 1
+    if ($port4000Conn) {
+        $blockingProc = Get-Process -Id $port4000Conn.OwningProcess -ErrorAction SilentlyContinue
+        if ($blockingProc -and $blockingProc.ProcessName -eq "remotedesk") {
+            Write-Step "Port 4000 was held by RemoteDesk. Shifting RemoteDesk to port 4001+..."
+            $restartRemoteDeskPath = $blockingProc.Path
+            Stop-Process -Id $blockingProc.Id -Force
+            Start-Sleep -Seconds 1
+        }
+    }
+
     Write-Step "Starting the builder..."
     # Bind beyond loopback when Tailscale is present: a tailnet address cannot
     # reach a server listening only on 127.0.0.1. Everything here needs an agent
@@ -117,32 +136,47 @@ if (Test-Endpoint "http://127.0.0.1:4000/api/update/check") {
     $started.api = $process.Id
     if (Wait-For "http://127.0.0.1:4000/api/update/check" 90 "The builder") {
         Write-Good "Builder ready on http://127.0.0.1:4000"
+        if ($restartRemoteDeskPath -and (Test-Path $restartRemoteDeskPath)) {
+            Start-Process -FilePath $restartRemoteDeskPath
+            Write-Good "RemoteDesk restarted (now active on port 4001+)"
+        }
     } else {
         Write-Host "  Check $apiLog for what went wrong." -ForegroundColor Yellow
+        if ($restartRemoteDeskPath -and (Test-Path $restartRemoteDeskPath)) {
+            Start-Process -FilePath $restartRemoteDeskPath
+        }
     }
 }
 
 # --- 3. a way in from outside -------------------------------------------------
 $address = "http://127.0.0.1:4000"
-if ($tailscaleIp -and -not $ForceTunnel) {
+$cloudflared = Get-Command cloudflared -ErrorAction SilentlyContinue
+$namedConfig = Join-Path $env:USERPROFILE ".cloudflared\config.yml"
+$hasNamedSubdomain = (Test-Path $namedConfig) -and (Select-String -Path $namedConfig -Pattern "agent\.savestate\.co\.za" -Quiet)
+
+if (-not $NoTunnel -and $cloudflared -and $hasNamedSubdomain) {
+    # Custom Cloudflare Subdomain: https://agent.savestate.co.za
+    # Provides permanent HTTPS address with trusted SSL that works everywhere,
+    # including outside Wi-Fi and mobile networks with zero mixed content blocking.
+    Write-Step "Starting Cloudflare HTTPS tunnel for agent.savestate.co.za..."
+    Remove-Item $tunnelLog -ErrorAction SilentlyContinue
+    $process = Start-Process -FilePath $cloudflared.Source `
+        -ArgumentList "tunnel run" `
+        -WindowStyle Hidden -PassThru -RedirectStandardError $tunnelLog -RedirectStandardOutput "$tunnelLog.out"
+    $started.tunnel = $process.Id
+    $address = "https://agent.savestate.co.za"
+    [System.IO.File]::WriteAllText($urlFile, $address)
+    Write-Good "Reachable worldwide at https://agent.savestate.co.za"
+} elseif ($tailscaleIp -and -not $ForceTunnel) {
     $address = "http://${tailscaleIp}:4000"
     [System.IO.File]::WriteAllText($urlFile, $address)
-    # Test a real endpoint: the API has no route at / and answers 404 there,
-    # which Test-Endpoint reads as unreachable - that produced a false warning
-    # saying the builder was only reachable on this PC when it was not true.
     if (-not (Test-Endpoint "$address/api/update/check" 5)) {
         Write-Host "  The builder is running but only on this PC. Use Stop Agent Builder, then start again," -ForegroundColor Yellow
         Write-Host "  so it listens on the Tailscale address too." -ForegroundColor Yellow
     }
 } elseif (-not $NoTunnel) {
-    # Either Tailscale is not set up, or -ForceTunnel asked for a public address.
-    $cloudflared = Get-Command cloudflared -ErrorAction SilentlyContinue
     if ($cloudflared) {
-        Write-Step "Opening a tunnel so your phone can reach this machine..."
-        # Point cloudflared at an empty config of our own. The machine config
-        # (~/.cloudflared/config.yml) routes savestate.co.za and answers 404 to
-        # everything else, and a quick tunnel inherits it - which made every
-        # request to the tunnel return 404.
+        Write-Step "Opening a quick tunnel so your phone can reach this machine..."
         $quickConfig = Join-Path $dataDir "cloudflared-quick.yml"
         if (-not (Test-Path $quickConfig)) {
             Set-Content -Path $quickConfig -Value "# empty on purpose" -Encoding ascii
@@ -153,7 +187,6 @@ if ($tailscaleIp -and -not $ForceTunnel) {
             -WindowStyle Hidden -PassThru -RedirectStandardError $tunnelLog -RedirectStandardOutput "$tunnelLog.out"
         $started.tunnel = $process.Id
 
-        # cloudflared prints the address it assigned a few seconds after start.
         $found = $null
         for ($i = 0; $i -lt 40 -and -not $found; $i++) {
             Start-Sleep -Seconds 1
@@ -181,11 +214,37 @@ if ($tailscaleIp -and -not $ForceTunnel) {
 # --- 4. how to connect --------------------------------------------------------
 [System.IO.File]::WriteAllText($pidFile, ($started | ConvertTo-Json))
 
+# The app is served by the builder itself from remote\out. Rebuild it when its
+# source is newer than the last build, so an update shows up without a step.
+$appIndex = Join-Path $repo "remote\out\index.html"
+$appStale = -not (Test-Path $appIndex)
+if (-not $appStale) {
+    $builtAt = (Get-Item $appIndex).LastWriteTime
+    $appStale = [bool](Get-ChildItem (Join-Path $repo "remote\app"), (Join-Path $repo "remote\lib") -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -gt $builtAt } | Select-Object -First 1)
+}
+if ($appStale) {
+    Write-Step "Building the app (a minute, only after an update)..."
+    $appLog = Join-Path $dataDir "app-build.log"
+    & cmd.exe /c "npm --prefix remote run build > `"$appLog`" 2>&1"
+    if ($LASTEXITCODE -eq 0) { Write-Good "App ready" } else { Write-Host "  The app did not build; see $appLog" -ForegroundColor Yellow }
+}
+
+if ($Open) {
+    # On this PC the builder connects the app by itself; nothing to type.
+    Start-Process "http://127.0.0.1:4000/"
+}
+
 if (-not $Quiet) {
     & npx tsx scripts/launcher/connect-info.ts $address
     Write-Host "  ---------------------------------------------" -ForegroundColor DarkGray
     Write-Host "  Leave this window open. Ctrl+C stops everything." -ForegroundColor Gray
     Write-Host ""
+}
+
+if ($Daemon) {
+    Write-Good "Agent Builder is active in background daemon mode."
+    exit 0
 }
 
 # --- 5. stay up until asked to stop -------------------------------------------
@@ -198,15 +257,17 @@ try {
         }
     }
 } finally {
-    if (-not $Quiet) { Write-Host "  Stopping..." -ForegroundColor Gray }
-    foreach ($id in @($started.tunnel, $started.api, $started.ollama)) {
-        if ($id) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
+    if (-not $Daemon) {
+        if (-not $Quiet) { Write-Host "  Stopping..." -ForegroundColor Gray }
+        foreach ($id in @($started.tunnel, $started.api, $started.ollama)) {
+            if ($id) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
+        }
+        # The builder runs under a cmd wrapper, so stop the node process it spawned.
+        Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -like "*src/server/server.ts*" } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        Remove-Item $urlFile -ErrorAction SilentlyContinue
+        Remove-Item $pidFile -ErrorAction SilentlyContinue
+        if (-not $Quiet) { Write-Host "  Stopped." -ForegroundColor Gray }
     }
-    # The builder runs under a cmd wrapper, so stop the node process it spawned.
-    Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -like "*src/server/server.ts*" } |
-        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-    Remove-Item $urlFile -ErrorAction SilentlyContinue
-    Remove-Item $pidFile -ErrorAction SilentlyContinue
-    if (-not $Quiet) { Write-Host "  Stopped." -ForegroundColor Gray }
 }

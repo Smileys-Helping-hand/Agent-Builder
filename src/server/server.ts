@@ -3,7 +3,9 @@
 // at import time. Without this, .env was only loaded later (as a side effect
 // of OpenAIClient) and JWT_SECRET from .env was silently ignored.
 import "dotenv/config";
+import fs from "fs";
 import http from "http";
+import path from "path";
 import express, { Request, Response } from "express";
 import cors from "cors";
 import { Server } from "socket.io";
@@ -143,6 +145,55 @@ io.on("connection", (socket) => {
   });
 });
 
+/**
+ * A request made in a browser on this PC, not one relayed by the tunnel or
+ * arriving over Tailscale or the LAN. The tunnel connects from 127.0.0.1 too,
+ * so the address alone proves nothing: it must also be addressed to localhost
+ * and carry none of the headers a proxy adds.
+ */
+const isFromThisPc = (req: Request): boolean => {
+  const ip = req.socket.remoteAddress ?? "";
+  const loopback = ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+  const relayed = ["x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded", "cf-connecting-ip", "cf-ray"].some(
+    (header) => req.headers[header] !== undefined
+  );
+  const hostname = (req.headers.host ?? "").replace(/:\d+$/, "").toLowerCase();
+  return loopback && !relayed && (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]");
+};
+
+// The app (remote/, built to remote/out) is served from here too, so the PC
+// needs nothing but this server: open http://127.0.0.1:4000 and it is there.
+const REMOTE_APP = path.resolve(process.cwd(), "remote", "out");
+const HOSTED_APP = "https://agent-builder-remote.vercel.app";
+
+/**
+ * Opening the builder's address in a browser opens the app. On this PC it also
+ * connects the app, by handing it the phone key once in the URL (the app saves
+ * it and strips it from the address bar). Anywhere else, the key is never
+ * sent: whoever opens the public address has to already have it.
+ */
+app.get("/", (req: Request, res: Response) => {
+  const hasLocalApp = fs.existsSync(path.join(REMOTE_APP, "index.html"));
+  const proto = req.headers["x-forwarded-proto"] || (req.secure ? "https" : "http");
+  const address = `${proto}://${req.headers.host ?? "127.0.0.1:4000"}`;
+
+  if (isFromThisPc(req) && !req.query.address) {
+    let key = "";
+    try {
+      key = fs.readFileSync(path.resolve(process.cwd(), "data", "phone-key.txt"), "utf8").trim();
+    } catch {
+      // No phone key yet; the app will ask for one.
+    }
+    if (key) {
+      const target = hasLocalApp ? "" : HOSTED_APP;
+      return res.redirect(`${target}/?address=${encodeURIComponent(address)}&key=${encodeURIComponent(key)}`);
+    }
+  }
+
+  if (hasLocalApp) return res.sendFile(path.join(REMOTE_APP, "index.html"));
+  res.redirect(`${HOSTED_APP}/?address=${encodeURIComponent(address)}`);
+});
+
 // Historical task records written by the removed 4-phase Orchestrator.
 // Kept read-only so existing data stays viewable; nothing writes here now —
 // builds go through /api/autonomous/*.
@@ -242,6 +293,12 @@ app.get("/api/feedback", authenticate, authorizeRoles(["viewer", "editor", "admi
   const entries = await FineTuner.listFeedback(options);
   res.json({ entries });
 });
+
+// The app's pages and assets. Registered after every API route, and it only
+// ever answers with files that exist in remote/out, so it cannot shadow one.
+if (fs.existsSync(REMOTE_APP)) {
+  app.use(express.static(REMOTE_APP, { extensions: ["html"], index: "index.html" }));
+}
 
 const port = Number(process.env.PORT) || 4000;
 const host = process.env.HOST || "127.0.0.1";

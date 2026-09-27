@@ -25,6 +25,19 @@ address to type, no 67-character key to paste.
 Leave the window open; closing it stops what it started. **Stop Agent Builder**
 does the same from a shortcut.
 
+### On the PC itself: **Open Agent Builder**
+
+Opens the app in your browser at `http://127.0.0.1:4000`, already connected,
+starting the builder first if it is not running. The builder serves the app
+itself, so this needs no internet and no Vercel. Opening that address in any
+browser on the PC does the same.
+
+Only a browser on the PC is connected automatically. The public address
+(`https://agent.savestate.co.za`) serves the same app but never hands out the
+key; there you connect with the QR code or by pasting the key.
+
+A build that needs the local model starts it if it is not running.
+
 ### On the phone
 
 | Screen | What it is for |
@@ -58,6 +71,30 @@ next pass and stays there for the rest of the build, so it is standing direction
 rather than a one-off. Pause frees the GPU without losing the work; Stop ends it.
 
 You can close the app. The build keeps going on the PC.
+
+## Carrying on with a project
+
+**Projects** → the project → **AI Coder & Build** → say what to do next → **Carry on**.
+
+It never works in the project itself. It copies the project as it is right now
+(uncommitted work included, `node_modules` and other ignored files left out),
+builds on the copy, and shows the result underneath as **Work on this project**:
+
+- **View changes** shows exactly what it changed.
+- **Apply to project** writes those changes into the project, one file at a
+  time, and only where the file is still what the build started from. A file you
+  edited in the meantime is left as you left it and listed as skipped. Nothing is
+  committed; the changes are ordinary edits for you to look at, commit or undo.
+
+A carry-on is a bounded job: up to three passes, then it stops.
+
+## Cloning from GitHub
+
+**Projects** → **Clone from GitHub** → the repository address. It is cloned into
+`E:\Projects` and appears in the list. Say what it should do first and it
+starts carrying on straight away. Private repositories work once GitHub is
+signed in on the PC (for example `gh auth login`); the clone never waits for a
+password prompt.
 
 ## Reaching your machine
 
