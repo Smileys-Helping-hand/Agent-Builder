@@ -9,9 +9,13 @@
  * The server binds 127.0.0.1 by default, and these routes expose source code,
  * so keep it that way unless you have a reason not to.
  */
+import { execFile, spawn } from "child_process";
 import fs from "fs";
 import path from "path";
+import { promisify } from "util";
 import type { Express, Request, Response } from "express";
+
+const execFileAsync = promisify(execFile);
 
 import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
 import { ContextPack } from "../ecosystem/ContextPack.js";
@@ -21,6 +25,7 @@ import { AiSessions } from "../ecosystem/AiSessions.js";
 import { JarvisClient } from "../integrations/JarvisClient.js";
 import { GitHubClient } from "../ecosystem/GitHubClient.js";
 import { GitLog } from "../ecosystem/GitLog.js";
+import { ProjectBuilds } from "../ecosystem/ProjectBuilds.js";
 import { ProjectDoctor } from "../ecosystem/ProjectDoctor.js";
 import { ProjectScanner, projectRoots } from "../ecosystem/ProjectScanner.js";
 import { ResearchStore } from "../research/ResearchStore.js";
@@ -151,6 +156,312 @@ export const registerEcosystemRoutes = (app: Express) => {
       res.json({ project: project.id, path: relative, size: stat.size, content: fs.readFileSync(resolved, "utf8") });
     } catch (error) {
       res.status(404).json({ error: errorMessage(error) });
+    }
+  });
+
+  /** Update/edit a source file inside the project. */
+  app.put("/api/ecosystem/projects/:id/file", authenticateAgent("write"), (req: Request, res: Response) => {
+    const project = EcosystemStore.getProject(req.params.id);
+    if (!project) return res.status(404).json({ error: "Unknown project." });
+    const { path: relative, content } = (req.body ?? {}) as { path?: string; content?: string };
+    if (!relative || typeof content !== "string") {
+      return res.status(400).json({ error: "Provide path and string content." });
+    }
+    if (relative.split(/[\\/]/).some((segment) => HIDDEN_SEGMENTS.has(segment))) {
+      return res.status(403).json({ error: "That directory is restricted." });
+    }
+    const resolved = resolveInsideProject(project.path, relative);
+    if (!resolved) return res.status(400).json({ error: "Path is outside the project." });
+
+    try {
+      fs.mkdirSync(path.dirname(resolved), { recursive: true });
+      fs.writeFileSync(resolved, content, "utf8");
+      EcosystemStore.recordEvent(project.id, "edit", `File ${relative} updated via agent dashboard`);
+      res.json({ success: true, project: project.id, path: relative, size: Buffer.byteLength(content, "utf8") });
+    } catch (error) {
+      res.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  app.post("/api/ecosystem/projects/:id/git/commit", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const project = EcosystemStore.getProject(req.params.id);
+    if (!project) return res.status(404).json({ error: "Unknown project." });
+    const { message } = (req.body ?? {}) as { message?: string };
+    if (!message || message.trim().length < 2) {
+      return res.status(400).json({ error: "Commit message required." });
+    }
+
+    try {
+      await execFileAsync("git", ["add", "-A"], { cwd: project.path, windowsHide: true });
+      const { stdout } = await execFileAsync("git", ["commit", "-m", message.trim()], { cwd: project.path, windowsHide: true });
+      EcosystemStore.recordEvent(project.id, "commit", `Committed: ${message.trim()}`);
+      res.json({ success: true, message: stdout.trim() });
+    } catch (error) {
+      res.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  app.post("/api/ecosystem/projects/:id/git/sync", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const project = EcosystemStore.getProject(req.params.id);
+    if (!project) return res.status(404).json({ error: "Unknown project." });
+    const { action } = (req.body ?? {}) as { action?: "push" | "pull" };
+
+    try {
+      const gitCmd = action === "push" ? ["push"] : ["pull"];
+      const { stdout } = await execFileAsync("git", gitCmd, {
+        cwd: project.path,
+        windowsHide: true,
+        env: { ...process.env, GITHUB_TOKEN: process.env.GITHUB_TOKEN, GH_TOKEN: process.env.GITHUB_TOKEN }
+      });
+      EcosystemStore.recordEvent(project.id, action === "push" ? "push" : "pull", `Git ${action} executed`);
+      res.json({ success: true, message: stdout.trim() || `Git ${action} completed successfully.` });
+    } catch (error) {
+      res.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  /**
+   * Carry on with a project: build what the instruction asks for on a copy of
+   * it (see ProjectBuilds), so nothing in the project changes until you apply.
+   */
+  app.post("/api/ecosystem/projects/:id/instruct", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const project = EcosystemStore.getProject(req.params.id);
+    if (!project) return res.status(404).json({ error: "Unknown project." });
+    const { instruction, profile } = (req.body ?? {}) as { instruction?: string; profile?: "fast" | "balanced" | "deep" };
+    if (!instruction || instruction.trim().length < 3) {
+      return res.status(400).json({ error: "Instruction required." });
+    }
+
+    try {
+      const record = await ProjectBuilds.start(project, instruction.trim(), {
+        startedBy: (req as AgentRequest).actor ?? "remote-user",
+        profile
+      });
+      EcosystemStore.recordEvent(project.id, "build", `Carrying on: ${instruction.trim()}`);
+      res.json({
+        success: true,
+        buildId: record.buildId,
+        workDir: record.workDir,
+        message: "Working on a copy of the project. Nothing in the project changes until you apply the result."
+      });
+    } catch (error) {
+      res.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  /** The carry-on builds for one project, newest first, with where each one is. */
+  app.get("/api/ecosystem/projects/:id/builds", authenticateAgent("read"), async (req: Request, res: Response) => {
+    const { BuildService } = await import("../orchestrator/BuildService.js");
+    const builds = await Promise.all(
+      ProjectBuilds.list(req.params.id)
+        .slice(0, 20)
+        .map(async (record) => {
+          const view = BuildService.view(record.buildId);
+          return {
+            ...record,
+            state: view?.state ?? record.finalState ?? "ended",
+            qualityScore: view?.qualityScore ?? record.finalQuality ?? null,
+            iterations: view?.iterations ?? null,
+            changes: await ProjectBuilds.changes(record).catch(() => [])
+          };
+        })
+    );
+    res.json({ builds });
+  });
+
+  /** Exactly what a carry-on build changed, as a diff. */
+  app.get("/api/ecosystem/project-builds/:buildId/diff", authenticateAgent("read"), async (req: Request, res: Response) => {
+    const record = ProjectBuilds.get(req.params.buildId);
+    if (!record) return res.status(404).json({ error: "Unknown build." });
+    try {
+      res.json({ changes: await ProjectBuilds.changes(record), diff: await ProjectBuilds.diff(record) });
+    } catch (error) {
+      res.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  /** Write a finished carry-on build's changes into the project. */
+  app.post("/api/ecosystem/project-builds/:buildId/apply", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const record = ProjectBuilds.get(req.params.buildId);
+    if (!record) return res.status(404).json({ error: "Unknown build." });
+    try {
+      const result = await ProjectBuilds.apply(record);
+      EcosystemStore.recordEvent(
+        record.projectId,
+        "build",
+        `Applied build ${record.buildId}: ${result.applied.length} file(s) changed${result.conflicts.length ? `, ${result.conflicts.length} left alone because they were edited since` : ""}`
+      );
+      void ProjectScanner.rescanProject(record.projectId);
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(409).json({ error: errorMessage(error) });
+    }
+  });
+
+  /**
+   * Clone a repository into the workspace, register it, and optionally start
+   * carrying on with it straight away.
+   */
+  app.post("/api/ecosystem/projects/clone", authenticateAgent("write"), async (req: Request, res: Response) => {
+    const { url, name, root, instruction } = (req.body ?? {}) as {
+      url?: string;
+      name?: string;
+      root?: string;
+      instruction?: string;
+    };
+    const repoUrl = (url ?? "").trim();
+    // https or ssh remotes only: no local paths, no ext:: or file:// transports.
+    if (!/^(https:\/\/[\w.-]+\/[\w./-]+?|git@[\w.-]+:[\w./-]+?)(\.git)?\/?$/.test(repoUrl)) {
+      return res.status(400).json({ error: "Give a repository address like https://github.com/owner/repo." });
+    }
+    const derived = repoUrl.replace(/\/$/, "").split(/[/:]/).pop()!.replace(/\.git$/, "");
+    const folder = (name?.trim() || derived).replace(/[^a-zA-Z0-9_.-]/g, "-").replace(/^[.-]+/, "");
+    if (!folder) return res.status(400).json({ error: "Could not work out a folder name; give one." });
+
+    const roots = projectRoots();
+    const targetRoot = root && roots.includes(root) ? root : roots.find((entry) => /projects/i.test(entry)) ?? roots[0];
+    if (!targetRoot) return res.status(500).json({ error: "No project folder is configured (ECOSYSTEM_ROOTS)." });
+    const targetDir = path.join(targetRoot, folder);
+    if (fs.existsSync(targetDir)) {
+      return res.status(409).json({ error: `${targetDir} already exists. Pick another name, or open that project.` });
+    }
+
+    try {
+      await execFileAsync("git", ["clone", "--", repoUrl, targetDir], {
+        windowsHide: true,
+        timeout: 10 * 60 * 1000,
+        // Never sit waiting for a password prompt nobody can see.
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }
+      });
+    } catch (error) {
+      fs.rmSync(targetDir, { recursive: true, force: true });
+      const detail = errorMessage(error);
+      const hint = /Authentication|could not read Username|403|not found/i.test(detail)
+        ? " If it is private, sign in to GitHub on this PC once (for example with `gh auth login`), then try again."
+        : "";
+      return res.status(502).json({ error: `Clone failed.${hint}`, details: detail.slice(-1500) });
+    }
+
+    try {
+      const project = await ProjectScanner.addProject(targetDir, targetRoot);
+      EcosystemStore.recordEvent(project.id, "clone", `Cloned ${repoUrl}`);
+      let build: { buildId: string } | null = null;
+      if (instruction && instruction.trim().length >= 3) {
+        build = await ProjectBuilds.start(project, instruction.trim(), { startedBy: (req as AgentRequest).actor ?? "remote-user" });
+        EcosystemStore.recordEvent(project.id, "build", `Carrying on: ${instruction.trim()}`);
+      }
+      res.status(201).json({
+        success: true,
+        project,
+        buildId: build?.buildId ?? null,
+        message: build ? `Cloned ${project.name} and started on it.` : `Cloned ${project.name} into ${targetDir}.`
+      });
+    } catch (error) {
+      res.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  /** Create a brand-new project in the workspace. */
+  app.post("/api/ecosystem/projects/create", authenticateAgent("write"), async (req: Request, res: Response) => {
+    const { name, description, root, template } = (req.body ?? {}) as {
+      name?: string;
+      description?: string;
+      root?: string;
+      template?: string;
+    };
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: "Project name is required." });
+    }
+    const cleanName = name.trim().replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-");
+    const targetRoot = root && fs.existsSync(root) ? root : "E:/Projects";
+    const targetDir = path.join(targetRoot, cleanName);
+
+    if (fs.existsSync(targetDir)) {
+      return res.status(400).json({ error: `Directory ${targetDir} already exists.` });
+    }
+
+    try {
+      fs.mkdirSync(targetDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(targetDir, "README.md"),
+        `# ${cleanName}\n\n${description || "Created with Agent Builder."}\n`,
+        "utf8"
+      );
+      if (template === "python") {
+        fs.writeFileSync(path.join(targetDir, "main.py"), `print("Hello from ${cleanName}")\n`, "utf8");
+        fs.writeFileSync(path.join(targetDir, "requirements.txt"), "", "utf8");
+      } else {
+        const pkg = {
+          name: cleanName.toLowerCase(),
+          version: "0.1.0",
+          private: true,
+          description: description || cleanName,
+          scripts: { dev: "node index.js", start: "node index.js" }
+        };
+        fs.writeFileSync(path.join(targetDir, "package.json"), JSON.stringify(pkg, null, 2), "utf8");
+        fs.writeFileSync(path.join(targetDir, "index.js"), `console.log("Welcome to ${cleanName}!");\n`, "utf8");
+      }
+      fs.writeFileSync(path.join(targetDir, ".gitignore"), "node_modules\n.env\ndist\n.DS_Store\n", "utf8");
+
+      try {
+        await execFileAsync("git", ["init"], { cwd: targetDir, windowsHide: true });
+      } catch {}
+
+      void EcosystemLoop.sweepNow();
+
+      res.status(201).json({
+        success: true,
+        path: targetDir,
+        name: cleanName,
+        message: `Project ${cleanName} created at ${targetDir}`
+      });
+    } catch (error) {
+      res.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  /** Open project in code editor or explorer on the PC. */
+  app.post("/api/ecosystem/projects/:id/open", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const project = EcosystemStore.getProject(req.params.id);
+    if (!project) return res.status(404).json({ error: "Unknown project." });
+    const { target } = (req.body ?? {}) as { target?: "editor" | "folder" };
+
+    try {
+      if (target === "folder") {
+        spawn("explorer.exe", [project.path], { detached: true, stdio: "ignore" }).unref();
+      } else {
+        spawn("cmd.exe", ["/c", "code", project.path], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+      }
+      res.json({ success: true, message: `Opened ${project.name} on PC.` });
+    } catch (error) {
+      res.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  /** Open workspace or folders directly on the PC. */
+  app.post("/api/ecosystem/workspace/open", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const { target } = (req.body ?? {}) as { target?: string };
+    try {
+      if (target === "vscode") {
+        spawn("cmd.exe", ["/c", "code", process.cwd()], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+        return res.json({ success: true, message: "Opened Agent Builder in VS Code on PC." });
+      } else if (target === "projects") {
+        spawn("explorer.exe", ["E:\\Projects"], { detached: true, stdio: "ignore" }).unref();
+        return res.json({ success: true, message: "Opened E:\\Projects folder on PC." });
+      } else if (target === "ts") {
+        spawn("explorer.exe", ["H:\\ts"], { detached: true, stdio: "ignore" }).unref();
+        return res.json({ success: true, message: "Opened H:\\ts folder on PC." });
+      } else if (target === "comfy") {
+        const bin = "C:\\Program Files\\Comfy Desktop\\Comfy Desktop.exe";
+        if (fs.existsSync(bin)) {
+          spawn(bin, [], { detached: true, stdio: "ignore", windowsHide: false }).unref();
+          return res.json({ success: true, message: "Launched Comfy Desktop on PC." });
+        }
+        return res.status(404).json({ error: "Comfy Desktop executable not found." });
+      }
+      return res.status(400).json({ error: "Unknown workspace target." });
+    } catch (error) {
+      return res.status(500).json({ error: errorMessage(error) });
     }
   });
 

@@ -266,6 +266,11 @@ export const ProjectScanner = {
   },
 
   /** Refresh a single project (cheap enough to call before handing out a briefing). */
+  /** Register one folder straight away, e.g. a repository that was just cloned. */
+  async addProject(projectPath: string, root: string): Promise<EcosystemProject> {
+    return EcosystemStore.upsertProject(await scanRepository(projectPath, root));
+  },
+
   async rescanProject(id: string): Promise<EcosystemProject | null> {
     const existing = EcosystemStore.getProject(id);
     if (!existing || !fs.existsSync(existing.path)) return null;

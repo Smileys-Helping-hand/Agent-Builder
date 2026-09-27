@@ -11,6 +11,8 @@ import { createPatch } from "diff";
 import { LessonMemory, type Lesson } from "../learning/LessonMemory.js";
 import { WorkloadCoordinator } from "../utils/WorkloadCoordinator.js";
 import { toKey } from "../knowledge/KnowledgeDb.js";
+import { ProjectSnapshot } from "./ProjectSnapshot.js";
+import { ensureOllama } from "../utils/Ollama.js";
 
 export interface BuildIteration {
   iteration: number;
@@ -62,6 +64,13 @@ export interface AutonomousConfig {
    * seconds, not the minutes a full generation would take.
    */
   profile?: BuildProfile;
+  /**
+   * An existing project to change instead of generating one from nothing: a
+   * copy prepared by ProjectBuilds, already a git repo with the project as its
+   * first commit. Each pass is shown the project and returns only the files it
+   * changes.
+   */
+  workingDir?: string;
 }
 
 type ProfileSettings = {
@@ -99,7 +108,7 @@ export class AutonomousOrchestrator extends EventEmitter {
   constructor(private config: AutonomousConfig) {
     super();
     this.buildId = `build_${Date.now()}`;
-    this.outputDir = `./builds/${this.buildId}`;
+    this.outputDir = config.workingDir ?? `./builds/${this.buildId}`;
 
     this.qualityAnalyzer = new QualityAnalyzer();
     this.improvementEngine = new ImprovementEngine();
@@ -132,6 +141,11 @@ export class AutonomousOrchestrator extends EventEmitter {
     this.emit("started", { buildId: this.buildId });
 
     try {
+      // Every pass needs the model server; start it rather than fail with "fetch failed".
+      if (this.isOllamaProvider() && !(await ensureOllama())) {
+        throw new Error("Ollama is not running and could not be started. Start it (ollama serve), then try again.");
+      }
+
       // Optimize for current hardware
       if (this.config.hardwareOptimization) {
         await this.hardwareScaler.optimize();
@@ -473,7 +487,12 @@ error) and the specific change needed to fix it. Do not write code.`;
     if (!failing) return null;
 
     const MAX_FILE_CHARS = 4000;
-    const fileListing = Object.entries(files)
+    // Changing an existing project, the error is often in a file this build has
+    // not touched; show the model that file too, not only its own changes.
+    const shownFiles = this.config.workingDir
+      ? { ...ProjectSnapshot.mentionedFiles(this.workspace.root, failing.output), ...files }
+      : files;
+    const fileListing = Object.entries(shownFiles)
       .map(([filePath, content]) => {
         const body = content.length > MAX_FILE_CHARS ? `${content.slice(0, MAX_FILE_CHARS)}\n…(truncated)` : content;
         return `FILE: ${filePath}\n\`\`\`\n${body}\n\`\`\``;
@@ -552,7 +571,11 @@ unchanged. Do not explain the fix in prose.`;
       lessons.length > 0
         ? `Lessons learned from earlier builds on this machine — apply them:\n${LessonMemory.formatForPrompt(lessons)}\n\n`
         : "";
-    const systemPrompt = lessonPreamble + this.buildSystemPrompt(context);
+    if (this.config.workingDir) {
+      const focus = [this.config.description, ...this.guidance.map((note) => note.text)].join(" ");
+      context.existing = await ProjectSnapshot.describe(this.workspace.root, focus);
+    }
+    const systemPrompt = lessonPreamble + (context.existing ? this.existingProjectPrompt(context) : this.buildSystemPrompt(context));
 
     let response = await ModelRouter.generate(systemPrompt);
     let files = this.parseGeneratedCode(response);
@@ -707,6 +730,31 @@ ${context.previousIssues.join("\n")}
 ` : ""}
 ${this.guidanceBlock(context.iteration)}Generate the application now. Remember: every file as FILE: path/to/file.ext
 followed immediately by a fenced code block on the next line — no other format.`;
+  }
+
+  /**
+   * The prompt for changing a project that already exists: the project as it
+   * stands now (re-read every pass, so later passes see earlier ones), what to
+   * do to it, and a strict instruction to return only what changes.
+   */
+  private existingProjectPrompt(context: any): string {
+    const previous = this.iterations[this.iterations.length - 1];
+    return `You are a senior engineer continuing work on an existing project. Change it
+to do what is asked. Keep its structure, language, framework, libraries and code
+style; do not rewrite, rename or reorganise what does not need to change, and do
+not start it over.
+
+Project: ${this.config.projectName}
+
+What to do:
+${this.config.description}
+
+${context.existing}
+${previous ? `\nThe last pass scored ${previous.qualityScore}. Issues found then:\n${(previous.improvements ?? []).join("\n") || "none"}\n` : ""}
+${this.guidanceBlock(context.iteration)}Return O\nY the files you create or change, each one complete (never a fragment
+or a diff), as FILE: path/relative/to/project followed immediately by a fenced
+code block on the next line. Omit every file you are not changing. Do not
+explain in prose.`;
   }
 
   /**

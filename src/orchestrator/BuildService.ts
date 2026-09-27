@@ -86,7 +86,8 @@ export const BuildService = {
       hardwareOptimization: options.hardwareOptimization !== false,
       autoPackaging: options.autoPackaging !== false,
       profile: options.profile,
-      maxRepairAttempts: options.maxRepairAttempts
+      maxRepairAttempts: options.maxRepairAttempts,
+      workingDir: options.workingDir
     };
 
     const orchestrator = new AutonomousOrchestrator(config);
@@ -205,7 +206,11 @@ export const BuildService = {
   },
 
   isRunning(buildId: string): boolean {
-    return orchestrators.has(buildId);
+    // A finished orchestrator is kept for a minute so late status polls still
+    // see its detail; that does not make it running.
+    if (!orchestrators.has(buildId)) return false;
+    const state = history.get(buildId)?.state;
+    return state === "running" || state === "paused";
   },
 
   guide(buildId: string, text: string, from: string): BuildGuidance | null {
