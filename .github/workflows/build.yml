@@ -14,8 +14,10 @@ jobs:
       # for a clearer failure signal in the Actions UI.
       - name: Typecheck (backend)
         run: npx tsc --noEmit
+      # build:server only: `npm run build` also builds the dashboard, whose
+      # dependencies are not installed until the steps below.
       - name: Build (backend)
-        run: npm run build
+        run: npm run build:server
       - name: Install dashboard dependencies
         run: cd dashboard && npm ci
       - name: Lint (dashboard)
@@ -25,6 +27,12 @@ jobs:
       # fails the build, not just this step.
       - name: Build (dashboard)
         run: cd dashboard && npm run build
+      # The app (remote/): what builder.arpcloudsolutions.co.za and the
+      # builder itself serve. A static export, so building it type-checks it.
+      - name: Install app dependencies
+        run: cd remote && npm ci
+      - name: Build (app)
+        run: cd remote && npm run build
       # Advisory only: 52 pre-existing transitive vulnerabilities (including
       # 3 critical) predate this workflow change and haven't had a
       # remediation pass yet. Surfaced so they're visible in every run
