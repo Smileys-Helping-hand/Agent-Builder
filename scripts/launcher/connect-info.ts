@@ -16,7 +16,7 @@ import QRCode from "qrcode";
 
 import { AgentKeyModel } from "../../src/models/AgentKeyModel.js";
 
-const APP_URL = process.env.REMOTE_APP_URL ?? "https://agent-builder-remote.vercel.app";
+const APP_URL = process.env.REMOTE_APP_URL ?? "https://builder.arpcloudsolutions.co.za";
 const KEY_FILE = path.resolve("data/phone-key.txt");
 const URL_FILE = path.resolve("data/remote-url.txt");
 

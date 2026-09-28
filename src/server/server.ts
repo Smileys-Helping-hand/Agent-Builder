@@ -164,7 +164,7 @@ const isFromThisPc = (req: Request): boolean => {
 // The app (remote/, built to remote/out) is served from here too, so the PC
 // needs nothing but this server: open http://127.0.0.1:4000 and it is there.
 const REMOTE_APP = path.resolve(process.cwd(), "remote", "out");
-const HOSTED_APP = "https://agent-builder-remote.vercel.app";
+const HOSTED_APP = process.env.REMOTE_APP_URL ?? "https://builder.arpcloudsolutions.co.za";
 
 /**
  * Opening the builder's address in a browser opens the app. On this PC it also

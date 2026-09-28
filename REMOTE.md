@@ -1,7 +1,7 @@
 # Remote app — run your builder from anywhere
 
-**Live at: https://agent-builder-remote.vercel.app**
-**Also at: https://builder.arpcloudsolutions.co.za** once the DNS record is in (an `A` record, host `builder`, value `76.76.21.21`, at the registrar holding `arpcloudsolutions.co.za`).
+**Live at: https://builder.arpcloudsolutions.co.za** (also https://agent-builder-remote.vercel.app).
+The subdomain is an `A` record, host `builder`, value `76.76.21.21`, in the Route 53 zone for `arpcloudsolutions.co.za`.
 
 The app is the interface. Everything actually runs on your PC — building,
 researching, repairing. The app shows you what is happening and tells the PC what
