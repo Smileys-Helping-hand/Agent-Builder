@@ -42,15 +42,18 @@ const webhookCandidates = (): string[] => {
   if (explicit) candidates.push(explicit.replace(/\/+$/, ""));
 
   const host = process.env.JARVIS_HOST?.trim().replace(/\/+$/, "");
-  const key = process.env.JARVIS_API_KEY?.trim() || "jb_live_sk_bc8030782491116677c88743d165331284bc6aacad03100a";
+  // The key is a secret: from .env only, never written into the code.
+  const key = process.env.JARVIS_API_KEY?.trim() ?? "";
   if (host && key) candidates.push(`${host}/api/assistant/webhook/${key}`);
 
   const local = process.env.JARVIS_WEBHOOK_URL_LOCAL?.trim();
   if (local) candidates.push(local.replace(/\/+$/, ""));
 
   // Also support direct local ports if Second-Brain is running locally on 3000 or 3005
-  candidates.push(`http://127.0.0.1:3000/api/assistant/webhook/${key}`);
-  candidates.push(`http://127.0.0.1:3005/api/assistant/webhook/${key}`);
+  if (key) {
+    candidates.push(`http://127.0.0.1:3000/api/assistant/webhook/${key}`);
+    candidates.push(`http://127.0.0.1:3005/api/assistant/webhook/${key}`);
+  }
 
   return Array.from(new Set(candidates));
 };
