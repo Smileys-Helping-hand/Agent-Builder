@@ -146,15 +146,16 @@ repairs.
 
 ## Hosting it yourself
 
-Already deployed, but to redeploy or fork it — the app is a static export with no
-server side, so no secret ever reaches the host:
+The Vercel project `agent-builder-remote` is connected to this repository with
+**Root Directory: `remote`**: every merge to `main` deploys the app to
+https://builder.arpcloudsolutions.co.za, and every pull request gets a preview.
 
-```
-cd remote
-vercel deploy --prod
-```
+The app is a static export with no server side and needs **no environment
+variables**. Keep it that way: anything put in Vercel's environment, or written
+into the app's code, ends up in files every visitor downloads. The key lives
+only in each device's browser, put there by the QR code or pasted in Settings.
 
-Or in the Vercel dashboard: New Project → this repo → **Root Directory: `remote`**.
+To fork it: in the Vercel dashboard, New Project → this repo → Root Directory `remote`.
 
 Locally: `npm --prefix remote run dev -- -p 3003`.
 
