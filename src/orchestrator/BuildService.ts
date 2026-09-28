@@ -7,14 +7,58 @@
  * are now both clients of the same service, and there is a single answer to
  * "what is building right now".
  *
- * A finished build stays listed. The orchestrator instance is released shortly
- * after it ends, but the summary survives, so the phone you started a build
- * from still shows the outcome an hour later.
+ * Every build is written to data/builds.json as it goes: its passes, what each
+ * check said, what it is doing right now, and a log of everything that
+ * happened. So a build is never lost — not when the app is refreshed, not when
+ * the phone is closed, and not when the builder itself restarts. A build that
+ * was running when the builder stopped comes back as "interrupted", and can be
+ * continued from where it got to.
  */
 import { EventEmitter } from "events";
+import fs from "fs";
+import path from "path";
 
-import { AutonomousOrchestrator, type AutonomousConfig, type BuildGuidance, type BuildIteration } from "./AutonomousOrchestrator.js";
+import {
+  AutonomousOrchestrator,
+  PROFILE_DEFAULTS,
+  type AutonomousConfig,
+  type BuildGuidance,
+  type BuildIteration,
+  type BuildProfile
+} from "./AutonomousOrchestrator.js";
 import { Logger } from "../utils/Logger.js";
+
+export type BuildState = "running" | "paused" | "completed" | "stopped" | "error" | "interrupted";
+
+/** One objective check, as the app shows it: enough to see what failed, not the whole log. */
+export interface CheckSummary {
+  name: string;
+  applicable: boolean;
+  passed: boolean;
+  durationMs: number;
+}
+
+/** A pass, as it is kept after the build: scores, checks, and the error that blocked it. */
+export interface IterationSummary {
+  iteration: number;
+  at: string;
+  qualityScore: number;
+  objectiveScore: number;
+  status: string;
+  improvements: string[];
+  files: number;
+  passed: boolean;
+  checks: CheckSummary[];
+  /** The first check that failed, with the end of its output — the reason it is not done. */
+  blocker: { name: string; output: string } | null;
+  metrics: BuildIteration["metrics"];
+}
+
+export interface BuildEventEntry {
+  at: string;
+  kind: "start" | "pass" | "stage" | "repair" | "score" | "guidance" | "lesson" | "package" | "control" | "warn" | "error" | "done";
+  message: string;
+}
 
 export interface BuildRecord {
   buildId: string;
@@ -22,7 +66,7 @@ export interface BuildRecord {
   description: string;
   startedAt: string;
   finishedAt: string | null;
-  state: "running" | "paused" | "completed" | "stopped" | "error";
+  state: BuildState;
   iterations: number;
   qualityScore: number;
   outputDir: string;
@@ -30,14 +74,29 @@ export interface BuildRecord {
   /** Set when this build is serving a customer order. */
   orderId: string | null;
   error?: string;
+  profile: BuildProfile;
+  qualityThreshold: number;
+  maxIterations: number;
+  /** The build this one carries on from, when it was started with "Continue". */
+  continuedFrom: string | null;
+  /** Whether every applicable check passed on the best pass. Null until a pass finishes. */
+  passed: boolean | null;
+  /** Best score any pass reached. The workspace is always left at that pass. */
+  bestScore: number;
+  /** Why it ended, in a sentence. */
+  outcome: string | null;
+  /** What the current pass is doing, while it runs. */
+  stage: string | null;
+  /** Which repair attempt the current pass is on, while repairing. */
+  repairAttempt: number | null;
+  guidance: BuildGuidance[];
+  iterationDetail: IterationSummary[];
+  events: BuildEventEntry[];
 }
 
-/** A build as the API and the UI see it: the record plus whatever is live. */
+/** A build as the API and the UI see it: the record plus whether it is live in memory. */
 export interface BuildView extends BuildRecord {
   live: boolean;
-  stage?: string;
-  guidance: BuildGuidance[];
-  iterationDetail: BuildIteration[];
 }
 
 export interface StartBuildOptions extends Partial<AutonomousConfig> {
@@ -45,25 +104,191 @@ export interface StartBuildOptions extends Partial<AutonomousConfig> {
   description: string;
   startedBy?: string;
   orderId?: string | null;
+  continuedFrom?: string | null;
 }
 
-const HISTORY_LIMIT = 100;
+const HISTORY_LIMIT = 150;
+const EVENT_LIMIT = 250;
+const BLOCKER_OUTPUT_CHARS = 2500;
 /** How long a finished orchestrator is kept so late status polls still see detail. */
 const RELEASE_AFTER_MS = 60_000;
+const STORE_PATH = path.resolve(process.env.BUILDS_DB_PATH ?? "./data/builds.json");
 
 const orchestrators = new Map<string, AutonomousOrchestrator>();
 const history = new Map<string, BuildRecord>();
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+const now = (): string => new Date().toISOString();
 
-const remember = (record: BuildRecord): void => {
-  history.set(record.buildId, record);
-  while (history.size > HISTORY_LIMIT) {
-    const oldest = history.keys().next().value;
-    if (oldest === undefined) break;
-    history.delete(oldest);
+/** The end of a check's output is where the error is; the start is usually install noise. */
+const tail = (text: string, chars: number): string => {
+  const clean = text.replace(/\r\n/g, "\n").trim();
+  return clean.length > chars ? `…${clean.slice(clean.length - chars)}` : clean;
+};
+
+const summarise = (iteration: BuildIteration): IterationSummary => {
+  const verification = iteration.verification;
+  const blocking = verification?.blockingCheck;
+  return {
+    iteration: iteration.iteration,
+    at: new Date(iteration.timestamp).toISOString(),
+    qualityScore: iteration.qualityScore,
+    objectiveScore: iteration.objectiveScore,
+    status: iteration.status,
+    improvements: (iteration.improvements ?? []).slice(0, 8),
+    files: iteration.artifacts?.length ?? 0,
+    passed: Boolean(verification?.passed),
+    checks: (verification?.checks ?? []).map((check) => ({
+      name: check.name,
+      applicable: check.applicable,
+      passed: check.passed,
+      durationMs: check.durationMs
+    })),
+    blocker: blocking ? { name: blocking.name, output: tail(blocking.output ?? "", BLOCKER_OUTPUT_CHARS) } : null,
+    metrics: iteration.metrics
+  };
+};
+
+/* ---------------- persistence ---------------- */
+
+let writeTimer: NodeJS.Timeout | null = null;
+
+const writeNow = (): void => {
+  if (writeTimer) {
+    clearTimeout(writeTimer);
+    writeTimer = null;
+  }
+  try {
+    fs.mkdirSync(path.dirname(STORE_PATH), { recursive: true });
+    const temp = `${STORE_PATH}.tmp`;
+    fs.writeFileSync(temp, JSON.stringify(Array.from(history.values()), null, 1));
+    // Rename is atomic, so a crash mid-write never leaves a half-written file.
+    fs.renameSync(temp, STORE_PATH);
+  } catch (error) {
+    Logger.warn("Could not save build history", { error: errorMessage(error) });
   }
 };
+
+/** Coalesce the burst of updates a pass produces into one write. */
+const persist = (): void => {
+  if (writeTimer) return;
+  writeTimer = setTimeout(writeNow, 400);
+  writeTimer.unref?.();
+};
+
+/** Fill in fields older records (or an older version of this file) did not have. */
+const normalise = (raw: Partial<BuildRecord> & { buildId: string }): BuildRecord => ({
+  projectName: "Untitled",
+  description: "",
+  startedAt: now(),
+  finishedAt: null,
+  state: "stopped",
+  iterations: 0,
+  qualityScore: 0,
+  outputDir: "",
+  startedBy: "unknown",
+  orderId: null,
+  profile: "balanced",
+  qualityThreshold: 90,
+  maxIterations: PROFILE_DEFAULTS.balanced.maxIterations,
+  continuedFrom: null,
+  passed: null,
+  bestScore: raw.qualityScore ?? 0,
+  outcome: null,
+  stage: null,
+  repairAttempt: null,
+  guidance: [],
+  iterationDetail: [],
+  events: [],
+  ...raw
+});
+
+const load = (): void => {
+  let records: Array<Partial<BuildRecord> & { buildId: string }> = [];
+  try {
+    if (fs.existsSync(STORE_PATH)) records = JSON.parse(fs.readFileSync(STORE_PATH, "utf8"));
+  } catch (error) {
+    Logger.warn("Build history could not be read; starting a fresh one", { error: errorMessage(error) });
+    try {
+      fs.copyFileSync(STORE_PATH, `${STORE_PATH}.corrupt-${Date.now()}`);
+    } catch {
+      // Nothing to keep.
+    }
+  }
+
+  let interrupted = 0;
+  for (const raw of Array.isArray(records) ? records : []) {
+    if (!raw?.buildId) continue;
+    const record = normalise(raw);
+    // Nothing survives a restart in memory, so whatever was mid-flight stopped.
+    if (record.state === "running" || record.state === "paused") {
+      interrupted += 1;
+      record.state = "interrupted";
+      // When it was last heard from, not now: the restart may be hours later.
+      const lastSign = [record.startedAt, ...record.events.map((event) => event.at), ...record.iterationDetail.map((pass) => pass.at)]
+        .filter(Boolean)
+        .sort()
+        .pop();
+      record.finishedAt = record.finishedAt ?? lastSign ?? now();
+      record.stage = null;
+      record.repairAttempt = null;
+      record.outcome = "The builder stopped while this was running. Continue it to pick up from its best pass.";
+      record.events = [
+        ...record.events,
+        { at: now(), kind: "warn" as const, message: "The builder restarted while this build was running." }
+      ].slice(-EVENT_LIMIT);
+    }
+    history.set(record.buildId, record);
+  }
+  if (interrupted > 0) {
+    Logger.warn(`${interrupted} build(s) were interrupted by a restart`);
+    writeNow();
+  }
+};
+
+load();
+
+/* ---------------- bookkeeping ---------------- */
+
+const remember = (record: BuildRecord): void => {
+  // Map keeps first-insertion order, so the history stays in start order.
+  history.set(record.buildId, record);
+  while (history.size > HISTORY_LIMIT) {
+    const oldest = Array.from(history.values()).find((entry) => !orchestrators.has(entry.buildId));
+    if (!oldest) break;
+    history.delete(oldest.buildId);
+  }
+  persist();
+};
+
+const patch = (buildId: string, change: Partial<BuildRecord> | ((record: BuildRecord) => Partial<BuildRecord>)): BuildRecord | null => {
+  const current = history.get(buildId);
+  if (!current) return null;
+  const updated = { ...current, ...(typeof change === "function" ? change(current) : change) };
+  history.set(buildId, updated);
+  persist();
+  return updated;
+};
+
+const log = (buildId: string, kind: BuildEventEntry["kind"], message: string): void => {
+  patch(buildId, (record) => ({ events: [...record.events, { at: now(), kind, message }].slice(-EVENT_LIMIT) }));
+};
+
+const STAGE_WORDS: Record<string, string> = {
+  running: "Writing code",
+  verifying: "Running install, typecheck, build and tests",
+  repairing: "Fixing what failed",
+  analyzing: "Scoring the result",
+  improving: "Improving it",
+  packaging: "Packaging it"
+};
+
+/** The pass the build is best at, which is where its workspace is left. */
+const bestPass = (record: BuildRecord): IterationSummary | undefined =>
+  record.iterationDetail.reduce<IterationSummary | undefined>(
+    (best, pass) => (!best || pass.qualityScore > best.qualityScore ? pass : best),
+    undefined
+  );
 
 /**
  * Emits: "started" | "iteration" | "completed" | "failed" | "stopped",
@@ -76,17 +301,26 @@ buildEvents.setMaxListeners(50);
 
 export const BuildService = {
   start(options: StartBuildOptions): BuildRecord {
+    const profile: BuildProfile = options.profile ?? "balanced";
+    const defaults = PROFILE_DEFAULTS[profile] ?? PROFILE_DEFAULTS.balanced;
+
+    if (options.workingDir) {
+      const clash = this.active().find((build) => path.resolve(build.outputDir) === path.resolve(options.workingDir!));
+      if (clash) throw new Error(`${clash.projectName} is already building in that folder. Stop it or wait for it first.`);
+    }
+
     const config: AutonomousConfig = {
       projectName: options.projectName,
       description: options.description,
       targetPlatforms: options.targetPlatforms ?? ["web"],
       qualityThreshold: options.qualityThreshold ?? 90,
-      maxIterations: options.maxIterations ?? 100,
+      maxIterations: options.maxIterations ?? defaults.maxIterations,
       enableContinuousLearning: options.enableContinuousLearning !== false,
       hardwareOptimization: options.hardwareOptimization !== false,
       autoPackaging: options.autoPackaging !== false,
-      profile: options.profile,
+      profile,
       maxRepairAttempts: options.maxRepairAttempts,
+      patience: options.patience,
       workingDir: options.workingDir
     };
 
@@ -99,29 +333,53 @@ export const BuildService = {
       buildId,
       projectName: config.projectName,
       description: config.description,
-      startedAt: new Date().toISOString(),
+      startedAt: now(),
       finishedAt: null,
       state: "running",
       iterations: 0,
       qualityScore: 0,
-      outputDir: status.outputDir as string,
+      outputDir: path.resolve(status.outputDir as string),
       startedBy: options.startedBy ?? "unknown",
-      orderId: options.orderId ?? null
+      orderId: options.orderId ?? null,
+      profile,
+      qualityThreshold: config.qualityThreshold,
+      maxIterations: config.maxIterations,
+      continuedFrom: options.continuedFrom ?? null,
+      passed: null,
+      bestScore: 0,
+      outcome: null,
+      stage: "starting",
+      repairAttempt: null,
+      guidance: [],
+      iterationDetail: [],
+      events: [
+        {
+          at: now(),
+          kind: "start",
+          message: `${options.continuedFrom ? "Continuing" : "Started"} (${profile}, target quality ${config.qualityThreshold}, up to ${config.maxIterations} passes)`
+        }
+      ]
     };
     remember(record);
 
     const current = (): BuildRecord => history.get(buildId) ?? record;
 
-    const settle = (state: BuildRecord["state"], extra: Partial<BuildRecord> = {}): BuildRecord => {
-      const live = orchestrator.getStatus();
-      const iterations: BuildIteration[] = live.iterations ?? [];
+    const settle = (state: BuildState, extra: Partial<BuildRecord> = {}): BuildRecord => {
+      const base = current();
+      const best = bestPass(base);
       const updated: BuildRecord = {
-        ...current(),
+        ...base,
         ...extra,
         state,
-        finishedAt: new Date().toISOString(),
-        iterations: live.currentIteration,
-        qualityScore: iterations[iterations.length - 1]?.qualityScore ?? 0
+        stage: null,
+        repairAttempt: null,
+        finishedAt: now(),
+        iterations: Math.max(base.iterations, orchestrator.getStatus().currentIteration ?? 0),
+        // The workspace is reset to the best pass, so that is the score of what is on disk.
+        qualityScore: best?.qualityScore ?? base.qualityScore,
+        bestScore: best?.qualityScore ?? base.bestScore,
+        passed: best ? best.passed : base.passed,
+        guidance: orchestrator.listGuidance()
       };
       remember(updated);
       return updated;
@@ -132,61 +390,167 @@ export const BuildService = {
       buildEvents.emit("started", current());
     });
 
-    orchestrator.on("iteration-complete", (iteration: BuildIteration) => {
-      const updated = { ...current(), iterations: iteration.iteration, qualityScore: iteration.qualityScore };
-      remember(updated);
-      buildEvents.emit("iteration", updated, iteration);
+    orchestrator.on("iteration-started", ({ iteration }: { iteration: number }) => {
+      patch(buildId, { iterations: iteration, stage: "running", repairAttempt: null });
+      log(buildId, "pass", `Pass ${iteration} started`);
     });
 
-    orchestrator.on("completed", ({ finalQuality }: { finalQuality: number }) => {
-      Logger.log("Build completed", { buildId, finalQuality });
-      buildEvents.emit("completed", settle("completed"));
+    orchestrator.on("iteration-status", ({ iteration, status: stage, attempt }: { iteration: number; status: string; attempt?: number }) => {
+      patch(buildId, { stage, repairAttempt: attempt ?? null });
+      if (stage === "repairing") {
+        log(buildId, "repair", `Pass ${iteration}: repair attempt ${attempt ?? 1}`);
+      } else if (STAGE_WORDS[stage]) {
+        log(buildId, "stage", `Pass ${iteration}: ${STAGE_WORDS[stage].toLowerCase()}`);
+      }
+    });
+
+    orchestrator.on("iteration-complete", (iteration: BuildIteration) => {
+      const summary = summarise(iteration);
+      const updated = patch(buildId, (existing) => {
+        const detail = [...existing.iterationDetail.filter((pass) => pass.iteration !== summary.iteration), summary];
+        const best = bestPass({ ...existing, iterationDetail: detail });
+        return {
+          iterations: iteration.iteration,
+          qualityScore: iteration.qualityScore,
+          bestScore: best?.qualityScore ?? 0,
+          passed: best?.passed ?? null,
+          iterationDetail: detail,
+          stage: "between passes",
+          repairAttempt: null
+        };
+      });
+      const failing = summary.checks.filter((check) => check.applicable && !check.passed).map((check) => check.name);
+      log(
+        buildId,
+        "score",
+        `Pass ${iteration.iteration} scored ${Math.round(iteration.qualityScore)}${
+          summary.passed ? " — every check passes" : failing.length ? ` — still failing: ${failing.join(", ")}` : ""
+        }`
+      );
+      if (updated) buildEvents.emit("iteration", updated, iteration);
+    });
+
+    orchestrator.on("iteration-failed", ({ iteration, error, retrying }: { iteration: number; error: string; retrying: boolean }) => {
+      log(buildId, "warn", `Pass ${iteration} failed: ${error}${retrying ? " — trying again" : ""}`);
+    });
+
+    orchestrator.on("guidance", (note: BuildGuidance) => {
+      patch(buildId, { guidance: orchestrator.listGuidance() });
+      log(buildId, "guidance", `Instruction from ${note.from}: ${note.text}`);
+    });
+
+    orchestrator.on("lesson-learned", ({ lesson }: { lesson: string }) => {
+      log(buildId, "lesson", `Learned: ${lesson}`);
+    });
+
+    orchestrator.on("packaged", ({ packages }: { packages: unknown[] }) => {
+      log(buildId, "package", `Packaged ${Array.isArray(packages) ? packages.length : 0} bundle(s)`);
+    });
+
+    orchestrator.on("paused", () => {
+      patch(buildId, { state: "paused" });
+      log(buildId, "control", "Paused");
+    });
+
+    orchestrator.on("resumed", () => {
+      patch(buildId, { state: "running" });
+      log(buildId, "control", "Resumed");
+    });
+
+    orchestrator.on("completed", ({ finalQuality, reason }: { finalQuality: number; reason?: string }) => {
+      Logger.log("Build completed", { buildId, finalQuality, reason });
+      const base = current();
+      const best = bestPass(base);
+      const outcome = best?.passed
+        ? `Every check passes. Best quality ${Math.round(best.qualityScore)}.`
+        : `${reason ?? "Finished"}. Best quality ${Math.round(best?.qualityScore ?? 0)}${
+            best?.blocker ? `; ${best.blocker.name} still fails` : ""
+          }.`;
+      log(buildId, "done", outcome);
+      buildEvents.emit("completed", settle("completed", { outcome }));
       setTimeout(() => orchestrators.delete(buildId), RELEASE_AFTER_MS).unref?.();
     });
 
     orchestrator.on("error", (error: Error) => {
       Logger.error("Build error", { buildId, error: error.message });
-      buildEvents.emit("failed", settle("error", { error: error.message }));
+      log(buildId, "error", error.message);
+      buildEvents.emit("failed", settle("error", { error: error.message, outcome: `Failed: ${error.message}` }));
+      setTimeout(() => orchestrators.delete(buildId), RELEASE_AFTER_MS).unref?.();
     });
 
     orchestrator.on("stopped", () => {
       Logger.log("Build stopped", { buildId });
-      buildEvents.emit("stopped", settle("stopped"));
+      log(buildId, "control", "Stopped");
+      buildEvents.emit("stopped", settle("stopped", { outcome: "Stopped before it finished. Continue it to carry on." }));
       orchestrators.delete(buildId);
     });
 
-    // Deliberately not awaited: a build runs for minutes to hours.
+    // Deliberately not awaited: a build runs for minutes to hours. start()
+    // emits "error" before it rejects, and that handler has already recorded
+    // the failure; this only covers a rejection that happens without one.
     orchestrator.start().catch((error: unknown) => {
+      if (current().state === "error") return;
       Logger.error("Build failed to run", { buildId, error: errorMessage(error) });
-      buildEvents.emit("failed", settle("error", { error: errorMessage(error) }));
+      buildEvents.emit("failed", settle("error", { error: errorMessage(error), outcome: `Failed: ${errorMessage(error)}` }));
+      orchestrators.delete(buildId);
     });
 
-    return record;
+    return current();
   },
 
-  /** The merged view: the stored record, with anything live layered over it. */
+  /**
+   * Start a new build that carries on in an earlier build's folder: the code it
+   * left (its best pass), plus whatever it should do next. The earlier build is
+   * left as it was, so the history reads as what actually happened.
+   */
+  continue(buildId: string, options: { instruction?: string; profile?: BuildProfile; startedBy?: string } = {}): BuildRecord {
+    const previous = history.get(buildId);
+    if (!previous) throw new Error("Unknown build.");
+    if (this.isRunning(buildId)) throw new Error("That build is still running.");
+    if (!previous.outputDir || !fs.existsSync(previous.outputDir)) {
+      throw new Error("Its folder is gone, so there is nothing to carry on from. Start a new build instead.");
+    }
+
+    const instruction = options.instruction?.trim();
+    const blocker = bestPass(previous)?.blocker;
+    const description = [
+      previous.description,
+      "",
+      "This project was started by an earlier build and is already in the folder.",
+      instruction ? `Now do this: ${instruction}` : "Carry on: finish what is missing and fix whatever still fails.",
+      blocker ? `\nWhen it last ran, the ${blocker.name} check failed with:\n${blocker.output.slice(-1200)}` : "",
+      previous.guidance.length > 0 ? `\nStanding instructions from before:\n${previous.guidance.map((note) => `- ${note.text}`).join("\n")}` : ""
+    ]
+      .filter((line) => line !== undefined)
+      .join("\n")
+      .trim();
+
+    return this.start({
+      projectName: previous.projectName,
+      description,
+      profile: options.profile ?? previous.profile,
+      qualityThreshold: previous.qualityThreshold,
+      workingDir: previous.outputDir,
+      startedBy: options.startedBy ?? "user",
+      orderId: previous.orderId,
+      continuedFrom: previous.buildId
+    });
+  },
+
+  /** The stored record, with whether it is live in memory. */
   view(buildId: string): BuildView | null {
     const record = history.get(buildId);
-    const orchestrator = orchestrators.get(buildId);
-    if (!record && !orchestrator) return null;
     if (!record) return null;
-
-    if (!orchestrator) return { ...record, live: false, guidance: [], iterationDetail: [] };
+    const orchestrator = orchestrators.get(buildId);
+    if (!orchestrator) return { ...record, live: false };
 
     const status = orchestrator.getStatus();
-    const iterations: BuildIteration[] = status.iterations ?? [];
-    const latest = iterations[iterations.length - 1];
-
+    const running = record.state === "running" || record.state === "paused";
     return {
       ...record,
-      live: true,
-      state: status.isPaused ? "paused" : status.isRunning ? "running" : record.state,
-      iterations: status.currentIteration,
-      qualityScore: latest?.qualityScore ?? record.qualityScore,
-      stage: latest?.status ?? "starting",
-      outputDir: status.outputDir as string,
-      guidance: status.guidance ?? [],
-      iterationDetail: iterations
+      live: running,
+      state: running ? (status.isPaused ? "paused" : "running") : record.state,
+      guidance: status.guidance ?? record.guidance
     };
   },
 
@@ -198,11 +562,11 @@ export const BuildService = {
       .reverse();
   },
 
-  /** Builds still held in memory: running, or paused waiting on you. */
+  /** Builds actually in progress: running, or paused waiting on you. */
   active(): BuildView[] {
     return Array.from(orchestrators.keys())
       .map((buildId) => this.view(buildId))
-      .filter((build): build is BuildView => build !== null);
+      .filter((build): build is BuildView => build !== null && (build.state === "running" || build.state === "paused"));
   },
 
   isRunning(buildId: string): boolean {
@@ -214,25 +578,45 @@ export const BuildService = {
   },
 
   guide(buildId: string, text: string, from: string): BuildGuidance | null {
+    if (!this.isRunning(buildId)) return null;
     const orchestrator = orchestrators.get(buildId);
-    if (!orchestrator) return null;
-    return orchestrator.addGuidance(text, from);
+    return orchestrator ? orchestrator.addGuidance(text, from) : null;
   },
 
   guidance(buildId: string): BuildGuidance[] {
-    return orchestrators.get(buildId)?.listGuidance() ?? [];
+    return orchestrators.get(buildId)?.listGuidance() ?? history.get(buildId)?.guidance ?? [];
   },
 
   control(buildId: string, action: "pause" | "resume" | "stop"): boolean {
+    if (!this.isRunning(buildId)) return false;
     const orchestrator = orchestrators.get(buildId);
     if (!orchestrator) return false;
     orchestrator[action]();
-    if (action === "stop") {
-      orchestrators.delete(buildId);
-    } else {
-      const record = history.get(buildId);
-      if (record) remember({ ...record, state: action === "pause" ? "paused" : "running" });
-    }
+    if (action === "stop") orchestrators.delete(buildId);
     return true;
+  },
+
+  /** Drop a finished build from the list. Its files stay where they are. */
+  forget(buildId: string): boolean {
+    if (this.isRunning(buildId)) return false;
+    orchestrators.delete(buildId);
+    const removed = history.delete(buildId);
+    if (removed) persist();
+    return removed;
+  },
+
+  /** Write anything pending now; used on shutdown. */
+  flush(): void {
+    writeNow();
   }
 };
+
+// Keep the last few hundred milliseconds of updates when the process is told to stop.
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.once(signal, () => {
+    BuildService.flush();
+    process.exit(0);
+  });
+}
+// Covers process.exit() from anywhere else (the Shut down button, the sidecar exit).
+process.once("exit", () => BuildService.flush());

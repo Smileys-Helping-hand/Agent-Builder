@@ -72,6 +72,33 @@ rather than a one-off. Pause frees the GPU without losing the work; Stop ends it
 
 You can close the app. The build keeps going on the PC.
 
+### Keeping track of builds
+
+Every build is saved on the PC in `data/builds.json` as it runs, with each pass,
+what every check (install, typecheck, build, tests, lint) said, and a log of what
+happened. Refreshing the app, closing the phone, or restarting the builder loses
+nothing; the app also keeps its last copy on the device, so it shows straight away
+and says when it last heard from the PC.
+
+- **Build** lists every build, filtered by *Building*, *Works* (every check passes)
+  and *Needs a look* (failed, interrupted, or finished with a check still failing).
+  Tap one for its page — its address (`/build/?id=…`) survives a refresh.
+- A build page shows the live stage, each pass's checks, **why it is not passing
+  yet** (the end of the failing check's output), the files it wrote, and buttons to
+  open its folder in VS Code or Explorer on the PC.
+- **Continue building** starts a new build in the same folder from the best code
+  the last one left, told what still fails. A build interrupted by a restart comes
+  back as *Interrupted* and can be continued the same way.
+- A build stops by itself once passes stop getting better (Fast: 3 passes without
+  a new best, Balanced: 5, Deep: 8) rather than running to its pass limit.
+- The Build tab shows a badge with how many are running, and the app tells you
+  when one finishes — even one that finished while it was closed.
+
+**Settings → Connection check** says which builder this device is talking to,
+whether the address makes sense from here (an `127.0.0.1` address on a phone, or an
+`http://` address from the https app, never works), and whether the model server
+and the other services on that PC are up.
+
 ## Carrying on with a project
 
 **Projects** → the project → **AI Coder & Build** → say what to do next → **Carry on**.

@@ -43,6 +43,21 @@ export interface BuildGuidance {
 
 export type BuildProfile = "fast" | "balanced" | "deep";
 
+/**
+ * How long each profile keeps going when nobody says otherwise. maxIterations
+ * is the hard cap; patience is how many passes in a row may fail to beat the
+ * best score before the build accepts it has stopped getting better. Without
+ * patience a build that could not get a check green spun for 100 passes.
+ */
+export const PROFILE_DEFAULTS: Record<BuildProfile, { maxIterations: number; patience: number }> = {
+  fast: { maxIterations: 8, patience: 3 },
+  balanced: { maxIterations: 25, patience: 5 },
+  deep: { maxIterations: 60, patience: 8 }
+};
+
+/** Passes that fail outright (the model server dropped, a timeout) are retried this many times in a row. */
+const MAX_CONSECUTIVE_PASS_FAILURES = 3;
+
 export interface AutonomousConfig {
   projectName: string;
   description: string;
@@ -64,6 +79,8 @@ export interface AutonomousConfig {
    * seconds, not the minutes a full generation would take.
    */
   profile?: BuildProfile;
+  /** Passes without a new best score before stopping. Overrides the profile's default. */
+  patience?: number;
   /**
    * An existing project to change instead of generating one from nothing: a
    * copy prepared by ProjectBuilds, already a git repo with the project as its
@@ -152,6 +169,12 @@ export class AutonomousOrchestrator extends EventEmitter {
         this.emit("hardware-optimized", await this.hardwareScaler.getSpecs());
       }
 
+      const patience = this.config.patience ?? PROFILE_DEFAULTS[this.config.profile ?? "balanced"].patience;
+      let consecutiveFailures = 0;
+      let passesWithoutProgress = 0;
+      let bestSoFar = -1;
+      let endReason: string | undefined;
+
       // Main autonomous loop
       while (this.isRunning && this.currentIteration < this.config.maxIterations) {
         if (this.isPaused) {
@@ -160,10 +183,35 @@ export class AutonomousOrchestrator extends EventEmitter {
         }
 
         this.currentIteration++;
-        const iteration = await this.runIteration(this.currentIteration);
+        let iteration: BuildIteration;
+        try {
+          iteration = await this.runIteration(this.currentIteration);
+          consecutiveFailures = 0;
+        } catch (error: any) {
+          // One bad pass (the model server restarting, a request timing out) is
+          // not a failed build. Several in a row is — say so and stop.
+          consecutiveFailures += 1;
+          const retrying = consecutiveFailures < MAX_CONSECUTIVE_PASS_FAILURES && this.isRunning;
+          this.emit("iteration-failed", { iteration: this.currentIteration, error: error?.message ?? String(error), retrying });
+          if (!retrying) {
+            if (!this.isRunning) break;
+            throw new Error(
+              `${consecutiveFailures} passes in a row failed. The last one said: ${error?.message ?? String(error)}`
+            );
+          }
+          await this.sleep(5000 * consecutiveFailures);
+          continue;
+        }
         this.iterations.push(iteration);
 
         this.emit("iteration-complete", iteration);
+
+        if (iteration.qualityScore > bestSoFar) {
+          bestSoFar = iteration.qualityScore;
+          passesWithoutProgress = 0;
+        } else {
+          passesWithoutProgress += 1;
+        }
 
         // Check if quality threshold is met
         if (iteration.qualityScore >= this.config.qualityThreshold) {
@@ -189,6 +237,12 @@ export class AutonomousOrchestrator extends EventEmitter {
           break;
         }
 
+        if (passesWithoutProgress >= patience) {
+          endReason = `Stopped improving: ${patience} passes without beating a score of ${bestSoFar}`;
+          Logger.warn("Build plateaued", { buildId: this.buildId, bestSoFar, patience });
+          break;
+        }
+
         // Learn from this iteration
         if (this.config.enableContinuousLearning) {
           await this.learnFromIteration(iteration);
@@ -199,7 +253,8 @@ export class AutonomousOrchestrator extends EventEmitter {
         await this.sleep(delay);
       }
 
-      if (this.currentIteration >= this.config.maxIterations) {
+      if (!endReason && this.currentIteration >= this.config.maxIterations) {
+        endReason = `Reached the limit of ${this.config.maxIterations} passes`;
         Logger.warn("Max iterations reached", { iterations: this.currentIteration });
       }
 
@@ -212,7 +267,8 @@ export class AutonomousOrchestrator extends EventEmitter {
         this.emit("completed", {
           buildId: this.buildId,
           iterations: this.currentIteration,
-          finalQuality: this.iterations[this.iterations.length - 1]?.qualityScore ?? 0
+          finalQuality: this.iterations[this.iterations.length - 1]?.qualityScore ?? 0,
+          reason: endReason
         });
       }
 
@@ -258,6 +314,13 @@ export class AutonomousOrchestrator extends EventEmitter {
       iteration.artifacts.push(...generatedCode.artifacts);
 
       let currentFiles = generatedCode.files;
+      if (!this.config.workingDir && Object.keys(currentFiles).length === 0) {
+        // Nothing to write means nothing to verify; scoring an empty folder only
+        // burns a pass. Failing it lets the loop retry, and stop if it persists.
+        throw new Error(
+          "The model answered without any files in the FILE: format. Check that the model is running and able to write code (OLLAMA_MODEL)."
+        );
+      }
 
       const generateWrite = await this.workspace.writeFiles(
         currentFiles,
@@ -751,7 +814,7 @@ ${this.config.description}
 
 ${context.existing}
 ${previous ? `\nThe last pass scored ${previous.qualityScore}. Issues found then:\n${(previous.improvements ?? []).join("\n") || "none"}\n` : ""}
-${this.guidanceBlock(context.iteration)}Return O\nY the files you create or change, each one complete (never a fragment
+${this.guidanceBlock(context.iteration)}Return ONLY the files you create or change, each one complete (never a fragment
 or a diff), as FILE: path/relative/to/project followed immediately by a fenced
 code block on the next line. Omit every file you are not changing. Do not
 explain in prose.`;
@@ -799,12 +862,40 @@ ${lines}
    */
   private parseGeneratedCode(response: string): Record<string, string> {
     const files: Record<string, string> = {};
-    const filePattern = /FILE:\s*(.+?)\n```(\w+)?\n([\s\S]+?)```/g;
-    
-    let match;
-    while ((match = filePattern.exec(response)) !== null) {
-      const [, filepath, , content] = match;
-      files[filepath.trim()] = content.trim();
+    const text = response.replace(/\r\n/g, "\n");
+
+    // Models dress the marker up: "**FILE: `src/app.ts`**", "### File: src/app.ts",
+    // a blank line before the fence, "```tsx title=app.tsx". Accept all of it,
+    // but still insist on a real path and a fenced block.
+    const header = /^[ \t>#*_-]*FILE:[ \t]*[`*"']*([^\n`*"']+?)[`*"']*[ \t]*\n(?:[ \t]*\n)*[ \t]*(`{3,}|~{3,})[^\n]*\n/gim;
+    let match: RegExpExecArray | null;
+    while ((match = header.exec(text)) !== null) {
+      const rawPath = match[1].trim();
+      const fence = match[2];
+      const bodyStart = header.lastIndex;
+      // The block ends at a bare closing fence on its own line, so an inline
+      // ``` or a ```bash opener inside the file does not cut it short.
+      const closing = new RegExp(`^[ \\t]*${fence[0] === "`" ? "`" : "~"}{${fence.length},}[ \\t]*$`, "m");
+      const rest = text.slice(bodyStart);
+      const nextHeader = rest.search(/^[ \t>#*_-]*FILE:/im);
+      const closeMatch = closing.exec(rest);
+      let end: number;
+      if (closeMatch && (nextHeader === -1 || closeMatch.index < nextHeader)) {
+        end = closeMatch.index;
+        header.lastIndex = bodyStart + closeMatch.index + closeMatch[0].length;
+      } else if (nextHeader !== -1) {
+        // An unclosed block: take everything up to the next file.
+        end = nextHeader;
+        header.lastIndex = bodyStart + nextHeader;
+      } else {
+        end = rest.length;
+        header.lastIndex = text.length;
+      }
+
+      const filePath = rawPath.replace(/\\/g, "/").replace(/^(\.\/)+/, "").replace(/^\/+/, "");
+      if (!filePath || filePath.includes("..") || /\s{2,}|[<>|?]/.test(filePath)) continue;
+      const content = rest.slice(0, end).replace(/\s+$/, "");
+      files[filePath] = `${content}\n`;
     }
 
     return files;

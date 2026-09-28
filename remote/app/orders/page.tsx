@@ -1,9 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import { api, type Order, type OrderStatus } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
+import { STAGE_LABEL } from "../build/parts";
 import { TemplateStudio } from "./templates";
 
 /**
@@ -276,10 +278,15 @@ export default function Orders() {
                           ) : null}
                         </div>
 
-                        {building && order.build ? (
-                          <small style={{ color: "var(--muted)", display: "block", marginTop: 8 }}>
-                            Pass {order.build.iterations || 1} · {order.build.stage}
-                          </small>
+                        {order.build ? (
+                          <Link
+                            href={`/build/?id=${encodeURIComponent(order.build.buildId)}`}
+                            style={{ color: "var(--accent)", display: "block", marginTop: 8, fontSize: 13 }}
+                          >
+                            {building
+                              ? `Pass ${order.build.iterations || 1} · ${STAGE_LABEL[order.build.stage ?? "starting"] ?? order.build.stage} — follow the build →`
+                              : "See how the build went →"}
+                          </Link>
                         ) : null}
 
                         {order.status === "review" ? (

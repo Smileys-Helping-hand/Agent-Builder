@@ -461,6 +461,15 @@ export const OrderPipeline = {
     if (started) return;
     started = true;
 
+    // A restart ends every build that was in flight. An order still marked
+    // "building" would otherwise wait for a build that no longer exists, and
+    // never be picked up again: put it back in the queue.
+    for (const order of OrderStore.list({ status: "building" })) {
+      if (order.buildId && BuildService.isRunning(order.buildId)) continue;
+      OrderStore.note(order.id, "building", "The builder restarted while this was building. It is back in the queue.");
+      OrderStore.update(order.id, { status: "accepted", buildId: null });
+    }
+
     // A build finishing is what moves an order forward, so the pipeline
     // listens rather than polls for it.
     buildEvents.on("completed", (record: BuildRecord) => {
