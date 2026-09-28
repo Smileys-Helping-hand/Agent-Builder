@@ -27,6 +27,7 @@ import { OLLAMA_URL, checkOllama, ollamaBinary } from "../utils/Ollama.js";
 import { ResearchEngine } from "../research/ResearchEngine.js";
 import { ResearchStore } from "../research/ResearchStore.js";
 import { SystemResourceService, type SystemMetrics } from "../utils/SystemResourceService.js";
+import { readPublicUrl } from "../utils/PublicUrl.js";
 
 const run = promisify(execFile);
 
@@ -99,24 +100,6 @@ const diskSummary = (): { freeGb: number; detail: string } => {
     return { freeGb, detail: `${freeGb.toFixed(1)} GB free` };
   } catch {
     return { freeGb: Number.POSITIVE_INFINITY, detail: "unknown" };
-  }
-};
-
-/**
- * The public address of this machine, if the launcher opened a tunnel. Written
- * to data/remote-url.txt by Start Agent Builder, so the app can show you where
- * it can be reached from outside the house.
- */
-const readPublicUrl = (): string | null => {
-  if (process.env.REMOTE_URL?.startsWith("http")) return process.env.REMOTE_URL.trim();
-  if (process.env.PUBLIC_URL?.startsWith("http")) return process.env.PUBLIC_URL.trim();
-  try {
-    const file = path.resolve("data/remote-url.txt");
-    if (!fs.existsSync(file)) return null;
-    const value = fs.readFileSync(file, "utf8").replace(/^﻿/, "").trim();
-    return value.startsWith("http") ? value : null;
-  } catch {
-    return null;
   }
 };
 
