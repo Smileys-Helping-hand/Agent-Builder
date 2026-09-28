@@ -4,9 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tauri = { version = "1.5", features = ["shell-open"] }
+tauri = { version = "1.8", features = ["shell-open", "shell-sidecar"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 [build-dependencies]
 tauri-build = { version = "1.5", features = [] }
+
+[features]
+# `tauri build` compiles with --features custom-protocol, which makes a release
+# build load the bundled dashboard (distDir) instead of devPath. Without this
+# declaration the build fails before compiling anything.
+custom-protocol = ["tauri/custom-protocol"]

@@ -1,11 +1,11 @@
 import fs from "fs";
 import path from "path";
-import Database from "better-sqlite3";
+import { openSqlite } from "../utils/Sqlite.js";
 
 const DB_PATH = path.resolve("data/users.db");
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
-const db = new Database(DB_PATH);
+const db = openSqlite(DB_PATH);
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -64,8 +64,9 @@ export const UserModel = {
   },
 
   findByEmail(email: string) {
-    const stmt = db.prepare("SELECT * FROM users WHERE email = ?");
-    const record = stmt.get(email) as UserRecord | undefined;
+    const trimmed = email.trim().toLowerCase();
+    const stmt = db.prepare("SELECT * FROM users WHERE LOWER(email) = ?");
+    const record = stmt.get(trimmed) as UserRecord | undefined;
     return record
       ? {
           ...record,
@@ -91,6 +92,11 @@ export const UserModel = {
       ...record,
       role: normalizeRole(record.role)
     }));
+  },
+
+  count(): number {
+    const stmt = db.prepare("SELECT COUNT(*) as count FROM users");
+    return (stmt.get() as { count: number }).count;
   },
 
   updateCredentials(id: number, updates: { passwordHash?: string; role?: string }) {

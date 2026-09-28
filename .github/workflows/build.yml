@@ -9,5 +9,27 @@ jobs:
         with:
           node-version: 20
       - run: npm ci
-      - run: npm run build
-      - run: cd dashboard && npm ci && npm run build
+      # tsc runs as part of `npm run build` (build:server -> tsc && esbuild),
+      # so a type error here already fails the build below. Named separately
+      # for a clearer failure signal in the Actions UI.
+      - name: Typecheck (backend)
+        run: npx tsc --noEmit
+      - name: Build (backend)
+        run: npm run build
+      - name: Install dashboard dependencies
+        run: cd dashboard && npm ci
+      - name: Lint (dashboard)
+        run: cd dashboard && npx next lint
+      # Type-checks and lints as part of the build (next.config.js no longer
+      # sets ignoreBuildErrors/ignoreDuringBuilds) — a real failure here
+      # fails the build, not just this step.
+      - name: Build (dashboard)
+        run: cd dashboard && npm run build
+      # Advisory only: 52 pre-existing transitive vulnerabilities (including
+      # 3 critical) predate this workflow change and haven't had a
+      # remediation pass yet. Surfaced so they're visible in every run
+      # instead of only when someone thinks to run `npm audit` by hand —
+      # not blocking until that pass happens, or a real fix would turn every
+      # push red for issues nothing here caused.
+      - name: Dependency audit (advisory)
+        run: npm audit --audit-level=high || true

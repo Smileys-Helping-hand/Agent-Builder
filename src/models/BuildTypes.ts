@@ -1,11 +1,4 @@
-export type BuildMode =
-  | "app"
-  | "api"
-  | "fullstack"
-  | "automation"
-  | "script"
-  | "cli"
-  | "desktop";
+export type BuildMode = "app" | "game" | "simulation" | "fusion";
 
 export type AutonomyLevel = "manual" | "semi" | "full";
 

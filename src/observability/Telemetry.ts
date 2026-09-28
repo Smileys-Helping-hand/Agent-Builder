@@ -4,6 +4,7 @@ import { Resource } from "@opentelemetry/resources";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { SemanticResourceAttributes } from "@opentelemetry/semantic-conventions";
 import { Logger } from "../utils/Logger.js";
+import { findAvailablePort } from "../utils/Ports.js";
 
 const healthStates = new Map<string, number>();
 let telemetryStarted = false;
@@ -56,8 +57,19 @@ export const initializeTelemetry = async () => {
 
   diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR);
 
+  // Metrics are optional, so a busy port must not take the API down with it.
+  // Two instances on one machine (the desktop app started while a dev API runs)
+  // both want 9464, and the exporter's EADDRINUSE was fatal.
+  const preferredPort = Number(process.env.METRICS_PORT ?? 9464);
+  const metricsPort = await findAvailablePort(preferredPort);
+  if (metricsPort === null) {
+    Logger.log("Metrics disabled: no free port available", { preferredPort });
+    telemetryStarted = true;
+    return;
+  }
+
   const exporterOptions = {
-    port: Number(process.env.METRICS_PORT ?? 9464),
+    port: metricsPort,
     endpoint: process.env.METRICS_ENDPOINT ?? "/metrics"
   } as const;
 

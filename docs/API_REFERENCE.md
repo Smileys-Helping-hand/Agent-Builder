@@ -7,16 +7,26 @@ The REST API exposes orchestration controls for builds, collaboration, storyworl
 - Register or log in via `/api/auth/register` and `/api/auth/login` to obtain a JWT.
 - Include `Authorization: Bearer <token>` for protected routes.
 
-## Build Engine
+## Autonomous Build
+
+The build pipeline. Each iteration generates code into a git-backed workspace,
+then verifies it objectively (install, typecheck, build, test, lint) and
+attempts bounded repairs against the real error output before scoring it.
 
 | Method | Path | Description |
 | ------ | ---- | ----------- |
-| `POST` | `/api/build/start` | Launch a new build job. Body: `{ prompt, mode?, autonomy?, repositories?, sessionId? }`. |
-| `GET`  | `/api/build/status/:id` | Retrieve build status and step metadata. |
-| `GET`  | `/api/build/history` | List recent builds ordered by last update time. |
-| `POST` | `/api/build/cancel` | Cancel a build in-flight. Body: `{ id }`. |
-| `POST` | `/api/build/merge` | Merge two repositories with the RepoMerger. Body: `{ sourceA, sourceB, strategy?, outputDir? }`. |
-| `GET`  | `/api/project/export` | Enumerate exported build directories under `PROJECT_OUTPUT`. |
+| `POST` | `/api/autonomous/start` | Start a build. Body: `{ projectName, description, targetPlatforms?, qualityThreshold?, maxIterations?, profile?, maxRepairAttempts?, autoPackaging? }`. `profile` is `fast` \| `balanced` \| `deep`. |
+| `GET`  | `/api/autonomous/active` | List running builds. |
+| `GET`  | `/api/autonomous/:buildId/status` | Build status, config, and per-iteration scores. |
+| `GET`  | `/api/autonomous/:buildId/iterations` | Full iteration history including verification reports. |
+| `POST` | `/api/autonomous/:buildId/pause` | Pause after the current iteration. |
+| `POST` | `/api/autonomous/:buildId/resume` | Resume a paused build. |
+| `POST` | `/api/autonomous/:buildId/stop` | Stop and discard the run. |
+| `GET`  | `/api/autonomous/hardware` | Detected CPU/RAM/VRAM and the recommended model rung. |
+
+> The earlier `/api/build/*`, `/api/build-studio/*` and `/api/agent/run`
+> pipelines were removed: none of them wrote generated code to disk or
+> verified it. `GET /api/agent/tasks` remains read-only for historical records.
 
 ## Collaboration Hub
 
@@ -57,6 +67,6 @@ The `AutoUpdater` service runs in-process and publishes `feedback` events on the
 Connect via Socket.IO (`subscribeToEvents` in `dashboard/lib/api.ts`). Payload types include:
 
 - `log`, `task`, `feedback`, `analytics`, `marketplace`, `container`, `queue`, `health`, `security`
-- `builder`, `collaboration`, `build`
+- `roblox_sync`, `collaboration`, `build`, `story`, `simulation`
 
 Use these events to power dashboards, CLI monitors, or external automation.

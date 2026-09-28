@@ -1,4 +1,4 @@
-import type { BuildJobSnapshot, BuildMode, AutonomyLevel } from "../models/BuildTypes.js";
+import type { AutonomousConfig, BuildIteration } from "../orchestrator/AutonomousOrchestrator.js";
 
 type FetchFn = typeof fetch;
 
@@ -54,36 +54,46 @@ export class AgentBuilderSDK {
     return (await response.json()) as T;
   }
 
-  async buildApp(prompt: string, options: { mode?: BuildMode; autonomy?: AutonomyLevel; repositories?: string[]; sessionId?: string } = {}) {
-    const body = JSON.stringify({ prompt, ...options });
-    const result = await this.request<{ job: BuildJobSnapshot }>("/api/build/start", { method: "POST", body });
-    return result.job;
-  }
-
-  async getBuild(id: string) {
-    const result = await this.request<{ job: BuildJobSnapshot }>(`/api/build/status/${id}`);
-    return result.job;
-  }
-
-  async listBuilds() {
-    const result = await this.request<{ jobs: BuildJobSnapshot[] }>("/api/build/history");
-    return result.jobs;
-  }
-
-  async mergeRepos(options: { sourceA: string; sourceB: string; outputDir?: string; strategy?: "semantic" | "overwrite" }) {
-    const result = await this.request<{ report: Record<string, unknown> }>("/api/build/merge", {
-      method: "POST",
-      body: JSON.stringify(options)
-    });
-    return result.report;
-  }
-
-  async exportProjects() {
-    const result = await this.request<{ projects: string[] }>("/api/project/export");
-    return result.projects;
-  }
-
   async trainAgent() {
     return this.request<{ message: string; datasetPath: string; provider: string }>("/api/train/start", { method: "POST" });
+  }
+
+  // --- Autonomous build: the verification/repair/ratchet pipeline (server/autonomous.ts) ---
+
+  async startAutonomousBuild(config: AutonomousConfig) {
+    return this.request<{ success: boolean; buildId: string; config: AutonomousConfig }>("/api/autonomous/start", {
+      method: "POST",
+      body: JSON.stringify(config)
+    });
+  }
+
+  async getAutonomousStatus(buildId: string) {
+    return this.request<{
+      buildId: string;
+      isRunning: boolean;
+      isPaused: boolean;
+      currentIteration: number;
+      config: AutonomousConfig;
+      iterations: BuildIteration[];
+      latestQualityScore: number;
+    }>(`/api/autonomous/${buildId}/status`);
+  }
+
+  async listActiveAutonomousBuilds() {
+    return this.request<{ count: number; builds: Array<{ buildId: string; projectName: string; isRunning: boolean; isPaused: boolean; currentIteration: number; qualityScore: number }> }>(
+      "/api/autonomous/active"
+    );
+  }
+
+  async pauseAutonomousBuild(buildId: string) {
+    return this.request<{ success: boolean; message: string; buildId: string }>(`/api/autonomous/${buildId}/pause`, { method: "POST" });
+  }
+
+  async resumeAutonomousBuild(buildId: string) {
+    return this.request<{ success: boolean; message: string; buildId: string }>(`/api/autonomous/${buildId}/resume`, { method: "POST" });
+  }
+
+  async stopAutonomousBuild(buildId: string) {
+    return this.request<{ success: boolean; message: string; buildId: string }>(`/api/autonomous/${buildId}/stop`, { method: "POST" });
   }
 }

@@ -4,7 +4,7 @@ Agent Builder now records every build, simulation event, and user rating to `dat
 
 ## Data Flow
 
-1. **Event capture** — BuildEngine, StoryWorld orchestrators, and manual feedback submissions append JSON lines via `FeedbackStore.append`.
+1. **Event capture** — StoryWorld orchestrators and manual feedback submissions append JSON lines via `FeedbackStore.append`.
 2. **AutoUpdater** — Periodically aggregates FineTuner feedback, marks entries as processed, and appends a summary record to `feedback.jsonl`.
 3. **LocalTrainer** — On `POST /api/train/start`, unprocessed feedback records are consumed and transformed into `data/train.jsonl` for LoRA/Ollama fine-tuning.
 4. **Model Router** — Updated checkpoints can be loaded by pointing `AI_PROVIDER`/`MODEL` to the new artifacts.

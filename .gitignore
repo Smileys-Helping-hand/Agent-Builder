@@ -1,10 +1,5 @@
 node_modules/
 dist/
-release/
-.turbo/
-.vercel/
-.vscode/
-.idea/
 .env
 npm-debug.log*
 .DS_Store
@@ -14,5 +9,21 @@ dashboard/node_modules/
 dashboard/.env.local
 src-tauri/target/
 src-tauri/gen/
-electron/icon.png
 
+*.tsbuildinfo
+
+# Generated project workspaces (each is its own git repo)
+/builds/
+/projects/
+dashboard/out/
+src-tauri/binaries/
+
+# Built installers (large binaries; rebuild with npm run tauri:build)
+release/
+
+# Remote app build output and its native wrapper
+remote/node_modules/
+remote/.next/
+remote/out/
+remote/android/
+remote/.env*.local

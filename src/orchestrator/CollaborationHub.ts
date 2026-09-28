@@ -1,6 +1,34 @@
 import { EventEmitter } from "events";
 import { emitServerEvent } from "../server/eventBus.js";
+import type { StoryTimelineEvent } from "../models/NarrativeTypes.js";
+import type { SimulationEvent } from "./WorldSimulator.js";
 import type { BuildJobSnapshot } from "../models/BuildTypes.js";
+
+export type RobloxSyncStatus = "disconnected" | "connecting" | "connected" | "sync" | "playtest" | "error";
+
+export type RobloxSyncPayload = {
+  status: RobloxSyncStatus;
+  message: string;
+  path?: string;
+  metadata?: Record<string, unknown>;
+  timestamp: string;
+};
+
+export type CollaborationEvent =
+  | {
+      type: "roblox_sync";
+      payload: RobloxSyncPayload;
+    }
+  | {
+      type: "collaboration";
+      payload: {
+        sessionId: string;
+        message: string;
+        participants: CollaborationParticipant[];
+        timestamp: string;
+        context?: CollaborationRoomContext | null;
+      };
+    };
 
 export type CollaborationRoomContext = {
   summary: string;
@@ -9,6 +37,9 @@ export type CollaborationRoomContext = {
   lastCommand?: string;
   updatedAt: string;
 };
+
+export type StoryBroadcastListener = (event: StoryTimelineEvent) => void;
+export type SimulationListener = (event: SimulationEvent) => void;
 
 export type CollaborationParticipant = {
   id: string;
@@ -27,6 +58,8 @@ export type SessionSnapshot = {
   context?: CollaborationRoomContext | null;
 };
 
+type RobloxListener = (payload: RobloxSyncPayload) => void;
+
 export class CollaborationHub {
   private static instance: CollaborationHub | null = null;
   private readonly emitter = new EventEmitter();
@@ -40,6 +73,8 @@ export class CollaborationHub {
       updatedAt: Date;
     }
   >();
+  private readonly storyTimeline: StoryTimelineEvent[] = [];
+  private readonly simulationLog: SimulationEvent[] = [];
   private readonly contexts = new Map<string, CollaborationRoomContext>();
 
   static getInstance() {
@@ -47,6 +82,36 @@ export class CollaborationHub {
       this.instance = new CollaborationHub();
     }
     return this.instance;
+  }
+
+  broadcastRobloxSync(payload: Omit<RobloxSyncPayload, "timestamp"> & { timestamp?: string }) {
+    const enriched: RobloxSyncPayload = {
+      ...payload,
+      timestamp: payload.timestamp ?? new Date().toISOString()
+    };
+
+    emitServerEvent({ type: "roblox_sync", payload: enriched });
+    this.emitter.emit("roblox_sync", enriched);
+  }
+
+  broadcastStoryEvent(event: StoryTimelineEvent) {
+    this.storyTimeline.unshift(event);
+    if (this.storyTimeline.length > 200) {
+      this.storyTimeline.length = 200;
+    }
+
+    emitServerEvent({ type: "story", payload: event });
+    this.emitter.emit("story", event);
+  }
+
+  broadcastSimulation(event: SimulationEvent) {
+    this.simulationLog.unshift(event);
+    if (this.simulationLog.length > 200) {
+      this.simulationLog.length = 200;
+    }
+
+    emitServerEvent({ type: "simulation", payload: event });
+    this.emitter.emit("simulation", event);
   }
 
   broadcastCollaboration(sessionId: string, message: string) {
@@ -102,6 +167,27 @@ export class CollaborationHub {
     return [...this.sessions.values()].map((session) => this.toSnapshot(session));
   }
 
+  onRobloxSync(listener: RobloxListener) {
+    this.emitter.on("roblox_sync", listener);
+    return () => {
+      this.emitter.off("roblox_sync", listener);
+    };
+  }
+
+  onStoryEvent(listener: StoryBroadcastListener) {
+    this.emitter.on("story", listener);
+    return () => {
+      this.emitter.off("story", listener);
+    };
+  }
+
+  onSimulation(listener: SimulationListener) {
+    this.emitter.on("simulation", listener);
+    return () => {
+      this.emitter.off("simulation", listener);
+    };
+  }
+
   createSession(room: "default" | "sandbox" | "team" = "default") {
     const id = `${room}-${Math.random().toString(36).slice(2, 8)}`;
     const session = {
@@ -134,56 +220,62 @@ export class CollaborationHub {
       session.participants.push({ ...participant, socketId });
     }
     session.updatedAt = new Date();
-    this.broadcastCollaboration(sessionId, `${participant.name} joined the session`);
-    return this.toSnapshot(session);
+    this.broadcastCollaboration(session.id, `${participant.name} joined the session`);
+    return { participants: [...session.participants], snapshot: this.toSnapshot(session), id: session.id };
   }
 
-  leaveSession(sessionId: string, participantId: string) {
-    const session = this.ensureSession(sessionId);
-    session.participants = session.participants.filter((participant) => participant.id !== participantId);
+  updateCursor(sessionId: string, participantId: string, cursor: CollaborationParticipant["cursor"] | null) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    const participant = session.participants.find((member) => member.id === participantId);
+    if (!participant) return null;
+    participant.cursor = cursor ?? null;
     session.updatedAt = new Date();
-    this.broadcastCollaboration(sessionId, `${participantId} left the session`);
-    return this.toSnapshot(session);
+    return [...session.participants];
   }
 
-  updateFile(sessionId: string, filePath: string, content: string) {
-    const session = this.ensureSession(sessionId);
-    session.files.set(filePath, content);
+  recordDiff(sessionId: string, filePath: string, diff: string) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    session.files.set(filePath, diff);
     session.updatedAt = new Date();
+    const update = { sessionId, filePath, diff, timestamp: new Date().toISOString() };
     this.broadcastCollaboration(sessionId, `Updated ${filePath}`);
+    return update;
   }
 
-  readFile(sessionId: string, filePath: string) {
-    const session = this.ensureSession(sessionId);
-    return session.files.get(filePath) ?? "";
+  removeBySocket(socketId: string) {
+    const updates: { sessionId: string; participants: CollaborationParticipant[] }[] = [];
+    for (const session of this.sessions.values()) {
+      const before = session.participants.length;
+      session.participants = session.participants.filter((participant) => participant.socketId !== socketId);
+      if (session.participants.length !== before) {
+        updates.push({ sessionId: session.id, participants: [...session.participants] });
+        this.broadcastCollaboration(session.id, "Participant disconnected");
+      }
+    }
+    return updates;
   }
 
-  subscribe(listener: (event: { type: "collaboration"; payload: unknown }) => void) {
-    this.emitter.on("collaboration", listener);
-    return () => this.emitter.off("collaboration", listener);
+  snapshot(sessionId: string) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    return this.toSnapshot(session);
   }
 
   private ensureSession(sessionId: string) {
-    if (!this.sessions.has(sessionId)) {
-      this.createSession(sessionId as "default" | "sandbox" | "team");
+    let session = this.sessions.get(sessionId);
+    if (!session) {
+      session = {
+        id: sessionId,
+        room: "default",
+        participants: [],
+        files: new Map<string, string>(),
+        updatedAt: new Date()
+      };
+      this.sessions.set(sessionId, session);
     }
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    return this.sessions.get(sessionId)!;
-  }
-
-  private updateContext(sessionId: string, context: Partial<CollaborationRoomContext>) {
-    const existing = this.contexts.get(sessionId) ?? {
-      summary: "",
-      activeAgents: [],
-      updatedAt: new Date().toISOString()
-    };
-    const merged: CollaborationRoomContext = {
-      ...existing,
-      ...context,
-      updatedAt: new Date().toISOString()
-    };
-    this.contexts.set(sessionId, merged);
-    return merged;
+    return session;
   }
 
   private toSnapshot(session: {
@@ -201,5 +293,26 @@ export class CollaborationHub {
       updatedAt: session.updatedAt.toISOString(),
       context: this.contexts.get(session.id) ?? null
     };
+  }
+
+  private updateContext(sessionId: string, context: Partial<CollaborationRoomContext>) {
+    const existing = this.contexts.get(sessionId);
+    const merged: CollaborationRoomContext = {
+      summary: context.summary ?? existing?.summary ?? `Session ${sessionId}`,
+      repos: context.repos ?? existing?.repos,
+      activeAgents: context.activeAgents ?? existing?.activeAgents ?? [],
+      lastCommand: context.lastCommand ?? existing?.lastCommand,
+      updatedAt: new Date().toISOString()
+    };
+    this.contexts.set(sessionId, merged);
+    return merged;
+  }
+
+  getStoryTimeline(limit = 100): StoryTimelineEvent[] {
+    return this.storyTimeline.slice(0, limit);
+  }
+
+  getSimulationLog(limit = 100): SimulationEvent[] {
+    return this.simulationLog.slice(0, limit);
   }
 }

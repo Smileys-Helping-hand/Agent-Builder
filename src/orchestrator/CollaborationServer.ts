@@ -30,10 +30,17 @@ export class CollaborationServer {
     const port = Number(process.env.COLLAB_PORT ?? 35000);
 
     if (!server) {
-      server = http.createServer();
-      server.listen(port, () => {
+      const standalone = http.createServer();
+      // Collaboration is optional: a busy port (a second instance of the app on
+      // the same machine) must not bring the whole API down with an unhandled
+      // EADDRINUSE, so log it and carry on without the standalone listener.
+      standalone.on("error", (error: NodeJS.ErrnoException) => {
+        Logger.log("Collaboration server could not listen", { port, error: error.message });
+      });
+      standalone.listen(port, () => {
         Logger.log("Collaboration server listening", { port });
       });
+      server = standalone;
     }
 
     this.io = new SocketServer(server, {
