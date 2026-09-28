@@ -62,6 +62,13 @@ export default function Settings() {
       setKey(existing.key);
       setConnected(true);
     }
+    // A link with only the address (the "Connect" button) fills it in and
+    // waits for the key, which is never part of a public link.
+    if (fromLink.address && !fromLink.key) {
+      setAddress(fromLink.address);
+      setManual(true);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
   }, [toast]);
 
   const connectFromPaste = async () => {
@@ -188,7 +195,6 @@ export default function Settings() {
                     className="btn small"
                     onClick={() => {
                       setAddress("https://agent.savestate.co.za");
-                      if (!key) setKey("ab_7e788c69319f5d4fb24ee4bb33ff3c5df19fb3d0407b16b1479e02308716cad9");
                     }}
                   >
                     🌐 agent.savestate.co.za
@@ -197,18 +203,7 @@ export default function Settings() {
                     type="button"
                     className="btn small"
                     onClick={() => {
-                      setAddress("https://builder.savestate.co.za");
-                      if (!key) setKey("ab_7e788c69319f5d4fb24ee4bb33ff3c5df19fb3d0407b16b1479e02308716cad9");
-                    }}
-                  >
-                    🌐 builder.savestate.co.za
-                  </button>
-                  <button
-                    type="button"
-                    className="btn small"
-                    onClick={() => {
                       setAddress("http://127.0.0.1:4000");
-                      if (!key) setKey("ab_7e788c69319f5d4fb24ee4bb33ff3c5df19fb3d0407b16b1479e02308716cad9");
                     }}
                   >
                     💻 Localhost:4000

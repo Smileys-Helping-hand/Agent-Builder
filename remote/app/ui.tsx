@@ -113,16 +113,6 @@ export const Header = ({ title, sub, state }: { title: string; sub?: string; sta
 );
 
 export const NotConnected = () => {
-  const [connecting, setConnecting] = useState(false);
-  const handleQuickConnect = () => {
-    setConnecting(true);
-    saveConnection({
-      address: "https://agent.savestate.co.za",
-      key: "ab_7e788c69319f5d4fb24ee4bb33ff3c5df19fb3d0407b16b1479e02308716cad9"
-    });
-    window.location.reload();
-  };
-
   return (
     <>
       <Header title="Agent Builder" sub="Let's connect to your PC" />
@@ -134,9 +124,13 @@ export const NotConnected = () => {
             Connect to your PC directly over Cloudflare HTTPS tunnel or local address.
           </p>
           <div className="quick" style={{ marginTop: 14 }}>
-            <button className="primary" onClick={handleQuickConnect} disabled={connecting} style={{ fontWeight: 700, borderColor: "var(--accent)" }}>
-              {connecting ? "Connecting…" : "🚀 Connect to agent.savestate.co.za"}
-            </button>
+            {/* The address is public; the key never is. Scan the QR code from
+                Start Agent Builder, or paste the key on the next screen. */}
+            <Link href={`/settings/?address=${encodeURIComponent("https://agent.savestate.co.za")}`}>
+              <button className="primary" style={{ fontWeight: 700, borderColor: "var(--accent)" }}>
+                🚀 Connect to agent.savestate.co.za
+              </button>
+            </Link>
             <Link href="/settings">
               <button className="power">{Icon.scan} Settings &amp; Custom Key</button>
             </Link>
