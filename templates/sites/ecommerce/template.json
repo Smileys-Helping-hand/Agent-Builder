@@ -1,0 +1,6 @@
+{
+  "name": "E-Commerce Store",
+  "description": "An online shop with search, categories, product pages, a cart that remembers itself, delivery rules and checkout by payment link or EFT.",
+  "icon": "🛒",
+  "theme": "#15803d"
+}

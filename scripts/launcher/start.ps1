@@ -1,4 +1,4 @@
-# Start Agent Builder - everything, in one go.
+﻿# Start Agent Builder - everything, in one go.
 #
 # Starts the local model, the builder itself, and (unless told not to) a tunnel
 # so your phone can reach this machine from anywhere. Then prints a QR code that
@@ -29,6 +29,16 @@ $pidFile = Join-Path $dataDir "launcher-pids.json"
 $urlFile = Join-Path $dataDir "remote-url.txt"
 $tunnelLog = Join-Path $dataDir "tunnel.log"
 $apiLog = Join-Path $dataDir "api.log"
+$launcherLog = Join-Path $dataDir "launcher.log"
+
+# One line per thing the launcher did on its own, so "why was it down at 7pm"
+# has an answer. Kept short: the newest 500 lines.
+function Write-LauncherLog($text) {
+    $line = "{0}  {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $text
+    Add-Content -Path $launcherLog -Value $line -Encoding ascii
+    $lines = Get-Content $launcherLog -ErrorAction SilentlyContinue
+    if ($lines.Count -gt 500) { $lines | Select-Object -Last 500 | Set-Content $launcherLog -Encoding ascii }
+}
 
 $started = @{ api = $null; ollama = $null; tunnel = $null }
 
@@ -107,6 +117,27 @@ if ($tailscaleExe) {
 }
 
 # --- 2. the builder -----------------------------------------------------------
+# Bind beyond loopback when Tailscale is present: a tailnet address cannot
+# reach a server listening only on 127.0.0.1. Everything here needs an agent
+# key or a login regardless of which interface it is reached on.
+$bindHost = if ($tailscaleIp) { "0.0.0.0" } else { "127.0.0.1" }
+
+# Appends rather than overwrites, so a restart does not erase the reason for it.
+function Start-Api {
+    Add-Content -Path $apiLog -Value ("`n==== started {0} ====" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss")) -Encoding ascii
+    $process = Start-Process -FilePath "cmd.exe" `
+        -ArgumentList "/c set HOST=$bindHost&& npx tsx src/server/server.ts >> `"$apiLog`" 2>&1" `
+        -WorkingDirectory $repo -WindowStyle Hidden -PassThru
+    return $process.Id
+}
+
+function Stop-ApiProcesses {
+    if ($started.api) { Stop-Process -Id $started.api -Force -ErrorAction SilentlyContinue }
+    Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like "*src/server/server.ts*" } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+
 if (Test-Endpoint "http://127.0.0.1:4000/api/update/check") {
     Write-Good "Builder already running"
 } else {
@@ -126,14 +157,7 @@ if (Test-Endpoint "http://127.0.0.1:4000/api/update/check") {
     }
 
     Write-Step "Starting the builder..."
-    # Bind beyond loopback when Tailscale is present: a tailnet address cannot
-    # reach a server listening only on 127.0.0.1. Everything here needs an agent
-    # key or a login regardless of which interface it is reached on.
-    $bindHost = if ($tailscaleIp) { "0.0.0.0" } else { "127.0.0.1" }
-    $process = Start-Process -FilePath "cmd.exe" `
-        -ArgumentList "/c set HOST=$bindHost&& npx tsx src/server/server.ts > `"$apiLog`" 2>&1" `
-        -WorkingDirectory $repo -WindowStyle Hidden -PassThru
-    $started.api = $process.Id
+    $started.api = Start-Api
     if (Wait-For "http://127.0.0.1:4000/api/update/check" 90 "The builder") {
         Write-Good "Builder ready on http://127.0.0.1:4000"
         if ($restartRemoteDeskPath -and (Test-Path $restartRemoteDeskPath)) {
@@ -248,15 +272,74 @@ if ($Daemon) {
 }
 
 # --- 5. stay up until asked to stop -------------------------------------------
+# This used to stop everything the moment the builder exited, which is the
+# wrong thing for a machine left running while you are out: one crash and it
+# stayed down until someone was back at the PC. Now it brings the builder and
+# the model server back, waiting longer after each failure so a build that is
+# broken outright cannot spin in a tight loop.
+$ollamaExe = @(
+    "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe",
+    "C:\Program Files\Ollama\ollama.exe"
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+$backoff = @(5, 15, 30, 60, 120, 300)
+$apiFailures = 0
+$apiMisses = 0
+$ollamaMisses = 0
+$healthySince = Get-Date
+Write-LauncherLog "Launcher watching the builder and the model server"
+
 try {
     while ($true) {
-        Start-Sleep -Seconds 5
-        if ($started.api -and -not (Get-Process -Id $started.api -ErrorAction SilentlyContinue)) {
-            Write-Host "  The builder stopped unexpectedly. See $apiLog" -ForegroundColor Yellow
-            break
+        Start-Sleep -Seconds 15
+
+        # The builder: gone, or up but not answering for a minute.
+        $apiAlive = $started.api -and (Get-Process -Id $started.api -ErrorAction SilentlyContinue)
+        $apiAnswers = Test-Endpoint "http://127.0.0.1:4000/api/update/check" 5
+        if ($apiAnswers) { $apiMisses = 0 } else { $apiMisses++ }
+
+        if (-not $apiAnswers -and (-not $apiAlive -or $apiMisses -ge 4)) {
+            $wait = $backoff[[Math]::Min($apiFailures, $backoff.Count - 1)]
+            $why = if ($apiAlive) { "stopped answering" } else { "exited" }
+            Write-LauncherLog "Builder $why; restarting in ${wait}s (restart $($apiFailures + 1))"
+            if (-not $Quiet) { Write-Host "  The builder $why - restarting in $wait seconds." -ForegroundColor Yellow }
+            Stop-ApiProcesses
+            Start-Sleep -Seconds $wait
+            $started.api = Start-Api
+            $apiFailures++
+            $apiMisses = 0
+            $healthySince = Get-Date
+            if (Wait-For "http://127.0.0.1:4000/api/update/check" 90 "The builder") {
+                Write-LauncherLog "Builder back up"
+            } else {
+                Write-LauncherLog "Builder did not come back within 90s; will try again"
+            }
+            continue
+        }
+
+        # Ten healthy minutes clears the slate, so the next hiccup restarts fast.
+        if ($apiFailures -gt 0 -and ((Get-Date) - $healthySince).TotalMinutes -ge 10) {
+            $apiFailures = 0
+            Write-LauncherLog "Builder stable for 10 minutes"
+        }
+
+        # The model server: builds, repairs and research all need it.
+        if ($ollamaExe) {
+            if (Test-Endpoint "http://localhost:11434/api/tags" 5) {
+                $ollamaMisses = 0
+            } else {
+                $ollamaMisses++
+                if ($ollamaMisses -ge 2) {
+                    Write-LauncherLog "Model server not answering; starting it"
+                    $process = Start-Process -FilePath $ollamaExe -ArgumentList "serve" -WindowStyle Hidden -PassThru
+                    $started.ollama = $process.Id
+                    $ollamaMisses = 0
+                    if (Wait-For "http://localhost:11434/api/tags" 60 "The model server") { Write-LauncherLog "Model server back up" }
+                }
+            }
         }
     }
 } finally {
+    Write-LauncherLog "Launcher stopping everything it started"
     if (-not $Daemon) {
         if (-not $Quiet) { Write-Host "  Stopping..." -ForegroundColor Gray }
         foreach ($id in @($started.tunnel, $started.api, $started.ollama)) {

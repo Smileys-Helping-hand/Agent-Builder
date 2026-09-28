@@ -1,0 +1,82 @@
+/* The booking flow: service, day, time, details. */
+
+.service-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.team-card {
+  text-align: center;
+}
+
+.team-face {
+  display: grid;
+  place-items: center;
+  width: 84px;
+  height: 84px;
+  margin: 0 auto 12px;
+  border-radius: 50%;
+  font-size: 2.6rem;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--primary) 22%, var(--bg)), color-mix(in srgb, var(--accent) 22%, var(--bg)));
+}
+
+.booking-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 960px) {
+  .booking-steps {
+    grid-template-columns: 1fr;
+  }
+}
+
+.option-list {
+  display: grid;
+  gap: 8px;
+}
+
+.option,
+.day,
+.slot {
+  border: 1.5px solid color-mix(in srgb, var(--text) 14%, transparent);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: calc(var(--radius) * 0.7);
+  font: inherit;
+  cursor: pointer;
+}
+
+.option {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.day-list,
+.slot-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.day,
+.slot {
+  padding: 8px 12px;
+  font-size: 0.9rem;
+}
+
+.option-on {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, var(--bg));
+  font-weight: 700;
+}
+
+.policies {
+  margin-top: 28px;
+}

@@ -1,0 +1,6 @@
+{
+  "name": "SaaS Dashboard",
+  "description": "A product site plus a working dashboard: roles and permissions, revenue metrics with a chart, a searchable customer table, billing and team management.",
+  "icon": "📊",
+  "theme": "#4f46e5"
+}

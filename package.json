@@ -31,7 +31,8 @@
     "tauri:prepare": "node scripts/prepare-tauri.mjs",
     "test:research": "tsx scripts/research-smoketest.ts",
     "key:agent": "tsx scripts/mint-agent-key.ts",
-    "ecosystem:scan": "tsx scripts/scan-ecosystem.ts"
+    "ecosystem:scan": "tsx scripts/scan-ecosystem.ts",
+    "verify:templates": "tsx scripts/verify-templates.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
