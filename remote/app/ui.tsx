@@ -211,8 +211,14 @@ export const useConnected = (): boolean | null => {
       if (sso && ssoAddress) {
         window.history.replaceState({}, "", window.location.pathname + window.location.search);
         void signInFromHub(ssoAddress, sso).then((result) => {
-          hubSignInProblem = result.ok ? null : result.message;
-          setConnected(result.ok || Boolean(loadConnection()));
+          if (result.ok) {
+            // Every panel on the page asked for its data before the key
+            // existed and got "not connected"; start over, connected.
+            window.location.replace(window.location.pathname + window.location.search);
+            return;
+          }
+          hubSignInProblem = result.message;
+          setConnected(Boolean(loadConnection()));
         });
         return;
       }
