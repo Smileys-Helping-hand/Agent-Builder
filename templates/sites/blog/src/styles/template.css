@@ -1,0 +1,145 @@
+/* The blog's own pieces: post cards, the article, search, newsletter. */
+
+.blog-hero h1 {
+  max-width: 20ch;
+}
+
+.blog-tools {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 28px;
+}
+
+.search {
+  width: 100%;
+  max-width: 420px;
+  min-height: 46px;
+  padding: 10px 14px;
+  border-radius: calc(var(--radius) * 0.8);
+  border: 1.5px solid color-mix(in srgb, var(--text) 16%, transparent);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.tag {
+  border: 1.5px solid color-mix(in srgb, var(--text) 18%, transparent);
+  background: transparent;
+  color: var(--text);
+  padding: 5px 13px;
+  border-radius: 99px;
+  font: inherit;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.tag-on {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.post-list {
+  grid-template-columns: 1fr;
+  max-width: 860px;
+}
+
+.post-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 20px;
+  text-decoration: none;
+  transition: border-color 0.2s ease;
+}
+
+.post-card:hover {
+  border-color: var(--primary);
+}
+
+.post-card h3 {
+  font-size: 1.3rem;
+}
+
+.post-cover {
+  display: grid;
+  place-items: center;
+  width: 88px;
+  height: 88px;
+  border-radius: var(--radius);
+  font-size: 2.6rem;
+  background: color-mix(in srgb, var(--primary) 14%, var(--bg));
+}
+
+@media (max-width: 560px) {
+  .post-card {
+    grid-template-columns: 1fr;
+  }
+}
+
+.post-meta {
+  font-size: 0.88rem;
+  margin-bottom: 6px;
+}
+
+.article {
+  max-width: 720px;
+}
+
+.back {
+  display: inline-block;
+  margin-bottom: 24px;
+  text-decoration: none;
+}
+
+.prose {
+  font-size: 1.12rem;
+  line-height: 1.75;
+  margin-top: 28px;
+}
+
+.prose h2 {
+  font-size: 1.6rem;
+  margin-top: 1.6em;
+}
+
+.prose h3 {
+  margin-top: 1.4em;
+}
+
+.prose blockquote {
+  margin: 1.4em 0;
+  padding: 4px 0 4px 20px;
+  border-left: 4px solid var(--accent);
+  font-style: italic;
+}
+
+.prose code {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.9em;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.prose a {
+  color: var(--primary);
+}
+
+.related {
+  margin-top: 56px;
+  padding-top: 32px;
+  border-top: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.newsletter {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px;
+  align-items: center;
+}
+
+@media (max-width: 760px) {
+  .newsletter {
+    grid-template-columns: 1fr;
+  }
+}

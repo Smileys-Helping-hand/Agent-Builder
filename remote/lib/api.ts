@@ -770,6 +770,34 @@ export const api = {
   resumeTopic: (id: string) => request<unknown>(`/api/research/topics/${id}/resume`, { method: "POST" })
 };
 
+/**
+ * Swap a sign-in token from the ordering site's admin ("Open Agent Builder")
+ * for an agent key, and connect with it. The token works once; the PC checks it
+ * with the site before issuing anything.
+ */
+export const signInFromHub = async (address: string, token: string): Promise<{ ok: boolean; message: string }> => {
+  const base = address.trim().replace(/\/+$/, "");
+  if (!/^https:\/\//.test(base)) {
+    return { ok: false, message: "The sign-in link pointed at an address that is not https." };
+  }
+  try {
+    const response = await fetch(`${base}/api/auth/hub-sso`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+      signal: AbortSignal.timeout(25000)
+    });
+    const body = (await response.json().catch(() => ({}))) as { key?: string; admin?: string; error?: string };
+    if (!response.ok || !body.key) {
+      return { ok: false, message: body.error ?? `Your PC answered ${response.status}.` };
+    }
+    saveConnection({ address: base, key: body.key });
+    return { ok: true, message: `Signed in as ${body.admin ?? "admin"}.` };
+  } catch {
+    return { ok: false, message: "Could not reach your PC to sign in. Is it on, and is Agent Builder running?" };
+  }
+};
+
 export interface ConnectionReport {
   ok: boolean;
   message: string;
