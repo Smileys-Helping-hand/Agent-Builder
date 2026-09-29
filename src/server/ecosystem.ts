@@ -27,6 +27,7 @@ import { GitHubClient } from "../ecosystem/GitHubClient.js";
 import { GitLog } from "../ecosystem/GitLog.js";
 import { ProjectBuilds } from "../ecosystem/ProjectBuilds.js";
 import { ProjectDoctor } from "../ecosystem/ProjectDoctor.js";
+import { ProjectGit } from "../ecosystem/ProjectGit.js";
 import { ProjectScanner, projectRoots } from "../ecosystem/ProjectScanner.js";
 import { ResearchStore } from "../research/ResearchStore.js";
 import { Logger } from "../utils/Logger.js";
@@ -206,15 +207,28 @@ export const registerEcosystemRoutes = (app: Express) => {
     if (!project) return res.status(404).json({ error: "Unknown project." });
     const { action } = (req.body ?? {}) as { action?: "push" | "pull" };
 
+    // A push goes through ProjectGit, which confirms with GitHub that it landed.
+    if (action === "push") {
+      try {
+        const result = await ProjectGit.push(project.id, project.path, project.name);
+        void ProjectScanner.rescanProject(project.id);
+        return res.json({ success: true, ...result });
+      } catch (error) {
+        return res.status(502).json({ error: errorMessage(error) });
+      }
+    }
+
     try {
-      const gitCmd = action === "push" ? ["push"] : ["pull"];
-      const { stdout } = await execFileAsync("git", gitCmd, {
+      const { stdout } = await execFileAsync("git", ["pull"], {
         cwd: project.path,
         windowsHide: true,
-        env: { ...process.env, GITHUB_TOKEN: process.env.GITHUB_TOKEN, GH_TOKEN: process.env.GITHUB_TOKEN }
+        timeout: 180_000,
+        // Never wait on a password prompt: nobody is at the PC to answer it.
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" }
       });
-      EcosystemStore.recordEvent(project.id, action === "push" ? "push" : "pull", `Git ${action} executed`);
-      res.json({ success: true, message: stdout.trim() || `Git ${action} completed successfully.` });
+      const summary = stdout.trim() || "Already up to date.";
+      EcosystemStore.recordEvent(project.id, "pull", `Pulled from GitHub: ${summary.split("\n").slice(-1)[0]}`);
+      res.json({ success: true, message: summary });
     } catch (error) {
       res.status(500).json({ error: errorMessage(error) });
     }
@@ -277,6 +291,76 @@ export const registerEcosystemRoutes = (app: Express) => {
       res.json({ changes: await ProjectBuilds.changes(record), diff: await ProjectBuilds.diff(record) });
     } catch (error) {
       res.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  /** What a push would send right now — the commits and the branch — without sending it. */
+  app.get("/api/ecosystem/projects/:id/git/plan", authenticateAgent("read"), async (req: Request, res: Response) => {
+    const project = EcosystemStore.getProject(req.params.id);
+    if (!project) return res.status(404).json({ error: "Unknown project." });
+    try {
+      res.json(await ProjectGit.plan(project.path));
+    } catch (error) {
+      res.status(400).json({ error: errorMessage(error) });
+    }
+  });
+
+  /** Can this PC read from and push to the project's GitHub repository? A dry run; changes nothing. */
+  app.post("/api/ecosystem/projects/:id/git/check", authenticateAgent("read"), async (req: Request, res: Response) => {
+    const project = EcosystemStore.getProject(req.params.id);
+    if (!project) return res.status(404).json({ error: "Unknown project." });
+    try {
+      res.json(await ProjectGit.checkAccess(project.path));
+    } catch (error) {
+      res.status(400).json({ error: errorMessage(error) });
+    }
+  });
+
+  /** Run the project's checks on a build's copy, before applying it. Poll the builds list for the result. */
+  app.post("/api/ecosystem/project-builds/:buildId/test", authenticateAgent("execute"), (req: Request, res: Response) => {
+    const record = ProjectBuilds.get(req.params.buildId);
+    if (!record) return res.status(404).json({ error: "Unknown build." });
+    try {
+      res.status(202).json({ test: ProjectBuilds.startTest(record) });
+    } catch (error) {
+      res.status(409).json({ error: errorMessage(error) });
+    }
+  });
+
+  /**
+   * Commit only the files a build applied, and push if asked. The push is
+   * confirmed with GitHub before it is reported as done.
+   */
+  app.post("/api/ecosystem/project-builds/:buildId/commit", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const record = ProjectBuilds.get(req.params.buildId);
+    if (!record) return res.status(404).json({ error: "Unknown build." });
+    const { message, push } = (req.body ?? {}) as { message?: string; push?: boolean };
+    try {
+      const commit = await ProjectBuilds.commitApplied(record, message);
+      EcosystemStore.recordEvent(record.projectId, "commit", `Committed ${commit.files.length} file(s) from a build: ${commit.message} (${commit.hash.slice(0, 7)})`);
+      let pushed = null;
+      if (push) {
+        pushed = await ProjectGit.push(record.projectId, record.projectPath, record.projectName);
+        ProjectBuilds.recordPush(record.buildId, pushed);
+      }
+      void ProjectScanner.rescanProject(record.projectId);
+      res.json({ success: true, commit, push: pushed });
+    } catch (error) {
+      res.status(409).json({ error: errorMessage(error) });
+    }
+  });
+
+  /** Push the project after committing a build's changes, and remember it on the build. */
+  app.post("/api/ecosystem/project-builds/:buildId/push", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const record = ProjectBuilds.get(req.params.buildId);
+    if (!record) return res.status(404).json({ error: "Unknown build." });
+    try {
+      const pushed = await ProjectGit.push(record.projectId, record.projectPath, record.projectName);
+      ProjectBuilds.recordPush(record.buildId, pushed);
+      void ProjectScanner.rescanProject(record.projectId);
+      res.json({ success: true, ...pushed });
+    } catch (error) {
+      res.status(502).json({ error: errorMessage(error) });
     }
   });
 

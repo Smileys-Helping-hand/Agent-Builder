@@ -599,3 +599,47 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* ---------- Jarvis ---------- */
+
+.jarvis-hero { display: grid; gap: 6px; }
+
+.jarvis-link { width: 100%; max-width: 460px; margin: 0 auto; display: block; overflow: visible; }
+.jarvis-link .wire { fill: none; stroke: var(--line-strong); stroke-width: 2; stroke-dasharray: 5 6; }
+.jarvis-link .wire-live { stroke: var(--accent); opacity: 0.55; stroke-dasharray: none; }
+.jarvis-link .node { fill: var(--bg-raise); stroke: var(--line-strong); stroke-width: 2; }
+.jarvis-link .node-jarvis { stroke-width: 2.5; transition: stroke 0.4s var(--ease); }
+.jarvis-link .node-glyph { fill: var(--text); font-weight: 800; font-size: 17px; }
+.jarvis-link .node-label { fill: var(--muted); font-size: 13px; font-weight: 700; }
+.jarvis-link.mood-unset .node-jarvis { stroke-dasharray: 4 5; }
+
+.jarvis-link .pulse-ring { fill: none; stroke-width: 2; transform-box: fill-box; transform-origin: center; animation: jarvis-pulse 2.6s ease-out infinite; }
+.jarvis-link .pulse-ring-late { animation-delay: 1.3s; }
+.jarvis-link .orbit { animation: spin 3.2s linear infinite; }
+.jarvis-link .core-breathe { transform-box: fill-box; transform-origin: center; animation: jarvis-breathe 3s ease-in-out infinite; }
+.jarvis-link.mood-offline .node-jarvis { animation: jarvis-flicker 4s steps(1) infinite; }
+
+@keyframes jarvis-pulse { from { transform: scale(1); opacity: 0.7; } to { transform: scale(1.9); opacity: 0; } }
+@keyframes jarvis-breathe { 0%, 100% { transform: scale(0.85); opacity: 0.75; } 50% { transform: scale(1.05); opacity: 1; } }
+@keyframes jarvis-flicker { 0%, 88%, 100% { opacity: 1; } 90% { opacity: 0.4; } 94% { opacity: 0.8; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .jarvis-link .pulse-ring, .jarvis-link .orbit, .jarvis-link .core-breathe, .jarvis-link.mood-offline .node-jarvis { animation: none; }
+}
+
+.jarvis-lanes { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-top: 6px; }
+.jarvis-lane { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.035); border: 1px solid var(--line); }
+.jarvis-lane .pill { margin-top: 6px; }
+.jarvis-lane strong { display: block; font-size: 14px; }
+.jarvis-lane small { color: var(--muted); font-size: 12.8px; overflow-wrap: anywhere; }
+
+.secret { display: block; padding: 8px 10px; border-radius: 8px; background: rgba(0, 0, 0, 0.35); font-size: 12px; overflow-wrap: anywhere; user-select: all; }
+
+.jarvis-log { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 460px; overflow: auto; }
+.jarvis-log li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 4px; border-bottom: 1px solid var(--line); }
+.jarvis-log li:last-child { border-bottom: 0; }
+.jarvis-log .log-dir { width: 20px; flex: none; text-align: center; font-weight: 800; color: var(--accent); }
+.jarvis-log .log-body { display: grid; min-width: 0; }
+.jarvis-log .log-what { font-size: 13.5px; overflow-wrap: anywhere; }
+.jarvis-log small { color: var(--muted); font-size: 12px; }
+.jarvis-log .log-bad .log-dir, .jarvis-log .log-bad .log-what { color: var(--bad); }

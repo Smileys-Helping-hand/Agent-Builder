@@ -21,8 +21,11 @@ import fs from "fs";
 import path from "path";
 import { promisify } from "util";
 import { BuildService, buildEvents, type BuildRecord } from "../orchestrator/BuildService.js";
+import { Verifier } from "../orchestrator/Verifier.js";
+import { Workspace } from "../orchestrator/Workspace.js";
 import { Logger } from "../utils/Logger.js";
 import type { EcosystemProject } from "./EcosystemStore.js";
+import { gitError, type PushResult } from "./ProjectGit.js";
 
 const run = promisify(execFile);
 
@@ -61,6 +64,30 @@ export interface ProjectBuildRecord {
   /** How the build ended, kept here because the build service forgets on restart. */
   finalState?: "completed" | "stopped" | "error";
   finalQuality?: number;
+  /** The last time its checks were run on the copy, before applying. */
+  lastTest?: TestResult | null;
+  /** The commit made in the project from the files this build applied. */
+  commit?: { hash: string; branch: string; message: string; files: string[]; at: string } | null;
+  /** The last push of that commit, as GitHub confirmed it. */
+  push?: PushResult | null;
+}
+
+export interface TestCheck {
+  name: string;
+  applicable: boolean;
+  passed: boolean;
+  /** The end of the check's output, enough to see why it failed. */
+  output: string;
+}
+
+export interface TestResult {
+  state: "running" | "done" | "error";
+  startedAt: string;
+  finishedAt: string | null;
+  score: number | null;
+  passed: boolean;
+  checks: TestCheck[];
+  error?: string;
 }
 
 export interface FileChange {
@@ -313,6 +340,109 @@ export const ProjectBuilds = {
     saveRecord(updated);
     Logger.log("Project build applied", { buildId: record.buildId, project: record.projectName, ...result });
     return result;
+  },
+
+  /**
+   * Run the project's checks — install, typecheck, build, tests, lint — on the
+   * build's copy, so you know whether the change works before it goes anywhere
+   * near the project. Runs in the background; the result lands on the record.
+   *
+   * Nothing the checks write (node_modules, a refreshed lockfile, build output)
+   * can leak into Apply: Apply takes only what the build committed.
+   */
+  startTest(record: ProjectBuildRecord): TestResult {
+    if (BuildService.isRunning(record.buildId)) throw new Error("The build is still running. Test it once it has finished.");
+    if (!fs.existsSync(record.workDir)) throw new Error("The build's copy has been cleaned up, so there is nothing to test.");
+    if (record.lastTest?.state === "running") return record.lastTest;
+
+    const running: TestResult = { state: "running", startedAt: new Date().toISOString(), finishedAt: null, score: null, passed: false, checks: [] };
+    saveRecord({ ...record, lastTest: running });
+
+    void (async () => {
+      let result: TestResult;
+      try {
+        // The project's own tests only: never scaffold a test runner into someone's project.
+        const report = await Verifier.verify(new Workspace(record.workDir), { scaffoldTests: false });
+        result = {
+          state: "done",
+          startedAt: running.startedAt,
+          finishedAt: new Date().toISOString(),
+          score: report.score,
+          passed: report.checks.every((check) => !check.applicable || check.passed),
+          checks: report.checks.map((check) => ({
+            name: check.name,
+            applicable: check.applicable,
+            passed: check.passed,
+            output: check.output.split("\n").slice(-25).join("\n").slice(-4000)
+          }))
+        };
+      } catch (error) {
+        result = {
+          ...running,
+          state: "error",
+          finishedAt: new Date().toISOString(),
+          error: error instanceof Error ? error.message : String(error)
+        };
+      }
+      const latest = this.get(record.buildId);
+      if (latest) saveRecord({ ...latest, lastTest: result });
+      Logger.log("Project build tested", { buildId: record.buildId, project: record.projectName, score: result.score, passed: result.passed });
+    })();
+
+    return running;
+  },
+
+  /**
+   * Commit the files this build wrote into the project — and only those. Your
+   * other edits in the project, staged or not, stay exactly as they were.
+   */
+  async commitApplied(record: ProjectBuildRecord, message?: string): Promise<NonNullable<ProjectBuildRecord["commit"]>> {
+    const files = record.lastApply?.applied ?? [];
+    if (files.length === 0) throw new Error("This build has not written anything into the project yet. Apply it first.");
+    if (!(await isGitRepo(record.projectPath))) throw new Error(`${record.projectName} is not a git repository, so there is nothing to commit to.`);
+
+    // Only paths that still differ from the last commit; an applied file you
+    // have since changed back, or already committed, is simply not included.
+    // --no-renames: a rename entry carries a second path, which would parse as a bogus file.
+    const pending = (await git(record.projectPath, ["status", "--porcelain", "-z", "--no-renames", "--untracked-files=all", "--", ...files]))
+      .split("\0")
+      .filter(Boolean)
+      .map((entry) => entry.slice(3));
+    if (pending.length === 0) throw new Error("Those files are already committed, or match the last commit; there is nothing new to commit.");
+
+    const subject = (message?.trim() || record.instruction).replace(/\s+/g, " ").slice(0, 72);
+    const body = `${subject}\n\nMade with Agent Builder (build ${record.buildId}).`;
+    try {
+      await git(record.projectPath, ["add", "-A", "--", ...pending]);
+      // With paths given, git commits only those paths, whatever else is staged.
+      await git(record.projectPath, ["commit", "-m", body, "--", ...pending]);
+    } catch (error) {
+      const detail = gitError(error);
+      if (/Please tell me who you are|user\.email|empty ident/i.test(detail)) {
+        // No git identity on this PC; commit as Agent Builder rather than fail.
+        await git(record.projectPath, ["commit", "-m", body, "--", ...pending], GIT_ENV);
+      } else {
+        throw new Error(detail);
+      }
+    }
+
+    const commit = {
+      hash: (await git(record.projectPath, ["rev-parse", "HEAD"])).trim(),
+      branch: (await git(record.projectPath, ["rev-parse", "--abbrev-ref", "HEAD"])).trim(),
+      message: subject,
+      files: pending,
+      at: new Date().toISOString()
+    };
+    const latest = this.get(record.buildId) ?? record;
+    saveRecord({ ...latest, commit });
+    Logger.log("Project build committed", { buildId: record.buildId, project: record.projectName, commit: commit.hash, files: pending.length });
+    return commit;
+  },
+
+  /** Remember a push against the build it came from, so its card can show it. */
+  recordPush(buildId: string, push: PushResult): void {
+    const latest = this.get(buildId);
+    if (latest) saveRecord({ ...latest, push });
   },
 
   async fileAt(record: ProjectBuildRecord, commit: string, file: string): Promise<Buffer | null> {

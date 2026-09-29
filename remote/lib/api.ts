@@ -314,6 +314,62 @@ export interface ProjectBuild {
   qualityScore: number | null;
   iterations: number | null;
   changes: FileChange[];
+  /** The project's checks, run on the build's copy before applying. */
+  lastTest?: BuildTest | null;
+  /** The commit made from exactly the files this build applied. */
+  commit?: { hash: string; branch: string; message: string; files: string[]; at: string } | null;
+  /** The last push of that work, as the remote confirmed it. */
+  push?: PushResult | null;
+}
+
+export interface BuildTest {
+  state: "running" | "done" | "error";
+  startedAt: string;
+  finishedAt: string | null;
+  score: number | null;
+  passed: boolean;
+  checks: Array<{ name: string; applicable: boolean; passed: boolean; output: string }>;
+  error?: string;
+}
+
+export interface PendingCommit {
+  hash: string;
+  subject: string;
+}
+
+export interface PushPlan {
+  branch: string;
+  remote: string | null;
+  remoteUrl: string | null;
+  webUrl: string | null;
+  isGitHub: boolean;
+  hasUpstream: boolean;
+  commits: PendingCommit[];
+  uncommitted: number;
+}
+
+export interface PushResult {
+  pushed: boolean;
+  /** The remote now points the branch at the local commit. */
+  confirmed: boolean;
+  branch: string;
+  commit: string | null;
+  commits: PendingCommit[];
+  commitUrl: string | null;
+  message: string;
+  at: string;
+}
+
+export interface AccessCheck {
+  remote: string | null;
+  remoteUrl: string | null;
+  webUrl: string | null;
+  isGitHub: boolean;
+  branch: string | null;
+  canRead: boolean;
+  canPush: boolean;
+  behind: boolean;
+  detail: string;
 }
 
 export interface FileChange {
@@ -392,6 +448,36 @@ export interface PipelineStatus {
   lastIntakeAt: string | null;
   lastIntakeCount: number;
   counts: Record<OrderStatus, number>;
+}
+
+export interface JarvisActivity {
+  id: number;
+  at: string;
+  /** "in": Jarvis did something here. "out": we told Jarvis something. */
+  direction: "in" | "out";
+  agent: string;
+  method: string;
+  path: string;
+  status: number;
+  ms: number | null;
+  summary: string | null;
+}
+
+export interface JarvisOverview {
+  outbound: JarvisStatus & {
+    reachability: { host: string; reachable: boolean; status: number | null; detail: string } | null;
+  };
+  inbound: {
+    hasAccess: boolean;
+    scopes: string[];
+    keyCreatedAt: string | null;
+    lastSeen: string | null;
+    requestsLastWindow: number;
+    monitoring: boolean;
+    windowMinutes: number;
+  };
+  config: { host: string | null; apiKeySet: boolean; apiKeyHint: string | null; ownerId: string | null };
+  activity: JarvisActivity[];
 }
 
 export interface JarvisStatus {
@@ -492,10 +578,29 @@ export const api = {
       body: JSON.stringify({ message })
     }),
   gitSync: (id: string, action: "push" | "pull") =>
-    request<{ success: boolean; message: string }>(`/api/ecosystem/projects/${id}/git/sync`, {
-      method: "POST",
-      body: JSON.stringify({ action })
-    }),
+    request<{ success: boolean; message: string } & Partial<PushResult>>(
+      `/api/ecosystem/projects/${id}/git/sync`,
+      { method: "POST", body: JSON.stringify({ action }) },
+      200000
+    ),
+  /** What a push would send right now, without sending it. */
+  gitPlan: (id: string) => request<PushPlan>(`/api/ecosystem/projects/${id}/git/plan`, {}, 60000),
+  /** Can this PC push to the project's GitHub? A dry run; changes nothing. */
+  gitCheck: (id: string) => request<AccessCheck>(`/api/ecosystem/projects/${id}/git/check`, { method: "POST" }, 200000),
+  testProjectBuild: (buildId: string) =>
+    request<{ test: BuildTest }>(`/api/ecosystem/project-builds/${encodeURIComponent(buildId)}/test`, { method: "POST" }),
+  commitProjectBuild: (buildId: string, options: { message?: string; push?: boolean } = {}) =>
+    request<{ success: boolean; commit: NonNullable<ProjectBuild["commit"]>; push: PushResult | null }>(
+      `/api/ecosystem/project-builds/${encodeURIComponent(buildId)}/commit`,
+      { method: "POST", body: JSON.stringify(options) },
+      200000
+    ),
+  pushProjectBuild: (buildId: string) =>
+    request<{ success: boolean } & PushResult>(
+      `/api/ecosystem/project-builds/${encodeURIComponent(buildId)}/push`,
+      { method: "POST" },
+      200000
+    ),
   instructProject: (id: string, instruction: string) =>
     request<{ success: boolean; buildId: string; message: string }>(
       `/api/ecosystem/projects/${id}/instruct`,
@@ -679,6 +784,17 @@ export const api = {
 
   // --- Jarvis ---
   jarvis: () => request<JarvisStatus>("/api/jarvis/status"),
+  /** Both directions of the link, whether he is watching, his access, and the log. */
+  jarvisOverview: (limit = 100) => request<JarvisOverview>(`/api/jarvis/overview?limit=${limit}`, {}, 30000),
+  saveJarvisConfig: (config: { host?: string; apiKey?: string; ownerId?: string }) =>
+    request<{ success: boolean; config: JarvisOverview["config"] }>("/api/jarvis/config", {
+      method: "POST",
+      body: JSON.stringify(config)
+    }),
+  /** Issue Jarvis a new full-access key. Shown once; replaces the old one. */
+  grantJarvisAccess: () =>
+    request<{ key: string; scopes: string[]; builderAddress: string | null; howTo: string }>("/api/jarvis/access", { method: "POST" }),
+  revokeJarvisAccess: () => request<{ success: boolean; revoked: boolean }>("/api/jarvis/access", { method: "DELETE" }),
   testJarvis: () =>
     request<{ ok: boolean; detail: string; connection: JarvisStatus }>("/api/jarvis/test", { method: "POST" }, 45000),
   sendHandoff: () => request<{ ok: boolean; detail: string }>("/api/jarvis/handoff", { method: "POST" }, 60000),
