@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 
 import "./globals.css";
+import { ActivityProvider } from "./activity";
 import { Nav } from "./nav";
 import { ToastHost } from "./ui";
 
@@ -23,8 +24,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
-        <ToastHost>{children}</ToastHost>
-        <Nav />
+        <ToastHost>
+          <ActivityProvider>
+            {children}
+            <Nav />
+          </ActivityProvider>
+        </ToastHost>
         <script
           // Registers the offline shell. Inline and tiny so it costs nothing and
           // cannot fail the page if the worker is unavailable.

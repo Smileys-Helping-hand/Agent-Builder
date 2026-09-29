@@ -4,11 +4,11 @@
  * Carrying on with projects from the app: cloning one from GitHub, and the
  * builds that work on a copy of a project until you apply what they did.
  */
+import Link from "next/link";
 import { useState } from "react";
 
 import { api, type AccessCheck, type ProjectBuild, type PushPlan } from "@/lib/api";
 import { Busy, Icon, ago, useRemote, useToast } from "../ui";
-import { BuildLive } from "../build-live";
 
 const STATE_LABEL: Record<ProjectBuild["state"], string> = {
   running: "Working",
@@ -16,7 +16,8 @@ const STATE_LABEL: Record<ProjectBuild["state"], string> = {
   completed: "Finished",
   ended: "Ended",
   stopped: "Stopped",
-  error: "Failed"
+  error: "Failed",
+  interrupted: "Interrupted"
 };
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -210,8 +211,15 @@ export function ProjectBuildList({ projectId, refreshKey = 0 }: { projectId: str
                 {ago(build.createdAt)} · {build.changes.length} file(s) changed
                 {running ? " · working on a copy; the project is untouched" : ""}
               </small>
+              <Link href={`/build/?id=${encodeURIComponent(build.buildId)}`} className="follow-link">
+                {running ? "Follow it live — its thinking, checks and files →" : "See how it went →"}
+              </Link>
+              {build.lastApply?.conflicts.length ? (
+                <small style={{ color: "var(--warn)", display: "block", marginTop: 4 }}>
+                  Not applied (you had changed them): {build.lastApply.conflicts.join(", ")}
+                </small>
+              ) : null}
 
-              {running ? <BuildLive buildId={build.buildId} /> : null}
 
               <div className="chips" style={{ marginTop: 8 }}>
                 <Step

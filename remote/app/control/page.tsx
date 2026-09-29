@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { api, type Problem, type ServiceReport, type CleanupReport } from "@/lib/api";
+import { STAGE_LABEL } from "../build/parts";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
 
 /**
@@ -785,9 +786,11 @@ export default function Control() {
                 <div style={{ display: "flex", gap: 11, alignItems: "flex-start" }}>
                   <span className={`pill ${build.state === "paused" ? "degraded" : "up"}`} style={{ marginTop: 7 }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <strong style={{ fontSize: 15 }}>{build.projectName}</strong>
+                    <Link href={`/build/?id=${encodeURIComponent(build.buildId)}`}>
+                      <strong style={{ fontSize: 15 }}>{build.projectName} →</strong>
+                    </Link>
                     <small style={{ color: "var(--muted)", display: "block", marginTop: 3 }}>
-                      Pass {build.iterations || 1} · {build.stage} · quality {Math.round(build.qualityScore)}
+                      Pass {build.iterations || 1} · {STAGE_LABEL[build.stage ?? "starting"] ?? build.stage} · quality {Math.round(build.qualityScore)}
                       {build.orderId ? " · for a customer order" : ""}
                     </small>
                     <div className="btn-row" style={{ marginTop: 10 }}>

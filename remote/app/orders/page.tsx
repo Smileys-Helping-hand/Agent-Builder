@@ -1,11 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import { api, type Order, type OrderStatus } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
+import { BuildProgress, STAGE_LABEL } from "../build/parts";
 import { TemplateStudio } from "./templates";
-import { BuildLive, BuildPreview } from "../build-live";
+import { PreviewPane } from "../preview";
 
 /**
  * What each state means, in the customer's terms rather than the code's.
@@ -277,15 +279,23 @@ export default function Orders() {
                           ) : null}
                         </div>
 
-                        {building && order.buildId ? (
-                          <BuildLive buildId={order.buildId} initial={order.build ?? null} />
+                        {building && order.build?.live ? <BuildProgress build={order.build} compact /> : null}
+                        {order.build ? (
+                          <Link
+                            href={`/build/?id=${encodeURIComponent(order.build.buildId)}`}
+                            style={{ color: "var(--accent)", display: "block", marginTop: 8, fontSize: 13 }}
+                          >
+                            {building
+                              ? `Pass ${order.build.iterations || 1} · ${STAGE_LABEL[order.build.stage ?? "starting"] ?? order.build.stage} — follow the build →`
+                              : "See how the build went →"}
+                          </Link>
                         ) : null}
 
                         {/* Finished work can be looked at right here, not only downloaded. */}
                         {!building && order.buildId && ["review", "delivered", "maintained"].includes(order.status) ? (
                           <details style={{ marginTop: 10 }}>
                             <summary style={{ cursor: "pointer", fontWeight: 600 }}>Preview what was built</summary>
-                            <BuildPreview buildId={order.buildId} live={false} />
+                            <PreviewPane kind="build" id={order.buildId} height={460} title={`${order.title} preview`} />
                           </details>
                         ) : null}
 

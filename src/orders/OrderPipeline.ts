@@ -473,13 +473,22 @@ export const OrderPipeline = {
     if (started) return;
     started = true;
 
+    // A restart ends every build that was in flight. An order still marked
+    // "building" would otherwise wait for a build that no longer exists, and
+    // never be picked up again: put it back in the queue.
+    for (const order of OrderStore.list({ status: "building" })) {
+      if (order.buildId && BuildService.isRunning(order.buildId)) continue;
+      OrderStore.note(order.id, "building", "The builder restarted while this was building. It is back in the queue.");
+      OrderStore.update(order.id, { status: "accepted", buildId: null });
+    }
+
     // Every pass of a customer's build tells the site how far along it is, so
     // the admin sees movement rather than one flat "Building" for an hour.
     buildEvents.on("iteration", (record: BuildRecord) => {
       if (!record.orderId) return;
       const order = OrderStore.get(record.orderId);
       if (!order?.externalId) return;
-      const target = BuildService.view(record.buildId)?.progress?.target ?? 92;
+      const target = record.qualityThreshold || 92;
       void SiteClient.reportProgress(order.externalId, {
         status: "building",
         message: `Pass ${record.iterations} done: quality ${Math.round(record.qualityScore)} of a target ${target}`,

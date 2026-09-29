@@ -9,8 +9,9 @@
 import { useState } from "react";
 
 import { api, type Template, type TemplateKind } from "@/lib/api";
+import { PreviewPane } from "../preview";
 import { ProjectBuildList } from "../projects/carry-on";
-import { Banner, Busy, Icon, Skeleton, useRemote, useToast } from "../ui";
+import { Banner, Busy, Icon, Skeleton, usePersistentState, useRemote, useToast } from "../ui";
 
 const KINDS: Array<{ id: TemplateKind; label: string }> = [
   { id: "website", label: "Website" },
@@ -117,12 +118,11 @@ export function TemplateStudio({ publishedNote }: { publishedNote?: string | nul
   const projects = useRemote(() => api.projects(), 0);
   const [panel, setPanel] = useState<Panel | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [device, setDevice] = useState<"phone" | "desktop">("desktop");
+  // Which template the preview shows. Clicking a card picks it; kept across refreshes.
+  const [selectedId, setSelectedId] = usePersistentState<string | null>("template-selected", null);
 
   const all = templates.data?.all ?? [];
-  // Whatever you last picked, or the first one: there is always something in the pane.
-  const selected = all.find((t) => t.id === selectedId) ?? all[0] ?? null;
+  const selected = all.find((t) => t.id === selectedId) ?? all.find((t) => !t.hidden && t.sourcePath) ?? all[0] ?? null;
   const shown = all.filter((t) => !t.hidden).length;
 
   const run = async (key: string, ok: string, work: () => Promise<unknown>) => {
@@ -186,65 +186,58 @@ export function TemplateStudio({ publishedNote }: { publishedNote?: string | nul
       {templates.error ? <Banner kind="error">{templates.error}</Banner> : null}
       {templates.loading ? <Skeleton rows={3} /> : null}
 
-      <div className="template-studio">
-      {/* The live preview of whichever template is picked. */}
-      {selected ? (
-        <aside className="template-pane">
-          <div className="preview-bar">
-            <strong style={{ fontSize: 14 }}>
-              {selected.icon} {selected.name}
-            </strong>
-            <span className="chips">
-              <button className={`chip ${device === "phone" ? "accent" : ""}`} onClick={() => setDevice("phone")}>
-                Phone
+      <div className="studio">
+        {selected ? (
+          <div className="studio-preview card">
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", marginBottom: 10 }}>
+              <div style={{ minWidth: 0 }}>
+                <div className="hero-label">Previewing</div>
+                <strong style={{ fontSize: 17 }}>
+                  {selected.icon} {selected.name}
+                </strong>
+                <p className="muted small" style={{ margin: "4px 0 0" }}>
+                  {selected.price ? `From R${selected.price.toLocaleString("en-ZA")}` : "No price"}
+                  {selected.timeframe ? ` · ${selected.timeframe}` : ""}
+                  {selected.techStack?.length ? ` · ${selected.techStack.join(", ")}` : ""}
+                </p>
+              </div>
+              <button className="btn small primary" onClick={() => setPanel({ kind: "customer", template: selected, customerName: "", brief: "" })}>
+                {Icon.sparkle} Build for a customer
               </button>
-              <button className={`chip ${device === "desktop" ? "accent" : ""}`} onClick={() => setDevice("desktop")}>
-                Desktop
-              </button>
-              {selected.previewUrl ? (
-                <a className="chip" href={selected.previewUrl} target="_blank" rel="noreferrer">
-                  Open ↗
-                </a>
-              ) : null}
-              <a className="chip" href={`https://arpcloudsolutions.co.za/templates/${selected.id}`} target="_blank" rel="noreferrer">
-                On the site ↗
-              </a>
-            </span>
+            </div>
+            <PreviewPane kind="template" id={selected.id} height={520} title={`${selected.name} preview`} />
+            {selected.features.length ? (
+              <div className="chips" style={{ marginTop: 10 }}>
+                {selected.features.slice(0, 8).map((feature) => (
+                  <span key={feature} className="chip">
+                    {feature}
+                  </span>
+                ))}
+              </div>
+            ) : null}
           </div>
-          {selected.previewUrl ? (
-            <div className="preview-frame-wrap">
-              <iframe
-                key={`${selected.id}-${device}`}
-                src={selected.previewUrl}
-                title={`${selected.name}, live preview`}
-                className={`preview-frame ${device}`}
-                sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-              />
-            </div>
-          ) : (
-            <div className="preview-empty" style={{ margin: 10 }}>
-              No preview for this one yet. Templates with code get one when the previews are published (templates/sites/build-previews.mjs).
-            </div>
-          )}
-        </aside>
-      ) : null}
+        ) : null}
 
-      <div className="template-list">
+      <div className="studio-list">
         {all.map((t) => (
           <div
             key={t.id}
-            className={`card template-card ${selected?.id === t.id ? "picked" : ""}`}
-            style={{ margin: 0, display: "flex", flexDirection: "column", gap: 8, opacity: t.hidden ? 0.55 : 1 }}
-            onClick={(event) => {
-              // Picking a card previews it; its own buttons still do their own thing.
-              if (!(event.target as HTMLElement).closest("button, a")) setSelectedId(t.id);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && event.target === event.currentTarget) setSelectedId(t.id);
-            }}
+            className={`card template-card ${selected?.id === t.id ? "selected" : ""}`}
             role="button"
             tabIndex={0}
             aria-pressed={selected?.id === t.id}
+            onClick={(event) => {
+              // Buttons inside the card do their own thing; anywhere else picks it for the preview.
+              if ((event.target as HTMLElement).closest("button, a")) return;
+              setSelectedId(t.id);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                setSelectedId(t.id);
+              }
+            }}
+            style={{ margin: 0, display: "flex", flexDirection: "column", gap: 8, opacity: t.hidden ? 0.55 : 1 }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
               <strong style={{ fontSize: 15 }}>

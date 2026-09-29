@@ -9,6 +9,8 @@
  * is no server here to leak anything.
  */
 
+import { clearCache } from "./store";
+
 const ADDRESS_KEY = "agent-builder.address";
 const SECRET_KEY = "agent-builder.key";
 
@@ -37,6 +39,7 @@ export const saveConnection = (connection: Connection): void => {
 export const clearConnection = (): void => {
   window.localStorage.removeItem(ADDRESS_KEY);
   window.localStorage.removeItem(SECRET_KEY);
+  clearCache();
 };
 
 export class ApiError extends Error {
@@ -71,7 +74,7 @@ const request = async <T>(path: string, init: RequestInit = {}, timeoutMs = 4500
     }
     if (isHttps && isHttpAddr) {
       throw new ApiError(
-        "Mixed Content Block: This app is served over HTTPS, but your machine address is unencrypted HTTP. Mobile & outside Wi-Fi browsers block insecure HTTP requests. Connect via your Cloudflare HTTPS Tunnel address (https://...trycloudflare.com).",
+        "This app is on https, but your machine's address is plain http, so the browser blocks it. Use the https address (agent.savestate.co.za or a tunnel) in Settings, or open the app on the PC at http://127.0.0.1:4000.",
         0
       );
     }
@@ -252,12 +255,25 @@ export interface BuildGuidance {
   appliedAtIteration: number | null;
 }
 
+export interface BuildCheck {
+  name: string;
+  applicable: boolean;
+  passed: boolean;
+  durationMs: number;
+}
+
 export interface BuildIterationDetail {
   iteration: number;
+  at?: string;
   qualityScore: number;
   objectiveScore: number;
   status: string;
   improvements: string[];
+  files?: number;
+  passed?: boolean;
+  checks?: BuildCheck[];
+  /** The first check that failed, with the end of its output. */
+  blocker?: { name: string; output: string } | null;
   metrics: {
     completeness: number;
     security: number;
@@ -267,13 +283,31 @@ export interface BuildIterationDetail {
   };
 }
 
+export interface BuildEvent {
+  at: string;
+  kind: "start" | "pass" | "stage" | "repair" | "score" | "guidance" | "lesson" | "package" | "control" | "warn" | "error" | "done";
+  message: string;
+}
+
+export interface BuildThought {
+  at: string;
+  iteration: number;
+  kind: "plan" | "lesson" | "check" | "critique" | "repair" | "review" | "decision";
+  title: string;
+  text: string;
+  files?: string[];
+}
+
+export type BuildState = "running" | "paused" | "completed" | "stopped" | "error" | "interrupted";
+export type BuildProfile = "fast" | "balanced" | "deep";
+
 export interface Build {
   buildId: string;
   projectName: string;
   description: string;
   startedAt: string;
   finishedAt: string | null;
-  state: "running" | "paused" | "completed" | "stopped" | "error";
+  state: BuildState;
   iterations: number;
   qualityScore: number;
   outputDir: string;
@@ -281,31 +315,29 @@ export interface Build {
   /** Set when this build is serving a customer order. */
   orderId: string | null;
   error?: string;
+  /** Held in memory by the builder right now — running or paused. */
   live: boolean;
-  /** What the current iteration is doing right now. */
-  stage?: string;
+  /** What the current pass is doing right now. */
+  stage?: string | null;
+  repairAttempt?: number | null;
+  /** When the current stage and pass began. */
+  stageSince?: string | null;
+  passSince?: string | null;
   guidance: BuildGuidance[];
   iterationDetail: BuildIterationDetail[];
-  /** Live detail: stage, bars, checks, the model's answer as it is written, the log. */
-  progress?: BuildProgress | null;
-}
-
-export type StageId = "starting" | "writing" | "checking" | "fixing" | "scoring" | "improving" | "finished";
-
-export interface BuildProgress {
-  pass: number;
-  maxPasses: number;
-  target: number;
-  stage: StageId;
-  stageLabel: string;
-  stageStartedAt: string | null;
-  passStartedAt: string | null;
-  passPercent: number;
-  passEtaSeconds: number | null;
-  qualityPercent: number;
-  checks: Partial<Record<string, "running" | "passed" | "failed" | "skipped">>;
-  thinking: { phase: string; model: string; tail: string; chars: number; tokensPerSecond: number; done: boolean; at: string } | null;
-  log: Array<{ at: string; text: string; kind: "info" | "good" | "bad" | "model" }>;
+  // Present on builders from this version on; older ones leave them out.
+  profile?: BuildProfile;
+  qualityThreshold?: number;
+  maxIterations?: number;
+  continuedFrom?: string | null;
+  /** Every applicable check passed on the best pass. Null until a pass finishes. */
+  passed?: boolean | null;
+  bestScore?: number;
+  outcome?: string | null;
+  events?: BuildEvent[];
+  /** The live feed of what it is thinking. Only on a single build; lists carry thoughtCount. */
+  thoughts?: BuildThought[];
+  thoughtCount?: number;
 }
 
 export type OrderStatus =
@@ -330,7 +362,7 @@ export interface ProjectBuild {
   appliedAt: string | null;
   lastApply: ApplyResult | null;
   /** "ended": finished before the builder last restarted, outcome not recorded. */
-  state: "running" | "paused" | "completed" | "stopped" | "error" | "ended";
+  state: "running" | "paused" | "completed" | "stopped" | "error" | "interrupted" | "ended";
   qualityScore: number | null;
   iterations: number | null;
   changes: FileChange[];
@@ -340,56 +372,6 @@ export interface ProjectBuild {
   commit?: { hash: string; branch: string; message: string; files: string[]; at: string } | null;
   /** The last push of that work, as the remote confirmed it. */
   push?: PushResult | null;
-}
-
-export interface BuildTest {
-  state: "running" | "done" | "error";
-  startedAt: string;
-  finishedAt: string | null;
-  score: number | null;
-  passed: boolean;
-  checks: Array<{ name: string; applicable: boolean; passed: boolean; output: string }>;
-  error?: string;
-}
-
-export interface PendingCommit {
-  hash: string;
-  subject: string;
-}
-
-export interface PushPlan {
-  branch: string;
-  remote: string | null;
-  remoteUrl: string | null;
-  webUrl: string | null;
-  isGitHub: boolean;
-  hasUpstream: boolean;
-  commits: PendingCommit[];
-  uncommitted: number;
-}
-
-export interface PushResult {
-  pushed: boolean;
-  /** The remote now points the branch at the local commit. */
-  confirmed: boolean;
-  branch: string;
-  commit: string | null;
-  commits: PendingCommit[];
-  commitUrl: string | null;
-  message: string;
-  at: string;
-}
-
-export interface AccessCheck {
-  remote: string | null;
-  remoteUrl: string | null;
-  webUrl: string | null;
-  isGitHub: boolean;
-  branch: string | null;
-  canRead: boolean;
-  canPush: boolean;
-  behind: boolean;
-  detail: string;
 }
 
 export interface FileChange {
@@ -470,6 +452,82 @@ export interface PipelineStatus {
   counts: Record<OrderStatus, number>;
 }
 
+export interface JarvisStatus {
+  configured: boolean;
+  url: string | null;
+  owner: string | null;
+  queued: number;
+  last: { at: string; ok: boolean; detail: string } | null;
+}
+
+export interface Topic {
+  id: string;
+  title: string;
+  question: string;
+  status: string;
+  findingCount: number;
+  sourceCount: number;
+  corroboratedCount: number;
+  documentCount: number;
+  openQuestionCount: number;
+}
+
+/** The app's own address when a builder is serving it (http://127.0.0.1:4000, a tunnel, a tailnet). */
+export const servedByBuilder = async (): Promise<string | null> => {
+  if (typeof window === "undefined") return null;
+  const origin = window.location.origin;
+  try {
+    const response = await fetch(`${origin}/api/update/check`, { signal: AbortSignal.timeout(4000) });
+    const type = response.headers.get("content-type") ?? "";
+    return response.ok && type.includes("json") ? origin : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Where a live preview is served, from the builder. `url` is a path on the builder. */
+export interface PreviewInfo {
+  kind: "template" | "build";
+  id: string;
+  ready: boolean;
+  url: string | null;
+  reason: string | null;
+  preparing?: boolean;
+  failed?: boolean;
+  /** Changes when the built site changes, so the pane knows to reload. */
+  version?: number | null;
+  /** A template's published example, when it has one. */
+  hosted?: string | null;
+}
+
+/** A path on the builder as a full address this device can load. */
+export const onMachine = (pathOnMachine: string): string => {
+  const connection = loadConnection();
+  return connection ? `${connection.address}${pathOnMachine}` : pathOnMachine;
+};
+
+export interface AccessCheck {
+  remote: string | null;
+  remoteUrl: string | null;
+  webUrl: string | null;
+  isGitHub: boolean;
+  branch: string | null;
+  canRead: boolean;
+  canPush: boolean;
+  behind: boolean;
+  detail: string;
+}
+
+export interface BuildTest {
+  state: "running" | "done" | "error";
+  startedAt: string;
+  finishedAt: string | null;
+  score: number | null;
+  passed: boolean;
+  checks: Array<{ name: string; applicable: boolean; passed: boolean; output: string }>;
+  error?: string;
+}
+
 export interface JarvisActivity {
   id: number;
   at: string;
@@ -500,24 +558,32 @@ export interface JarvisOverview {
   activity: JarvisActivity[];
 }
 
-export interface JarvisStatus {
-  configured: boolean;
-  url: string | null;
-  owner: string | null;
-  queued: number;
-  last: { at: string; ok: boolean; detail: string } | null;
+export interface PendingCommit {
+  hash: string;
+  subject: string;
 }
 
-export interface Topic {
-  id: string;
-  title: string;
-  question: string;
-  status: string;
-  findingCount: number;
-  sourceCount: number;
-  corroboratedCount: number;
-  documentCount: number;
-  openQuestionCount: number;
+export interface PushPlan {
+  branch: string;
+  remote: string | null;
+  remoteUrl: string | null;
+  webUrl: string | null;
+  isGitHub: boolean;
+  hasUpstream: boolean;
+  commits: PendingCommit[];
+  uncommitted: number;
+}
+
+export interface PushResult {
+  pushed: boolean;
+  /** The remote now points the branch at the local commit. */
+  confirmed: boolean;
+  branch: string;
+  commit: string | null;
+  commits: PendingCommit[];
+  commitUrl: string | null;
+  message: string;
+  at: string;
 }
 
 export const api = {
@@ -603,24 +669,6 @@ export const api = {
       { method: "POST", body: JSON.stringify({ action }) },
       200000
     ),
-  /** What a push would send right now, without sending it. */
-  gitPlan: (id: string) => request<PushPlan>(`/api/ecosystem/projects/${id}/git/plan`, {}, 60000),
-  /** Can this PC push to the project's GitHub? A dry run; changes nothing. */
-  gitCheck: (id: string) => request<AccessCheck>(`/api/ecosystem/projects/${id}/git/check`, { method: "POST" }, 200000),
-  testProjectBuild: (buildId: string) =>
-    request<{ test: BuildTest }>(`/api/ecosystem/project-builds/${encodeURIComponent(buildId)}/test`, { method: "POST" }),
-  commitProjectBuild: (buildId: string, options: { message?: string; push?: boolean } = {}) =>
-    request<{ success: boolean; commit: NonNullable<ProjectBuild["commit"]>; push: PushResult | null }>(
-      `/api/ecosystem/project-builds/${encodeURIComponent(buildId)}/commit`,
-      { method: "POST", body: JSON.stringify(options) },
-      200000
-    ),
-  pushProjectBuild: (buildId: string) =>
-    request<{ success: boolean } & PushResult>(
-      `/api/ecosystem/project-builds/${encodeURIComponent(buildId)}/push`,
-      { method: "POST" },
-      200000
-    ),
   instructProject: (id: string, instruction: string) =>
     request<{ success: boolean; buildId: string; message: string }>(
       `/api/ecosystem/projects/${id}/instruct`,
@@ -693,21 +741,11 @@ export const api = {
   // --- builds ---
   builds: () => request<{ count: number; active: number; builds: Build[] }>("/api/autonomous/builds"),
   build: (id: string) => request<Build>(`/api/autonomous/${id}/status`),
-  /** A signed link to what a build has made so far, for an iframe. */
-  buildPreview: async (id: string): Promise<{ available: boolean; builtAt: string | null; url: string }> => {
-    const conn = loadConnection();
-    if (!conn) throw new ApiError("Not connected to a machine yet.", 0);
-    const res = await request<{ available: boolean; builtAt: string | null; path: string }>(
-      `/api/autonomous/${encodeURIComponent(id)}/preview-link`,
-      { method: "POST" }
-    );
-    return { available: res.available, builtAt: res.builtAt, url: `${conn.address}${res.path}` };
-  },
   startBuild: (config: {
     projectName: string;
     description: string;
     targetPlatforms?: string[];
-    profile?: "fast" | "balanced" | "deep";
+    profile?: BuildProfile;
     qualityThreshold?: number;
     maxIterations?: number;
   }) => request<{ buildId: string }>("/api/autonomous/start", { method: "POST", body: JSON.stringify(config) }, 60000),
@@ -717,6 +755,28 @@ export const api = {
       `/api/autonomous/${id}/guidance`,
       { method: "POST", body: JSON.stringify({ text }) }
     ),
+  continueBuild: (id: string, options: { instruction?: string; profile?: BuildProfile } = {}) =>
+    request<{ buildId: string; build: Build; message: string }>(
+      `/api/autonomous/${encodeURIComponent(id)}/continue`,
+      { method: "POST", body: JSON.stringify(options) },
+      60000
+    ),
+  forgetBuild: (id: string) => request<{ success: boolean }>(`/api/autonomous/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  buildFiles: (id: string) =>
+    request<{ outputDir: string; exists: boolean; files: string[]; total?: number }>(`/api/autonomous/${encodeURIComponent(id)}/files`),
+  buildFile: (id: string, path: string) =>
+    request<{ path: string; size: number; truncated: boolean; content: string }>(
+      `/api/autonomous/${encodeURIComponent(id)}/file?path=${encodeURIComponent(path)}`
+    ),
+  openBuild: (id: string, target: "editor" | "folder") =>
+    request<{ success: boolean; message: string }>(`/api/autonomous/${encodeURIComponent(id)}/open`, {
+      method: "POST",
+      body: JSON.stringify({ target })
+    }),
+  preview: (kind: "template" | "build", id: string) =>
+    request<PreviewInfo>(`/api/previews/${kind}/${encodeURIComponent(id)}`),
+  rebuildTemplatePreview: (id: string) =>
+    request<{ success: boolean }>(`/api/previews/template/${encodeURIComponent(id)}/rebuild`, { method: "POST" }),
   pauseBuild: (id: string) => request<unknown>(`/api/autonomous/${id}/pause`, { method: "POST" }),
   resumeBuild: (id: string) => request<unknown>(`/api/autonomous/${id}/resume`, { method: "POST" }),
   stopBuild: (id: string) => request<unknown>(`/api/autonomous/${id}/stop`, { method: "POST" }),
@@ -807,8 +867,8 @@ export const api = {
       45000
     ),
   /**
-   * A one-hour link to download an order's package. It carries a signature for
-   * that one order, never the key: a key in a URL ends up in proxy logs.
+   * A download link for an order's package. The builder signs it for an hour,
+   * so the phone key never goes into a URL (and from there into history or logs).
    */
   downloadPackageUrl: async (id: string): Promise<string> => {
     const conn = loadConnection();
@@ -819,17 +879,6 @@ export const api = {
 
   // --- Jarvis ---
   jarvis: () => request<JarvisStatus>("/api/jarvis/status"),
-  /** Both directions of the link, whether he is watching, his access, and the log. */
-  jarvisOverview: (limit = 100) => request<JarvisOverview>(`/api/jarvis/overview?limit=${limit}`, {}, 30000),
-  saveJarvisConfig: (config: { host?: string; apiKey?: string; ownerId?: string }) =>
-    request<{ success: boolean; config: JarvisOverview["config"] }>("/api/jarvis/config", {
-      method: "POST",
-      body: JSON.stringify(config)
-    }),
-  /** Issue Jarvis a new full-access key. Shown once; replaces the old one. */
-  grantJarvisAccess: () =>
-    request<{ key: string; scopes: string[]; builderAddress: string | null; howTo: string }>("/api/jarvis/access", { method: "POST" }),
-  revokeJarvisAccess: () => request<{ success: boolean; revoked: boolean }>("/api/jarvis/access", { method: "DELETE" }),
   testJarvis: () =>
     request<{ ok: boolean; detail: string; connection: JarvisStatus }>("/api/jarvis/test", { method: "POST" }, 45000),
   sendHandoff: () => request<{ ok: boolean; detail: string }>("/api/jarvis/handoff", { method: "POST" }, 60000),
@@ -838,7 +887,33 @@ export const api = {
   startResearch: (title: string, question: string) =>
     request<{ topic: Topic }>("/api/research/topics", { method: "POST", body: JSON.stringify({ title, question }) }),
   pauseTopic: (id: string) => request<unknown>(`/api/research/topics/${id}/pause`, { method: "POST" }),
-  resumeTopic: (id: string) => request<unknown>(`/api/research/topics/${id}/resume`, { method: "POST" })
+  resumeTopic: (id: string) => request<unknown>(`/api/research/topics/${id}/resume`, { method: "POST" }),
+
+  testProjectBuild: (buildId: string) =>
+    request<{ test: BuildTest }>(`/api/ecosystem/project-builds/${encodeURIComponent(buildId)}/test`, { method: "POST" }),
+  commitProjectBuild: (buildId: string, options: { message?: string; push?: boolean } = {}) =>
+    request<{ success: boolean; commit: NonNullable<ProjectBuild["commit"]>; push: PushResult | null }>(
+      `/api/ecosystem/project-builds/${encodeURIComponent(buildId)}/commit`,
+      { method: "POST", body: JSON.stringify(options) },
+      200000
+    ),
+  pushProjectBuild: (buildId: string) =>
+    request<{ success: boolean } & PushResult>(
+      `/api/ecosystem/project-builds/${encodeURIComponent(buildId)}/push`,
+      { method: "POST" },
+      200000
+    ),
+  gitPlan: (id: string) => request<PushPlan>(`/api/ecosystem/projects/${id}/git/plan`, {}, 60000),
+  gitCheck: (id: string) => request<AccessCheck>(`/api/ecosystem/projects/${id}/git/check`, { method: "POST" }, 200000),
+  jarvisOverview: (limit = 100) => request<JarvisOverview>(`/api/jarvis/overview?limit=${limit}`, {}, 30000),
+  saveJarvisConfig: (config: { host?: string; apiKey?: string; ownerId?: string }) =>
+    request<{ success: boolean; config: JarvisOverview["config"] }>("/api/jarvis/config", {
+      method: "POST",
+      body: JSON.stringify(config)
+    }),
+  grantJarvisAccess: () =>
+    request<{ key: string; scopes: string[]; builderAddress: string | null; howTo: string }>("/api/jarvis/access", { method: "POST" }),
+  revokeJarvisAccess: () => request<{ success: boolean; revoked: boolean }>("/api/jarvis/access", { method: "DELETE" }),
 };
 
 /**
@@ -869,19 +944,51 @@ export const signInFromHub = async (address: string, token: string): Promise<{ o
   }
 };
 
-/** A quick reachability probe used by the connect screen. */
-export const testConnection = async (address: string, key: string): Promise<{ ok: boolean; message: string }> => {
+export interface ConnectionReport {
+  ok: boolean;
+  message: string;
+  /** Round trip in milliseconds, when the machine answered. */
+  latencyMs?: number;
+  status?: StatusResponse;
+}
+
+/** A quick reachability probe used by the connect screen and the connection check. */
+export const testConnection = async (address: string, key: string): Promise<ConnectionReport> => {
+  const base = address.trim().replace(/\/+$/, "");
+  if (!/^https?:\/\//i.test(base)) {
+    return { ok: false, message: "The address has to start with http:// or https://." };
+  }
+  if (typeof window !== "undefined" && window.location.protocol === "https:" && base.toLowerCase().startsWith("http://")) {
+    const local = /^http:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/i.test(base);
+    if (!local) {
+      return {
+        ok: false,
+        message:
+          "This page is on https, so the browser will not let it call an http:// address. Use the https address (agent.savestate.co.za or a tunnel), or open the app from the PC itself."
+      };
+    }
+  }
+  const started = performance.now();
   try {
-    const response = await fetch(`${address.replace(/\/+$/, "")}/api/services/status`, {
+    const response = await fetch(`${base}/api/services/status`, {
       headers: { "x-agent-key": key.trim() },
       signal: AbortSignal.timeout(12000)
     });
+    const latencyMs = Math.round(performance.now() - started);
     if (response.status === 401 || response.status === 403) {
-      return { ok: false, message: "Reached your machine, but the key was rejected." };
+      return { ok: false, latencyMs, message: "Reached your machine, but the key was rejected." };
     }
-    if (!response.ok) return { ok: false, message: `Your machine answered ${response.status}.` };
+    const type = response.headers.get("content-type") ?? "";
+    if (!type.includes("json")) {
+      return {
+        ok: false,
+        latencyMs,
+        message: `Something answered at that address, but it is not the builder (${response.status}). Check the address points at your PC, not at this app.`
+      };
+    }
+    if (!response.ok) return { ok: false, latencyMs, message: `Your machine answered ${response.status}.` };
     const body = (await response.json()) as StatusResponse;
-    return { ok: true, message: `Connected to ${body.host}. ${body.counts.projects} projects.` };
+    return { ok: true, latencyMs, status: body, message: `Connected to ${body.host}. ${body.counts.projects} projects.` };
   } catch (error) {
     return {
       ok: false,
