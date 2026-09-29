@@ -1,0 +1,99 @@
+/* The restaurant's own pieces: menu, diet filter, gallery, reservations. */
+
+.restaurant-hero {
+  padding: clamp(80px, 14vw, 170px) 0 clamp(64px, 10vw, 120px);
+  background:
+    radial-gradient(circle at 70% 20%, color-mix(in srgb, var(--primary) 40%, transparent), transparent 55%),
+    radial-gradient(circle at 20% 80%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 45%);
+}
+
+.diet-filter {
+  margin-bottom: 28px;
+}
+
+.diet {
+  border: 1.5px solid color-mix(in srgb, var(--text) 20%, transparent);
+  background: transparent;
+  color: var(--text);
+  padding: 6px 14px;
+  border-radius: 99px;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.diet-on {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.menu-sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 40px 56px;
+}
+
+.menu-section h3 {
+  font-size: 1.4rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
+  padding-bottom: 8px;
+}
+
+.menu-note {
+  font-style: italic;
+  font-size: 0.9rem;
+}
+
+.dish {
+  margin-bottom: 18px;
+}
+
+.dish-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.dish-dots {
+  flex: 1;
+  border-bottom: 1px dotted color-mix(in srgb, var(--text) 30%, transparent);
+  transform: translateY(-4px);
+}
+
+.dish-badge {
+  margin-left: 8px;
+  font-size: 0.7rem;
+}
+
+.dish-text {
+  margin: 4px 0 0;
+  font-size: 0.95rem;
+}
+
+.dish-diet {
+  font-size: 0.8rem;
+  text-transform: capitalize;
+}
+
+.gallery-item {
+  margin: 0;
+}
+
+.gallery-art {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--radius);
+  font-size: 4rem;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--primary) 45%, var(--surface)), color-mix(in srgb, var(--accent) 25%, var(--surface)));
+}
+
+.gallery-item figcaption {
+  margin-top: 8px;
+  font-size: 0.9rem;
+}
+
+.reservation {
+  max-width: 760px;
+}

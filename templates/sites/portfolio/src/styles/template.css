@@ -1,0 +1,116 @@
+/* The portfolio's own pieces: project cards, tag filter, timeline. */
+
+.portfolio-hero h1 {
+  max-width: 18ch;
+}
+
+.availability {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  margin-bottom: 24px;
+}
+
+.pulse {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.25);
+}
+
+.tag-filter {
+  margin-bottom: 24px;
+}
+
+.tag {
+  border: 1.5px solid color-mix(in srgb, var(--text) 20%, transparent);
+  background: transparent;
+  color: var(--text);
+  padding: 6px 14px;
+  border-radius: 99px;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.tag-on {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.project-card {
+  display: grid;
+  gap: 8px;
+  text-decoration: none;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.project-card:hover {
+  transform: translateY(-4px);
+  border-color: var(--primary);
+}
+
+.project-card h3 {
+  margin: 4px 0 0;
+}
+
+.project-art {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 10;
+  border-radius: calc(var(--radius) * 0.8);
+  font-size: 4.5rem;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 55%, var(--surface)), color-mix(in srgb, var(--accent) 40%, var(--surface)));
+}
+
+.project-art-large {
+  font-size: 8rem;
+  margin-bottom: 32px;
+}
+
+.project-meta {
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.project-story {
+  max-width: 70ch;
+}
+
+.outcome {
+  padding: 16px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  margin: 24px 0;
+}
+
+.timeline {
+  list-style: none;
+  padding: 0 0 0 24px;
+  margin: 0;
+  border-left: 2px solid color-mix(in srgb, var(--primary) 50%, transparent);
+}
+
+.timeline li {
+  position: relative;
+  margin-bottom: 28px;
+}
+
+.timeline li::before {
+  content: "";
+  position: absolute;
+  left: -31px;
+  top: 6px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.timeline-when {
+  margin: 0;
+  font-size: 0.85rem;
+}

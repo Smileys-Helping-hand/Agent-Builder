@@ -48,18 +48,49 @@ export interface TemplateDefinition {
   hidden?: boolean;
 }
 
-const BUILT_IN: TemplateDefinition[] = [
+/**
+ * Where the templates' code lives: one folder per catalogue id, each a
+ * complete Vite + React + TypeScript project that installs, builds and passes
+ * its tests on its own (npm run verify:templates proves it). A customer's
+ * build starts from a copy of the folder instead of from nothing.
+ */
+const TEMPLATES_DIR = path.resolve(process.env.TEMPLATES_DIR ?? "templates/sites");
+
+/** Live previews of every template, built by templates/sites/build-previews.mjs. */
+const PREVIEWS_URL = (process.env.TEMPLATE_PREVIEWS_URL ?? "https://templates.arpcloudsolutions.co.za").replace(/\/+$/, "");
+
+/**
+ * How to tailor a template. Every template keeps what a visitor sees in
+ * src/content.ts, so most of a customer's order is editing one file.
+ */
+const TAILORING = [
+  "How this template is organised: everything a visitor sees — business name, colours, text, prices, hours, contact details — is in src/content.ts.",
+  "Start there: replace every sample detail with the customer's, and set `demo: false` so the 'template preview' ribbon goes.",
+  "Add anything else they asked for as new components; keep pages on hash routes (#/…) so the site works on any static host.",
+  "Keep every test in src/*.test.tsx passing. Change a test only when the content it checks has changed on purpose, and add tests for new logic.",
+  "Do not edit src/lib/site.tsx or src/styles/base.css unless the change must apply to every page."
+].join(" ");
+
+const BUILT_IN_ITEMS: TemplateDefinition[] = [
   {
     id: "landing",
     name: "Business Landing Page",
     kind: "website",
     category: "Website",
-    description: "High-converting landing page with hero, services, testimonials, and contact form.",
+    description: "A one-page site that turns visitors into enquiries: hero, services, how it works, pricing, reviews, FAQ and a quote form.",
     price: 4500,
     currency: "ZAR",
     timeframe: "1-2 weeks",
     icon: "🏠",
-    features: ["Mobile-first responsive design", "SEO optimized", "Contact form", "Google Analytics", "2 rounds of revisions"],
+    features: [
+      "Mobile-first design in your colours",
+      "Services, process and pricing sections",
+      "Reviews and FAQ",
+      "Quote form that emails you (or posts to your CRM)",
+      "WhatsApp chat button",
+      "2 rounds of revisions"
+    ],
+    techStack: ["React", "TypeScript", "Vite"],
     keywords: ["landing", "starter", "one page", "business website", "website"]
   },
   {
@@ -67,12 +98,20 @@ const BUILT_IN: TemplateDefinition[] = [
     name: "E-Commerce Store",
     kind: "website",
     category: "Online Shop",
-    description: "Full online store with catalog, shopping cart, PayFast & Stripe checkout, and admin panel.",
+    description: "An online shop with search, categories, product pages, a cart that remembers itself, delivery rules and checkout by payment link or EFT.",
     price: 18000,
     currency: "ZAR",
     timeframe: "3-6 weeks",
     icon: "🛒",
-    features: ["Product catalog & categories", "PayFast South African payments", "Order management", "Inventory tracking", "Email receipts"],
+    features: [
+      "Product catalogue with search and categories",
+      "Product pages and sale prices",
+      "Cart with stock limits and free-delivery threshold",
+      "Checkout with PayFast, Yoco or SnapScan link, or EFT",
+      "Orders emailed to you with a reference number",
+      "Delivery and returns pages"
+    ],
+    techStack: ["React", "TypeScript", "Vite"],
     keywords: ["ecommerce", "e-commerce", "store", "shop", "online shop", "products"]
   },
   {
@@ -80,12 +119,20 @@ const BUILT_IN: TemplateDefinition[] = [
     name: "Restaurant / Hospitality",
     kind: "app",
     category: "Web App",
-    description: "QR menus, online reservation system, food gallery, and table management.",
+    description: "A restaurant site with a filterable menu, a QR-code menu for each table, gallery, reservation requests and a map.",
     price: 9500,
     currency: "ZAR",
     timeframe: "2-4 weeks",
     icon: "🍽️",
-    features: ["Online booking system", "Digital QR menus", "Gallery & social feed", "Google Maps", "SMS confirmations"],
+    features: [
+      "Menu with vegan, vegetarian, gluten-free and spicy filters",
+      "QR-code menu per table",
+      "Reservations with your days, times and group limits",
+      "Photo gallery",
+      "Google Maps and opening hours",
+      "WhatsApp chat button"
+    ],
+    techStack: ["React", "TypeScript", "Vite"],
     keywords: ["restaurant", "menu", "cafe", "hospitality", "reservations"]
   },
   {
@@ -93,25 +140,42 @@ const BUILT_IN: TemplateDefinition[] = [
     name: "SaaS Dashboard",
     kind: "app",
     category: "SaaS",
-    description: "Custom web app with user authentication, role-based access, analytics charts, and billing.",
+    description: "A product website plus a working dashboard: sign-in with roles, revenue metrics and chart, customer table, billing and team management.",
     price: 35000,
     currency: "ZAR",
     timeframe: "6-12 weeks",
     icon: "📊",
-    features: ["User authentication & roles", "Custom analytics dashboard", "Subscription billing", "API integrations", "Cloud deployment"],
-    keywords: ["saas", "dashboard", "web app", "platform", "portal", "software"]
+    features: [
+      "Marketing site with pricing",
+      "Sign-in with owner, admin, member and viewer roles",
+      "Revenue, churn and growth metrics with chart",
+      "Searchable, sortable customer table",
+      "Billing and team pages that follow permissions",
+      "Connected to your real auth and data as part of the build"
+    ],
+    techStack: ["React", "TypeScript", "Vite"],
+    keywords: ["saas", "dashboard", "web app", "platform", "portal", "software"],
+    buildNotes:
+      "The template's sign-in is a demo with no passwords, and its data is sample data. A customer build must connect a real auth provider and data source, and enforce the roles in src/data.ts on the server as well as in the page."
   },
   {
     id: "portfolio",
     name: "Portfolio / Personal Site",
     kind: "website",
     category: "Portfolio",
-    description: "Personal brand showcase with interactive project gallery, resume, blog, and booking.",
+    description: "A personal site with filterable work, a page for each project, an about page with a career timeline, and an enquiry form.",
     price: 3500,
     currency: "ZAR",
     timeframe: "1-2 weeks",
     icon: "✨",
-    features: ["Interactive animated design", "Project showcase gallery", "Blog/article system", "Booking form", "Social media integration"],
+    features: [
+      "Work gallery with filters",
+      "A page for each project with its outcome",
+      "About page with skills and career timeline",
+      "Enquiry form with budget and timing",
+      "Links to LinkedIn, Behance and more"
+    ],
+    techStack: ["React", "TypeScript", "Vite"],
     keywords: ["portfolio", "personal", "resume", "cv", "showcase"]
   },
   {
@@ -119,28 +183,59 @@ const BUILT_IN: TemplateDefinition[] = [
     name: "Booking & Scheduling",
     kind: "app",
     category: "Web App",
-    description: "Calendar-based appointment system with PayFast payments, reminders, and customer portal.",
+    description: "Online booking that only offers real free times: services and prices, opening hours, breaks, existing bookings and notice periods.",
     price: 16000,
     currency: "ZAR",
     timeframe: "3-6 weeks",
     icon: "📅",
-    features: ["Real-time availability calendar", "Email & SMS reminders", "Online payments", "Client portal", "Admin panel"],
-    keywords: ["booking", "appointments", "scheduling", "calendar", "salon", "clinic"]
+    features: [
+      "Services with prices and durations",
+      "Availability from your hours, breaks and bookings",
+      "Day and time picker that never double-books",
+      "Booking confirmation by email",
+      "Team and policies sections",
+      "WhatsApp chat button"
+    ],
+    techStack: ["React", "TypeScript", "Vite"],
+    keywords: ["booking", "appointments", "scheduling", "calendar", "salon", "clinic"],
+    buildNotes:
+      "The template remembers bookings in the visitor's browser only. If the customer needs one calendar shared across everyone, connect the booking form to a real calendar or database as part of the build."
   },
   {
     id: "blog",
     name: "Blog / Content Platform",
     kind: "website",
     category: "Content",
-    description: "SEO-powered publication with headless CMS, newsletter subscriptions, and analytics.",
+    description: "A publication with posts written in Markdown, search, tags, reading times, related articles and a newsletter sign-up.",
     price: 7000,
     currency: "ZAR",
     timeframe: "2-3 weeks",
     icon: "📝",
-    features: ["Easy markdown/CMS editing", "Newsletter capture", "SEO & OpenGraph cards", "Reading time & tags", "Fast static delivery"],
+    features: [
+      "Posts written in simple Markdown",
+      "Search and tags",
+      "Reading times and related articles",
+      "Newsletter sign-up",
+      "Fast static pages"
+    ],
+    techStack: ["React", "TypeScript", "Vite"],
     keywords: ["blog", "content", "news", "magazine", "articles", "newsletter"]
   }
 ];
+
+const BUILT_IN: TemplateDefinition[] = BUILT_IN_ITEMS.map((item) => {
+  // Attach each template's code and preview when its folder is present. A
+  // missing folder (a machine without the templates checked out) just means
+  // builds start from scratch, as they did before.
+  const folder = path.join(TEMPLATES_DIR, item.id);
+  const hasCode = fs.existsSync(path.join(folder, "package.json"));
+  return {
+    ...item,
+    sourcePath: hasCode ? folder : undefined,
+    previewUrl: `${PREVIEWS_URL}/${item.id}/`,
+    buildNotes: [hasCode ? TAILORING : "", item.buildNotes ?? ""].filter(Boolean).join(" ") || undefined
+  };
+});
 
 const OVERRIDES_PATH = path.resolve("./data/catalog.json");
 const KINDS: CatalogKind[] = ["website", "app", "template"];

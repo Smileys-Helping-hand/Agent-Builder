@@ -44,6 +44,11 @@ export interface CheckIn {
   machine: string;
   queueLength: number;
   building: number;
+  /**
+   * Where this machine's app can reach it (https only), so the site's
+   * "Open Agent Builder" can send an admin straight here, signed in.
+   */
+  address?: string | null;
 }
 
 const TIMEOUT_MS = 20_000;
@@ -139,6 +144,29 @@ export const SiteClient = {
       return { ok: false, status: response.status, message: `Site returned HTTP ${response.status}` };
     } catch (error) {
       return { ok: false, status: 0, message: errorMessage(error) };
+    }
+  },
+
+  /**
+   * Ask the site whether a sign-in token an admin brought from "Open Agent
+   * Builder" is genuine. The site checks it once and then forgets it, so a
+   * token that passes here can never pass again.
+   */
+  async redeemSso(token: string): Promise<{ ok: true; admin: string } | { ok: false; reason: string }> {
+    const url = base();
+    if (!url || !key()) return { ok: false, reason: "This machine is not connected to the site (SITE_URL / SITE_API_KEY)." };
+    try {
+      const response = await fetch(`${url}/api/builder/sso`, {
+        method: "POST",
+        headers: headers(),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+        body: JSON.stringify({ token })
+      });
+      const body = (await response.json().catch(() => ({}))) as { ok?: boolean; admin?: string; error?: string };
+      if (response.ok && body.ok && body.admin) return { ok: true, admin: body.admin };
+      return { ok: false, reason: body.error ?? `The site answered ${response.status}.` };
+    } catch (error) {
+      return { ok: false, reason: `Could not reach the site: ${errorMessage(error)}` };
     }
   },
 

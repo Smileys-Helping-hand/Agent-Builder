@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 
-import { ApiError, loadConnection, saveConnection } from "@/lib/api";
+import { ApiError, loadConnection, saveConnection, signInFromHub } from "@/lib/api";
 
 /* ---------------- time ---------------- */
 
@@ -123,7 +123,18 @@ export const NotConnected = () => {
           <p className="hero-sub">
             Connect to your PC directly over Cloudflare HTTPS tunnel or local address.
           </p>
+          {hubSignInProblem ? (
+            <p className="hero-sub" role="alert" style={{ color: "var(--bad)", marginTop: 10 }}>
+              Signing in from the site did not work: {hubSignInProblem}
+            </p>
+          ) : null}
           <div className="quick" style={{ marginTop: 14 }}>
+            {/* Signed in to the site's admin already? It opens this app signed in. */}
+            <a href="https://arpcloudsolutions.co.za/admin" style={{ textDecoration: "none" }}>
+              <button className="primary" style={{ fontWeight: 700 }}>
+                {Icon.power} Sign in from the ARP admin
+              </button>
+            </a>
             {/* The address is public; the key never is. Scan the QR code from
                 Start Agent Builder, or paste the key on the next screen. */}
             <Link href={`/settings/?address=${encodeURIComponent("https://agent.savestate.co.za")}`}>
@@ -185,10 +196,33 @@ export function useRemote<T>(loader: () => Promise<T>, pollMs = 0) {
   return { data, error, loading, refresh, setData };
 }
 
+/** Why the last sign-in from the ordering site failed, for the connect screen to explain. */
+let hubSignInProblem: string | null = null;
+
 export const useConnected = (): boolean | null => {
   const [connected, setConnected] = useState<boolean | null>(null);
   useEffect(() => {
     if (typeof window !== "undefined") {
+      // Opened from the site's admin: "#sso=<token>&address=<pc>". The token is
+      // in the fragment so it never reaches a server log; clear it straight away.
+      const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      const sso = fragment.get("sso");
+      const ssoAddress = fragment.get("address");
+      if (sso && ssoAddress) {
+        window.history.replaceState({}, "", window.location.pathname + window.location.search);
+        void signInFromHub(ssoAddress, sso).then((result) => {
+          if (result.ok) {
+            // Every panel on the page asked for its data before the key
+            // existed and got "not connected"; start over, connected.
+            window.location.replace(window.location.pathname + window.location.search);
+            return;
+          }
+          hubSignInProblem = result.message;
+          setConnected(Boolean(loadConnection()));
+        });
+        return;
+      }
+
       const params = new URLSearchParams(window.location.search);
       const address = params.get("address");
       const key = params.get("key");

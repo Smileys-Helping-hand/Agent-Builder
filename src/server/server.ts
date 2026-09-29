@@ -53,6 +53,7 @@ import { registerEcosystemRoutes } from "./ecosystem.js";
 import { registerServiceRoutes } from "./services.js";
 import { registerJarvisRoutes } from "./jarvis.js";
 import { registerOrderRoutes } from "./orders.js";
+import { registerHubSsoRoutes } from "./hubSso.js";
 
 const warnIfNoAccountsExist = () => {
   if (!ConfigVault.isConfigured() && UserModel.count() === 0) {
@@ -98,7 +99,12 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? process.env.DASHBOARD_URL
 // it is hosted) are allowed from any origin: the key is the credential, it is
 // never a cookie, and a page without it cannot do anything. Cookie/session
 // callers — the dashboard — stay restricted to the configured allowlist.
+// Routes any origin may call without a key, because they carry their own proof:
+// a hub sign-in token is single-use and checked with the site (see hubSso.ts).
+const OPEN_ORIGIN_PATHS = new Set(["/api/auth/hub-sso"]);
+
 const usesAgentKey = (req: Request): boolean =>
+  OPEN_ORIGIN_PATHS.has(req.path) ||
   Boolean(req.headers["x-agent-key"]) ||
   String(req.headers["access-control-request-headers"] ?? "").toLowerCase().includes("x-agent-key");
 
@@ -237,6 +243,7 @@ registerEcosystemRoutes(app);
 registerServiceRoutes(app);
 registerJarvisRoutes(app);
 registerOrderRoutes(app);
+registerHubSsoRoutes(app);
 app.use("/api/env", authenticate, authorizeRoles(["admin", "owner"]), envRouter);
 const healthMonitor = new HealthMonitor();
 registerHealthRoute(app, healthMonitor);

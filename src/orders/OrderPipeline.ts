@@ -28,6 +28,7 @@ import { copyForBuild } from "../ecosystem/ProjectBuilds.js";
 import { Catalog } from "./Catalog.js";
 import { OrderStore, type Order } from "./OrderStore.js";
 import { SiteClient, type SiteOrder } from "./SiteClient.js";
+import { readPublicUrl } from "../utils/PublicUrl.js";
 
 const INTAKE_EVERY_MS = 5 * 60 * 1000;
 const WORK_EVERY_MS = 60 * 1000;
@@ -160,6 +161,11 @@ const notifyJarvis = (order: Order, subject: string, body: string): void => {
   });
 };
 
+const publicHttpsUrl = (): string | null => {
+  const url = readPublicUrl();
+  return url && url.startsWith("https://") ? url.replace(/\/+$/, "") : null;
+};
+
 export const OrderPipeline = {
   /**
    * Record an order and announce it. Every route in matters equally — an order
@@ -245,7 +251,10 @@ export const OrderPipeline = {
       version: appVersion(),
       machine: os.hostname(),
       queueLength: counts.received + counts.accepted,
-      building: counts.building
+      building: counts.building,
+      // Only an https address is any use to the site: its admin opens the app
+      // from an https page, and a browser will not call plain http from there.
+      address: publicHttpsUrl()
     });
     lastPublish = { at: new Date().toISOString(), ok: result.ok, message: result.message, count: items.length };
     if (!result.ok) Logger.log("Catalogue not published to the site", { detail: result.message });
