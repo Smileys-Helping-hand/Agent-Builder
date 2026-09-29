@@ -32,6 +32,21 @@ export interface BuildIteration {
   verification?: VerificationReport;
 }
 
+/**
+ * What the build is thinking, as it happens: the model's own plan, what each
+ * check said, why a repair was made, what it decided to improve. Emitted as
+ * "thought" so the app can show a live feed, not just a stage name.
+ */
+export interface BuildThought {
+  iteration: number;
+  kind: "plan" | "lesson" | "check" | "critique" | "repair" | "review" | "decision";
+  title: string;
+  text: string;
+  files?: string[];
+  /** On a check: the score those checks add up to, so progress shows mid-pass. */
+  score?: number;
+}
+
 /** A further instruction given while the build is already running. */
 export interface BuildGuidance {
   text: string;
@@ -121,6 +136,10 @@ export class AutonomousOrchestrator extends EventEmitter {
   // Ratchet: never let the workspace end an iteration worse than its best-known state.
   private bestObjectiveScore: number = -1;
   private bestCommitHash?: string;
+  private bestIteration = 0;
+
+  // The files as the previous pass left them, to say what a new pass changed.
+  private lastFiles: Record<string, string> = {};
 
   constructor(private config: AutonomousConfig) {
     super();
@@ -169,7 +188,7 @@ export class AutonomousOrchestrator extends EventEmitter {
         this.emit("hardware-optimized", await this.hardwareScaler.getSpecs());
       }
 
-      const patience = this.config.patience ?? PROFILE_DEFAULTS[this.config.profile ?? "balanced"].patience;
+      const patience = this.config.patience ?? (PROFILE_DEFAULTS[this.config.profile ?? "balanced"] ?? PROFILE_DEFAULTS.balanced).patience;
       let consecutiveFailures = 0;
       let passesWithoutProgress = 0;
       let bestSoFar = -1;
@@ -322,6 +341,11 @@ export class AutonomousOrchestrator extends EventEmitter {
         );
       }
 
+      const changed = this.changedFiles(this.lastFiles, currentFiles);
+      if (changed.length > 0 && !this.config.workingDir && iterationNum > 1) {
+        this.think(iterationNum, "decision", `Rewrote ${changed.length} file(s) this pass`, "", changed);
+      }
+
       const generateWrite = await this.workspace.writeFiles(
         currentFiles,
         `Iteration ${iterationNum}: generate (${this.config.projectName})`
@@ -336,7 +360,7 @@ export class AutonomousOrchestrator extends EventEmitter {
       iteration.status = "verifying";
       this.emit("iteration-status", { iteration: iterationNum, status: "verifying" });
 
-      let verification = await Verifier.verify(this.workspace);
+      let verification = await this.verifyAndReport(iterationNum, "After writing the code");
       const profileSettings = this.resolveProfile();
       let repairAttempt = 0;
 
@@ -364,6 +388,7 @@ export class AutonomousOrchestrator extends EventEmitter {
           critique = await this.getRepairCritique(profileSettings.reviewModel, currentFiles, verification);
           if (critique) {
             Logger.log(`Iteration ${iterationNum}: deep-mode critique (${profileSettings.reviewModel})`, { critique });
+            this.think(iterationNum, "critique", `Root cause, according to ${profileSettings.reviewModel}`, critique);
           }
         }
 
@@ -384,7 +409,7 @@ export class AutonomousOrchestrator extends EventEmitter {
           commit: repairWrite.commitHash
         });
 
-        verification = await Verifier.verify(this.workspace);
+        verification = await this.verifyAndReport(iterationNum, `After repair ${repairAttempt}`);
 
         // Learn from the attempt: the question is whether the check that was blocking now passes.
         const blockerCleared =
@@ -434,12 +459,20 @@ export class AutonomousOrchestrator extends EventEmitter {
         });
 
         iteration.improvements = improvements.suggestions;
+        if (improvements.suggestions.length > 0) {
+          this.think(
+            iterationNum,
+            "review",
+            `Scored ${iteration.qualityScore}; what it will improve`,
+            improvements.suggestions.slice(0, 8).map((suggestion) => `• ${suggestion}`).join("\n")
+          );
+        }
 
         // Apply improvements and persist the result — this used to be a no-op.
         currentFiles = await this.applyImprovements(improvements, currentFiles, iterationNum);
 
         // Improvements can break something that was passing — re-verify before finalizing.
-        const postImprovementVerification = await Verifier.verify(this.workspace);
+        const postImprovementVerification = await this.verifyAndReport(iterationNum, "After the improvements");
         iteration.verification = postImprovementVerification;
         iteration.objectiveScore = postImprovementVerification.score;
         iteration.qualityScore = postImprovementVerification.score;
@@ -450,6 +483,7 @@ export class AutonomousOrchestrator extends EventEmitter {
       if (iteration.qualityScore > this.bestObjectiveScore) {
         this.bestObjectiveScore = iteration.qualityScore;
         this.bestCommitHash = headHash;
+        this.bestIteration = iterationNum;
         Logger.log(`Iteration ${iterationNum}: new best objective score ${iteration.qualityScore}`, { commit: headHash });
       } else if (this.bestCommitHash && iteration.qualityScore < this.bestObjectiveScore) {
         Logger.log(
@@ -457,7 +491,15 @@ export class AutonomousOrchestrator extends EventEmitter {
           { commit: this.bestCommitHash }
         );
         await this.workspace.resetTo(this.bestCommitHash);
+        this.think(
+          iterationNum,
+          "decision",
+          `Kept pass ${this.bestIteration}'s code instead`,
+          `This pass scored ${iteration.qualityScore}, below the best so far (${this.bestObjectiveScore}), so the folder went back to pass ${this.bestIteration}. Nothing is ever left worse than its best.`
+        );
       }
+
+      this.lastFiles = currentFiles;
 
       iteration.status = "complete";
       return iteration;
@@ -603,17 +645,26 @@ ${critique ? `\nA senior engineer's diagnosis of the root cause:\n${critique}\n`
 Current files:
 ${fileListing}
 
-Fix the problem. Return ONLY the corrected file(s) as FILE: blocks, in the same
-format as the files above. Only include files you are changing — omit anything
-unchanged. Do not explain the fix in prose.`;
+Fix the problem. Start with ONE line beginning "CAUSE:" that says what was wrong
+and what you are changing. Then return ONLY the corrected file(s) as FILE:
+blocks, in the same format as the files above. Only include files you are
+changing — omit anything unchanged. No other prose.`;
 
     try {
       const response = await ModelRouter.generate(prompt);
       const patched = this.parseGeneratedCode(response);
       if (Object.keys(patched).length === 0) {
         Logger.warn(`Iteration ${iterationNum} repair attempt ${attempt}: model returned no FILE blocks`);
+        this.think(iterationNum, "repair", `Repair ${attempt} for ${failing.name}: no usable fix`, this.narrative(response) || "The model answered without any files.");
         return null;
       }
+      this.think(
+        iterationNum,
+        "repair",
+        `Repair ${attempt} for the ${failing.name} check`,
+        this.narrative(response),
+        this.changedFiles(files, { ...files, ...patched })
+      );
       return { ...files, ...patched };
     } catch (error: any) {
       Logger.error(`Iteration ${iterationNum} repair attempt ${attempt} failed`, { error: error.message });
@@ -639,6 +690,14 @@ unchanged. Do not explain the fix in prose.`;
       context.existing = await ProjectSnapshot.describe(this.workspace.root, focus);
     }
     const systemPrompt = lessonPreamble + (context.existing ? this.existingProjectPrompt(context) : this.buildSystemPrompt(context));
+    if (lessons.length > 0) {
+      this.think(
+        context.iteration,
+        "lesson",
+        `Using ${lessons.length} lesson(s) from earlier builds`,
+        lessons.map((lesson) => `• ${lesson.lesson}`).join("\n")
+      );
+    }
 
     let response = await ModelRouter.generate(systemPrompt);
     let files = this.parseGeneratedCode(response);
@@ -651,6 +710,14 @@ unchanged. Do not explain the fix in prose.`;
       response = await ModelRouter.generate(systemPrompt);
       files = this.parseGeneratedCode(response);
     }
+
+    this.think(
+      context.iteration,
+      "plan",
+      context.existing ? `Pass ${context.iteration}: what it is changing` : `Pass ${context.iteration}: the plan`,
+      this.narrative(response),
+      Object.keys(files)
+    );
 
     return {
       files,
@@ -773,7 +840,8 @@ Requirements:
     \`if (import.meta.url === \`file://\${process.argv[1]}\`) { ... }\` instead.
     Do not mix require.main with import/export syntax in the same file.
 
-Return code in structured format:
+Before the files, write 2-4 short sentences starting with "PLAN:" — what you are
+building and how. Then return code in structured format:
 FILE: path/to/file.ext
 \`\`\`language
 code content here
@@ -817,7 +885,8 @@ ${previous ? `\nThe last pass scored ${previous.qualityScore}. Issues found then
 ${this.guidanceBlock(context.iteration)}Return ONLY the files you create or change, each one complete (never a fragment
 or a diff), as FILE: path/relative/to/project followed immediately by a fenced
 code block on the next line. Omit every file you are not changing. Do not
-explain in prose.`;
+explain in prose, except for 1-3 sentences before the files starting with
+"PLAN:" that say what you are changing and why.`;
   }
 
   /**
@@ -855,6 +924,61 @@ ${lines}
 
   listGuidance(): BuildGuidance[] {
     return [...this.guidance];
+  }
+
+  /** Tell whoever is watching what the build is thinking. Never allowed to fail the build. */
+  private think(iteration: number, kind: BuildThought["kind"], title: string, text: string, files?: string[], score?: number): void {
+    try {
+      const thought: BuildThought = { iteration, kind, title, text: text.trim().slice(0, 2500), files: files?.slice(0, 40), score };
+      this.emit("thought", thought);
+    } catch {
+      // A listener's problem is not the build's.
+    }
+  }
+
+  /** Run the checks and say what they found, in a line and the end of the failing output. */
+  private async verifyAndReport(iteration: number, when: string): Promise<VerificationReport> {
+    // A project that already exists is checked as it is. Adding a test runner
+    // rewrote its package.json and added a vitest config, and applying the
+    // build then carried both into the project nobody asked to change. A copy
+    // of one of our own builds or templates already has its runner.
+    const report = await Verifier.verify(this.workspace, { scaffoldTests: !this.config.workingDir });
+    const line = report.checks
+      .filter((check) => check.applicable)
+      .map((check) => `${check.name} ${check.passed ? "✓" : "✗"}`)
+      .join(" · ");
+    const blocker = report.blockingCheck;
+    this.think(
+      iteration,
+      "check",
+      `${when}: ${report.passed ? "every check passes" : `${blocker?.name ?? "a check"} fails`} (score ${report.score})`,
+      [line, blocker ? blocker.output.replace(/\r\n/g, "\n").trim().slice(-900) : ""].filter(Boolean).join("\n\n"),
+      undefined,
+      report.score
+    );
+    return report;
+  }
+
+  /** Paths whose content differs between two versions of the files. */
+  private changedFiles(before: Record<string, string>, after: Record<string, string>): string[] {
+    return Object.keys(after).filter((file) => before[file] !== after[file]);
+  }
+
+  /** What the model said outside its FILE blocks: its plan, or why it made a fix. */
+  private narrative(response: string): string {
+    const text = response.replace(/\r\n/g, "\n");
+    const first = text.search(/^[ \t>#*_-]*FILE:/im);
+    let said = (first === -1 ? text : text.slice(0, first)).trim();
+    if (!said && first !== -1) {
+      // Nothing before the files: take whatever follows the last closing fence.
+      const lastFence = text.lastIndexOf("```");
+      said = lastFence > first ? text.slice(lastFence + 3).trim() : "";
+    }
+    return said
+      .replace(/^(PLAN|CAUSE):\s*/gim, "")
+      .replace(/```[\s\S]*?```/g, "")
+      .trim()
+      .slice(0, 1500);
   }
 
   /**

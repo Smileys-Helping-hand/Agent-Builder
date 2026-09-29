@@ -20,6 +20,12 @@ import { OrderStore, ORDER_STATUSES, type OrderStatus } from "../orders/OrderSto
 import { SiteClient } from "../orders/SiteClient.js";
 import { Logger } from "../utils/Logger.js";
 
+/** The build as a list needs it, without its thought feed and logs. */
+const summarise = (buildId: string) => {
+  const view = BuildService.view(buildId);
+  return view ? BuildService.summary(view) : null;
+};
+
 const execFileAsync = promisify(execFile);
 
 /** The latest build working on each template's code, by template id. */
@@ -34,7 +40,7 @@ const expand = (orderId: string) => {
   return {
     order,
     notes: OrderStore.notes(orderId, 30),
-    build: order.buildId ? BuildService.view(order.buildId) : null
+    build: order.buildId ? summarise(order.buildId) : null
   };
 };
 
@@ -232,7 +238,7 @@ export const registerOrderRoutes = (app: Express) => {
     res.json({
       orders: orders.map((order) => ({
         ...order,
-        build: order.buildId ? BuildService.view(order.buildId) : null
+        build: order.buildId ? summarise(order.buildId) : null
       })),
       counts: OrderStore.counts()
     });

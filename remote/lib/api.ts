@@ -289,6 +289,15 @@ export interface BuildEvent {
   message: string;
 }
 
+export interface BuildThought {
+  at: string;
+  iteration: number;
+  kind: "plan" | "lesson" | "check" | "critique" | "repair" | "review" | "decision";
+  title: string;
+  text: string;
+  files?: string[];
+}
+
 export type BuildState = "running" | "paused" | "completed" | "stopped" | "error" | "interrupted";
 export type BuildProfile = "fast" | "balanced" | "deep";
 
@@ -323,6 +332,9 @@ export interface Build {
   bestScore?: number;
   outcome?: string | null;
   events?: BuildEvent[];
+  /** The live feed of what it is thinking. Only on a single build; lists carry thoughtCount. */
+  thoughts?: BuildThought[];
+  thoughtCount?: number;
 }
 
 export type OrderStatus =
@@ -347,7 +359,7 @@ export interface ProjectBuild {
   appliedAt: string | null;
   lastApply: ApplyResult | null;
   /** "ended": finished before the builder last restarted, outcome not recorded. */
-  state: "running" | "paused" | "completed" | "stopped" | "error" | "ended";
+  state: "running" | "paused" | "completed" | "stopped" | "error" | "interrupted" | "ended";
   qualityScore: number | null;
   iterations: number | null;
   changes: FileChange[];

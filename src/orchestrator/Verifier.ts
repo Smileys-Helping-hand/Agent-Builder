@@ -195,14 +195,22 @@ export class Verifier {
       checks.push(skip("build", "no build script"));
     }
 
-    const testResult = await Executor.run("npm", ["test"], { cwd: root, timeoutMs: CHECK_TIMEOUT_MS });
-    checks.push({
-      name: "test",
-      applicable: true,
-      passed: testResult.exitCode === 0,
-      durationMs: testResult.durationMs,
-      output: trim(`${testResult.stdout}\n${testResult.stderr}`)
-    });
+    // Without scaffolding, a project may simply have no tests. npm's own
+    // placeholder script ("no test specified && exit 1") is not a test that
+    // fails; it is no test at all, and failing on it would block every build.
+    const testScript = typeof pkg.scripts?.test === "string" ? pkg.scripts.test : "";
+    if (!testScript || /no test specified/i.test(testScript)) {
+      checks.push(skip("test", "no test script"));
+    } else {
+      const testResult = await Executor.run("npm", ["test"], { cwd: root, timeoutMs: CHECK_TIMEOUT_MS });
+      checks.push({
+        name: "test",
+        applicable: true,
+        passed: testResult.exitCode === 0,
+        durationMs: testResult.durationMs,
+        output: trim(`${testResult.stdout}\n${testResult.stderr}`)
+      });
+    }
 
     const hasLintScript = Boolean(pkg.scripts?.lint);
     if (hasLintScript) {

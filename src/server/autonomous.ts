@@ -290,7 +290,7 @@ export const registerAutonomousRoutes = (app: Express) => {
 
   /** Everything, newest first, including builds that have finished. */
   app.get("/api/autonomous/builds", authenticateAgent("read"), (_req: Request, res: Response) => {
-    const builds = BuildService.list();
+    const builds = BuildService.list().map((build) => BuildService.summary(build));
     res.json({ count: builds.length, active: BuildService.active().length, builds });
   });
 

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 
-import { api, type Build, type BuildEvent, type BuildProfile } from "@/lib/api";
+import { api, type Build, type BuildEvent, type BuildProfile, type BuildThought } from "@/lib/api";
 import { isLive, useActivity } from "../activity";
 import { Banner, Busy, CopyButton, Freshness, Header, Icon, Meter, Skeleton, ago, duration, useRemote, useToast } from "../ui";
 import { CHECK_LABEL, Checks, STAGE_LABEL, StateBadge, Stepper, bestPass, describe, latestPass } from "./parts";
@@ -14,6 +14,51 @@ const EVENT_TONE: Partial<Record<BuildEvent["kind"], string>> = {
   lesson: "good",
   guidance: "accent",
   score: ""
+};
+
+const THOUGHT_LABEL: Record<BuildThought["kind"], { label: string; tone: string }> = {
+  plan: { label: "plan", tone: "accent" },
+  lesson: { label: "memory", tone: "good" },
+  check: { label: "checks", tone: "" },
+  critique: { label: "review", tone: "warn" },
+  repair: { label: "fix", tone: "warn" },
+  review: { label: "next", tone: "accent" },
+  decision: { label: "decision", tone: "" }
+};
+
+/** One entry in the thinking feed: long text folds, so the feed stays scannable. */
+const Thought = ({ thought }: { thought: BuildThought }) => {
+  const [open, setOpen] = useState(false);
+  const { label, tone } = THOUGHT_LABEL[thought.kind] ?? { label: thought.kind, tone: "" };
+  const failed = thought.kind === "check" && /fails/.test(thought.title);
+  const long = thought.text.length > 280;
+  return (
+    <div className="thought">
+      <div className="thought-head">
+        <span className={`tag ${failed ? "bad" : thought.kind === "check" ? "good" : tone}`}>{label}</span>
+        <strong>{thought.title}</strong>
+        <time>{new Date(thought.at).toLocaleTimeString()}</time>
+      </div>
+      {thought.text ? (
+        <div className={`thought-text ${thought.kind === "check" ? "mono" : ""} ${long && !open ? "clamped" : ""}`}>{thought.text}</div>
+      ) : null}
+      {long ? (
+        <button className="link" onClick={() => setOpen((value) => !value)}>
+          {open ? "Less" : "More"}
+        </button>
+      ) : null}
+      {thought.files?.length ? (
+        <div className="chips" style={{ marginTop: 6 }}>
+          {thought.files.slice(0, 12).map((file) => (
+            <span key={file} className="chip mono">
+              {file}
+            </span>
+          ))}
+          {thought.files.length > 12 ? <span className="chip">+{thought.files.length - 12}</span> : null}
+        </div>
+      ) : null}
+    </div>
+  );
 };
 
 const PROFILES: Array<{ id: BuildProfile; label: string }> = [
@@ -35,12 +80,14 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
   const [instruction, setInstruction] = useState("");
   const [profile, setProfile] = useState<BuildProfile | null>(null);
   const [showAllEvents, setShowAllEvents] = useState(false);
+  const [showAllThoughts, setShowAllThoughts] = useState(false);
   const [openPass, setOpenPass] = useState<number | null>(null);
   const [files, setFiles] = useState<{ list: string[]; total: number; exists: boolean } | null>(null);
   const [viewing, setViewing] = useState<{ path: string; content: string; truncated: boolean } | null>(null);
   const [confirmStop, setConfirmStop] = useState(false);
 
   const events = useMemo(() => (build?.events ?? []).slice().reverse(), [build?.events]);
+  const thoughts = useMemo(() => (build?.thoughts ?? []).slice().reverse(), [build?.thoughts]);
 
   if (!build) {
     return (
@@ -176,6 +223,27 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
         </section>
 
         {detail.error && detail.data ? <Banner kind="error">{detail.error}</Banner> : null}
+
+        {/* ---------- what it is thinking ---------- */}
+        {thoughts.length > 0 ? (
+          <>
+            <div className="section-title">{live ? "What it is thinking — live" : "How it thought it through"}</div>
+            <div className={`card thoughts ${live ? "live" : ""}`}>
+              {(showAllThoughts ? thoughts : thoughts.slice(0, 8)).map((thought, index) => (
+                <Thought key={`${thought.at}-${index}`} thought={thought} />
+              ))}
+              {thoughts.length > 8 ? (
+                <button className="btn ghost small" style={{ marginTop: 10 }} onClick={() => setShowAllThoughts((value) => !value)}>
+                  {showAllThoughts ? "Show less" : `Show all ${thoughts.length}`}
+                </button>
+              ) : null}
+            </div>
+          </>
+        ) : live ? (
+          <div className="card">
+            <div className="empty">Waiting for its first thoughts — the model is writing the first pass.</div>
+          </div>
+        ) : null}
 
         {/* ---------- steer it, or carry on ---------- */}
         {live ? (

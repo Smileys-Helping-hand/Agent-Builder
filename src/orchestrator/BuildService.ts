@@ -24,7 +24,8 @@ import {
   type AutonomousConfig,
   type BuildGuidance,
   type BuildIteration,
-  type BuildProfile
+  type BuildProfile,
+  type BuildThought
 } from "./AutonomousOrchestrator.js";
 import { Logger } from "../utils/Logger.js";
 
@@ -60,6 +61,11 @@ export interface BuildEventEntry {
   message: string;
 }
 
+/** A thought, as kept: when it happened, on top of what the orchestrator said. */
+export interface BuildThoughtEntry extends BuildThought {
+  at: string;
+}
+
 export interface BuildRecord {
   buildId: string;
   projectName: string;
@@ -92,6 +98,8 @@ export interface BuildRecord {
   guidance: BuildGuidance[];
   iterationDetail: IterationSummary[];
   events: BuildEventEntry[];
+  /** The live "what it is thinking" feed: plans, check results, repairs, decisions. */
+  thoughts: BuildThoughtEntry[];
 }
 
 /** A build as the API and the UI see it: the record plus whether it is live in memory. */
@@ -109,6 +117,7 @@ export interface StartBuildOptions extends Partial<AutonomousConfig> {
 
 const HISTORY_LIMIT = 150;
 const EVENT_LIMIT = 250;
+const THOUGHT_LIMIT = 160;
 const BLOCKER_OUTPUT_CHARS = 2500;
 /** How long a finished orchestrator is kept so late status polls still see detail. */
 const RELEASE_AFTER_MS = 60_000;
@@ -200,6 +209,7 @@ const normalise = (raw: Partial<BuildRecord> & { buildId: string }): BuildRecord
   guidance: [],
   iterationDetail: [],
   events: [],
+  thoughts: [],
   ...raw
 });
 
@@ -301,7 +311,8 @@ buildEvents.setMaxListeners(50);
 
 export const BuildService = {
   start(options: StartBuildOptions): BuildRecord {
-    const profile: BuildProfile = options.profile ?? "balanced";
+    // Anything that is not a known profile (a typo in a request) is the normal one.
+    const profile: BuildProfile = options.profile && options.profile in PROFILE_DEFAULTS ? options.profile : "balanced";
     const defaults = PROFILE_DEFAULTS[profile] ?? PROFILE_DEFAULTS.balanced;
 
     if (options.workingDir) {
@@ -352,6 +363,7 @@ export const BuildService = {
       repairAttempt: null,
       guidance: [],
       iterationDetail: [],
+      thoughts: [],
       events: [
         {
           at: now(),
@@ -432,6 +444,15 @@ export const BuildService = {
 
     orchestrator.on("iteration-failed", ({ iteration, error, retrying }: { iteration: number; error: string; retrying: boolean }) => {
       log(buildId, "warn", `Pass ${iteration} failed: ${error}${retrying ? " — trying again" : ""}`);
+    });
+
+    orchestrator.on("thought", (thought: BuildThought) => {
+      patch(buildId, (existing) => ({
+        thoughts: [...existing.thoughts, { ...thought, at: now() }].slice(-THOUGHT_LIMIT),
+        // The checks just ran: that is the score right now, not at the end of the pass.
+        ...(thought.kind === "check" && typeof thought.score === "number" ? { qualityScore: thought.score } : {})
+      }));
+      if (thought.kind === "critique" || thought.kind === "decision") log(buildId, "stage", thought.title);
     });
 
     orchestrator.on("guidance", (note: BuildGuidance) => {
@@ -551,6 +572,25 @@ export const BuildService = {
       live: running,
       state: running ? (status.isPaused ? "paused" : "running") : record.state,
       guidance: status.guidance ?? record.guidance
+    };
+  },
+
+  /**
+   * A build as a list shows it: without the thought feed, the full log and
+   * the error output, which only its own page needs. The list is polled every
+   * few seconds and cached on the phone, so it has to stay small.
+   */
+  summary(build: BuildView): BuildView & { thoughtCount: number } {
+    return {
+      ...build,
+      thoughts: [],
+      thoughtCount: build.thoughts.length,
+      events: build.events.slice(-3),
+      iterationDetail: build.iterationDetail.map((pass) => ({
+        ...pass,
+        improvements: [],
+        blocker: pass.blocker ? { name: pass.blocker.name, output: "" } : null
+      }))
     };
   },
 
