@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { describeSubmission, formatMoney, routeFromHash, validateSubmission, whatsappLink, type FieldSpec } from "./site";
+import { TRAP_FIELD, businessSchema, describeSubmission, formatMoney, isSpam, routeFromHash, validateSubmission, whatsappLink, type FieldSpec } from "./site";
 
 describe("routeFromHash", () => {
   it("reads #/… as a page", () => {
@@ -54,5 +54,24 @@ describe("form submissions", () => {
 
   it("adds the page's own details after the fields", () => {
     expect(describeSubmission("Order", { name: "Ann" }, fields, "2 × Soap")).toBe("Order\n\nName: Ann\n\n2 × Soap");
+  });
+});
+
+describe("business schema", () => {
+  it("describes the business for search engines, safely", () => {
+    const json = businessSchema({ name: "A </script> B", tagline: "", description: "d", phone: "021", hours: [{ days: "Mon", time: "9-5" }] });
+    expect(json).not.toContain("</script>");
+    // JSON.parse turns the escaped "<" back into the real character.
+    const data = JSON.parse(json);
+    expect(data["@type"]).toBe("LocalBusiness");
+    expect(data.name).toBe("A </script> B");
+    expect(data.openingHours).toEqual(["Mon 9-5"]);
+  });
+});
+
+describe("spam trap", () => {
+  it("flags a form only when the hidden field was filled in", () => {
+    expect(isSpam({ name: "Ann" })).toBe(false);
+    expect(isSpam({ name: "Bot", [TRAP_FIELD]: "http://spam.example" })).toBe(true);
   });
 });

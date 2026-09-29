@@ -117,8 +117,12 @@ export function TemplateStudio({ publishedNote }: { publishedNote?: string | nul
   const projects = useRemote(() => api.projects(), 0);
   const [panel, setPanel] = useState<Panel | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [device, setDevice] = useState<"phone" | "desktop">("desktop");
 
   const all = templates.data?.all ?? [];
+  // Whatever you last picked, or the first one: there is always something in the pane.
+  const selected = all.find((t) => t.id === selectedId) ?? all[0] ?? null;
   const shown = all.filter((t) => !t.hidden).length;
 
   const run = async (key: string, ok: string, work: () => Promise<unknown>) => {
@@ -182,9 +186,66 @@ export function TemplateStudio({ publishedNote }: { publishedNote?: string | nul
       {templates.error ? <Banner kind="error">{templates.error}</Banner> : null}
       {templates.loading ? <Skeleton rows={3} /> : null}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(270px, 1fr))", gap: 14 }}>
+      <div className="template-studio">
+      {/* The live preview of whichever template is picked. */}
+      {selected ? (
+        <aside className="template-pane">
+          <div className="preview-bar">
+            <strong style={{ fontSize: 14 }}>
+              {selected.icon} {selected.name}
+            </strong>
+            <span className="chips">
+              <button className={`chip ${device === "phone" ? "accent" : ""}`} onClick={() => setDevice("phone")}>
+                Phone
+              </button>
+              <button className={`chip ${device === "desktop" ? "accent" : ""}`} onClick={() => setDevice("desktop")}>
+                Desktop
+              </button>
+              {selected.previewUrl ? (
+                <a className="chip" href={selected.previewUrl} target="_blank" rel="noreferrer">
+                  Open ↗
+                </a>
+              ) : null}
+              <a className="chip" href={`https://arpcloudsolutions.co.za/templates/${selected.id}`} target="_blank" rel="noreferrer">
+                On the site ↗
+              </a>
+            </span>
+          </div>
+          {selected.previewUrl ? (
+            <div className="preview-frame-wrap">
+              <iframe
+                key={`${selected.id}-${device}`}
+                src={selected.previewUrl}
+                title={`${selected.name}, live preview`}
+                className={`preview-frame ${device}`}
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+              />
+            </div>
+          ) : (
+            <div className="preview-empty" style={{ margin: 10 }}>
+              No preview for this one yet. Templates with code get one when the previews are published (templates/sites/build-previews.mjs).
+            </div>
+          )}
+        </aside>
+      ) : null}
+
+      <div className="template-list">
         {all.map((t) => (
-          <div key={t.id} className="card" style={{ margin: 0, display: "flex", flexDirection: "column", gap: 8, opacity: t.hidden ? 0.55 : 1 }}>
+          <div
+            key={t.id}
+            className={`card template-card ${selected?.id === t.id ? "picked" : ""}`}
+            style={{ margin: 0, display: "flex", flexDirection: "column", gap: 8, opacity: t.hidden ? 0.55 : 1 }}
+            onClick={(event) => {
+              // Picking a card previews it; its own buttons still do their own thing.
+              if (!(event.target as HTMLElement).closest("button, a")) setSelectedId(t.id);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && event.target === event.currentTarget) setSelectedId(t.id);
+            }}
+            role="button"
+            tabIndex={0}
+            aria-pressed={selected?.id === t.id}
+          >
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
               <strong style={{ fontSize: 15 }}>
                 {t.icon} {t.name}
@@ -234,6 +295,7 @@ export function TemplateStudio({ publishedNote }: { publishedNote?: string | nul
             </div>
           </div>
         ))}
+      </div>
       </div>
 
       {panel?.kind === "edit" ? (

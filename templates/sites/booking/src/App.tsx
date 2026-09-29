@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 
 import { site } from "./content";
-import { DemoBanner, Footer, Header, Section, SmartForm, WhatsAppButton, brandStyle, formatMoney, usePersistentState } from "./lib/site";
+import { DemoBanner, HeroArt, Footer, Header, Section, SmartForm, WhatsAppButton, brandStyle, formatMoney, usePersistentState } from "./lib/site";
 import { availableSlots, describeDate, openDays, type Booking } from "./slots";
 
 export default function App() {
@@ -46,9 +46,7 @@ export default function App() {
                 </a>
               </div>
             </div>
-            <div className="hero-art" aria-hidden="true">
-              {hero.art}
-            </div>
+            <HeroArt art={hero.art} image={hero.image} alt={business.name} />
           </div>
         </section>
 

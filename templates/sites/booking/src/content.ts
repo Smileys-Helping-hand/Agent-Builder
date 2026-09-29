@@ -45,7 +45,9 @@ export const site = {
     eyebrow: "Book online, any time",
     title: "Hair you'll love, booked in a minute.",
     subtitle: "Pick a service and a time that suits you. We'll confirm by email and send a reminder the day before.",
-    art: "💇"
+    art: "💇",
+    /** A photo to show instead of the emoji panel: any https:// image address. Leave empty for the panel. */
+    image: ""
   },
 
   services: [

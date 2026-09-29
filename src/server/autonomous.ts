@@ -9,7 +9,11 @@
  *
  * The bookkeeping itself lives in BuildService — these are only its routes.
  */
+import fs from "fs";
+import path from "path";
 import type { Express, Request, Response } from "express";
+
+import { signLink, verifyLink } from "../utils/SignedLinks.js";
 
 import { BuildService, buildEvents, type BuildRecord } from "../orchestrator/BuildService.js";
 import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
@@ -150,6 +154,54 @@ export const registerAutonomousRoutes = (app: Express) => {
   app.get("/api/autonomous/builds", authenticateAgent("read"), (_req: Request, res: Response) => {
     const builds = BuildService.list();
     res.json({ count: builds.length, active: BuildService.active().length, builds });
+  });
+
+  /**
+   * A link to look at what a build has made so far, for an <iframe>: the
+   * latest successful build of it (dist/), refreshed every time a pass builds.
+   * The link carries a signature for this one build instead of the key.
+   */
+  app.post("/api/autonomous/:buildId/preview-link", authenticateAgent("read"), (req: Request, res: Response) => {
+    const view = BuildService.view(req.params.buildId);
+    if (!view) return res.status(404).json({ error: "Unknown build." });
+    const index = path.resolve(view.outputDir, "dist", "index.html");
+    const available = fs.existsSync(index);
+    const token = signLink("preview", view.buildId, 6 * 60 * 60 * 1000);
+    res.json({
+      available,
+      builtAt: available ? fs.statSync(index).mtime.toISOString() : null,
+      path: `/api/preview/${encodeURIComponent(token)}/${encodeURIComponent(view.buildId)}/`
+    });
+  });
+
+  /**
+   * Serve a build's dist/ for its preview. The token is in the path, not the
+   * query, so the page's own relative links (./assets/…) carry it too.
+   */
+  app.get("/api/preview/:token/:buildId/*", (req: Request, res: Response) => {
+    const { token, buildId } = req.params;
+    if (!verifyLink("preview", buildId, token)) return res.status(403).send("This preview link has expired. Open the preview again from the app.");
+    const view = BuildService.view(buildId);
+    if (!view) return res.status(404).send("Unknown build.");
+
+    const dist = path.resolve(view.outputDir, "dist");
+    const wanted = (req.params as unknown as Record<string, string>)[0] || "index.html";
+    let file = path.resolve(dist, wanted);
+    if (file !== dist && !file.startsWith(dist + path.sep)) return res.status(400).send("Outside the build.");
+    if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, "index.html");
+    if (!fs.existsSync(file)) {
+      return res
+        .status(404)
+        .type("html")
+        .send("<p style='font:15px system-ui;padding:24px;color:#555'>Nothing built yet. The preview appears after the first pass builds successfully.</p>");
+    }
+
+    // The generated site runs sandboxed: its own opaque origin, so it can
+    // never call this API or read anything that belongs to it.
+    res.setHeader("Content-Security-Policy", "sandbox allow-scripts allow-forms allow-popups allow-modals");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "no-store");
+    res.sendFile(file);
   });
 
   app.get("/api/autonomous/hardware", authenticateAgent("read"), async (_req: Request, res: Response) => {

@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 import { EventEmitter } from "events";
 import { ModelRouter } from "../tools/ModelRouter.js";
 import { Logger } from "../utils/Logger.js";
@@ -13,6 +15,25 @@ import { WorkloadCoordinator } from "../utils/WorkloadCoordinator.js";
 import { toKey } from "../knowledge/KnowledgeDb.js";
 import { ProjectSnapshot } from "./ProjectSnapshot.js";
 import { ensureOllama } from "../utils/Ollama.js";
+import { reportStep, setPhase } from "../utils/BuildContext.js";
+
+/** A few file names, for a progress line. */
+const listFiles = (paths: string[]): string =>
+  paths.length <= 5 ? paths.join(", ") : `${paths.slice(0, 5).join(", ")} and ${paths.length - 5} more`;
+
+/** "install ✓ · typecheck ✗ · build ✓ — score 60", for a progress line. */
+const describeChecks = (report: VerificationReport): string =>
+  `${report.checks
+    .filter((check) => check.applicable)
+    .map((check) => `${check.name} ${check.passed ? "✓" : "✗"}`)
+    .join(" · ")} — score ${report.score}`;
+
+/** The line of a failed check's output that says what went wrong. */
+const firstError = (output: string): string => {
+  const lines = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const line = lines.find((entry) => /error|failed|cannot|not found|expected/i.test(entry)) ?? lines[lines.length - 1] ?? "No output";
+  return line.slice(0, 240);
+};
 
 export interface BuildIteration {
   iteration: number;
@@ -253,15 +274,26 @@ export class AutonomousOrchestrator extends EventEmitter {
     try {
       // Phase 1: Generate/Update Build
       iteration.status = "running";
+      setPhase(
+        this.config.workingDir || iterationNum > 1
+          ? `Pass ${iterationNum}: working on the code`
+          : `Pass ${iterationNum}: writing the code`
+      );
       const buildContext = this.getBuildContext(iterationNum);
       const generatedCode = await this.generateCode(buildContext);
       iteration.artifacts.push(...generatedCode.artifacts);
 
-      let currentFiles = generatedCode.files;
+      let currentFiles = this.guardFiles(generatedCode.files);
 
       const generateWrite = await this.workspace.writeFiles(
         currentFiles,
         `Iteration ${iterationNum}: generate (${this.config.projectName})`
+      );
+      reportStep(
+        generateWrite.writtenPaths.length
+          ? `Wrote ${generateWrite.writtenPaths.length} file(s): ${listFiles(generateWrite.writtenPaths)}`
+          : "The model's answer had no files in it",
+        generateWrite.writtenPaths.length ? "good" : "bad"
       );
       Logger.log(`Iteration ${iterationNum}: wrote ${generateWrite.writtenPaths.length} file(s) to ${this.workspace.root}`, {
         skipped: generateWrite.skippedPaths,
@@ -272,8 +304,10 @@ export class AutonomousOrchestrator extends EventEmitter {
       // Facts, not model opinion. This is the gate; QualityAnalyzer below is advisory.
       iteration.status = "verifying";
       this.emit("iteration-status", { iteration: iterationNum, status: "verifying" });
+      setPhase("Checking it: install, typecheck, build and tests");
 
       let verification = await Verifier.verify(this.workspace);
+      reportStep(describeChecks(verification), verification.passed ? "good" : "bad");
       const profileSettings = this.resolveProfile();
       let repairAttempt = 0;
 
@@ -281,6 +315,8 @@ export class AutonomousOrchestrator extends EventEmitter {
         repairAttempt += 1;
         iteration.status = "repairing";
         this.emit("iteration-status", { iteration: iterationNum, status: "repairing", attempt: repairAttempt });
+        setPhase(`Fixing ${verification.blockingCheck?.name ?? "what failed"} (attempt ${repairAttempt} of ${profileSettings.maxRepairAttempts})`);
+        if (verification.blockingCheck) reportStep(firstError(verification.blockingCheck.output), "bad");
 
         Logger.log(`Iteration ${iterationNum}: repair attempt ${repairAttempt}/${profileSettings.maxRepairAttempts}`, {
           failingCheck: verification.blockingCheck?.name
@@ -298,8 +334,10 @@ export class AutonomousOrchestrator extends EventEmitter {
 
         let critique: string | null = null;
         if (profileSettings.reviewModel && this.isOllamaProvider()) {
+          setPhase(`Asking ${profileSettings.reviewModel} what went wrong`);
           critique = await this.getRepairCritique(profileSettings.reviewModel, currentFiles, verification);
           if (critique) {
+            reportStep(`Review: ${critique.replace(/\s+/g, " ").slice(0, 400)}`, "model");
             Logger.log(`Iteration ${iterationNum}: deep-mode critique (${profileSettings.reviewModel})`, { critique });
           }
         }
@@ -308,11 +346,12 @@ export class AutonomousOrchestrator extends EventEmitter {
         const repaired = await this.repairFiles(currentFiles, verification, iterationNum, repairAttempt, critique, repairLessons);
         if (!repaired) {
           LessonMemory.recordOutcome(repairLessonIds, false);
+          reportStep("That fix attempt produced nothing usable, so this pass stops repairing", "bad");
           Logger.warn(`Iteration ${iterationNum}: repair attempt ${repairAttempt} produced no usable patch, stopping repair`);
           break;
         }
 
-        currentFiles = repaired;
+        currentFiles = this.guardFiles(repaired);
         const repairWrite = await this.workspace.writeFiles(
           currentFiles,
           `Iteration ${iterationNum}: repair attempt ${repairAttempt} (${verification.blockingCheck?.name ?? "unknown"})`
@@ -321,7 +360,10 @@ export class AutonomousOrchestrator extends EventEmitter {
           commit: repairWrite.commitHash
         });
 
+        reportStep(`Changed ${repairWrite.writtenPaths.length} file(s): ${listFiles(repairWrite.writtenPaths)}`);
+        setPhase("Checking the fix");
         verification = await Verifier.verify(this.workspace);
+        reportStep(describeChecks(verification), verification.passed ? "good" : "bad");
 
         // Learn from the attempt: the question is whether the check that was blocking now passes.
         const blockerCleared =
@@ -348,6 +390,7 @@ export class AutonomousOrchestrator extends EventEmitter {
       // improvement step below; does not gate anything.
       iteration.status = "analyzing";
       this.emit("iteration-status", { iteration: iterationNum, status: "analyzing" });
+      setPhase("Scoring the result");
 
       const analysis = await this.qualityAnalyzer.analyze({
         code: currentFiles,
@@ -362,6 +405,7 @@ export class AutonomousOrchestrator extends EventEmitter {
       if (iteration.qualityScore < this.config.qualityThreshold) {
         iteration.status = "improving";
         this.emit("iteration-status", { iteration: iterationNum, status: "improving" });
+        setPhase(`Improving it towards the target of ${this.config.qualityThreshold}`);
 
         const improvements = await this.improvementEngine.generateImprovements({
           code: currentFiles,
@@ -376,7 +420,10 @@ export class AutonomousOrchestrator extends EventEmitter {
         currentFiles = await this.applyImprovements(improvements, currentFiles, iterationNum);
 
         // Improvements can break something that was passing — re-verify before finalizing.
+        reportStep(`Planned ${improvements.suggestions.length} improvement(s)${improvements.suggestions.length ? `: ${improvements.suggestions.slice(0, 3).join("; ").slice(0, 300)}` : ""}`);
+        setPhase("Checking the improvements");
         const postImprovementVerification = await Verifier.verify(this.workspace);
+        reportStep(describeChecks(postImprovementVerification), postImprovementVerification.passed ? "good" : "bad");
         iteration.verification = postImprovementVerification;
         iteration.objectiveScore = postImprovementVerification.score;
         iteration.qualityScore = postImprovementVerification.score;
@@ -394,9 +441,11 @@ export class AutonomousOrchestrator extends EventEmitter {
           { commit: this.bestCommitHash }
         );
         await this.workspace.resetTo(this.bestCommitHash);
+        reportStep(`This pass scored ${iteration.qualityScore}, lower than the best so far (${this.bestObjectiveScore}); kept the better version`, "bad");
       }
 
       iteration.status = "complete";
+      reportStep(`Pass ${iterationNum} done: quality ${iteration.qualityScore} of a target ${this.config.qualityThreshold}`, "good");
       return iteration;
 
     } catch (error: any) {
@@ -795,6 +844,78 @@ ${lines}
   }
 
   /**
+   * Keep a template's build setup out of the model's reach.
+   *
+   * A build that starts from one of our templates (it has template.json) has
+   * a known-good setup: the Vite config that makes the site open by
+   * double-clicking, the TypeScript config, the entry point, the shared kit.
+   * Left alone, a 7B model rewrote them on most passes — once it replaced
+   * package.json and the build could never work again. So here:
+   *
+   *   - those files keep what they had; the model's versions are dropped;
+   *   - package.json may gain new dependencies, and nothing else changes;
+   *   - a second test or bundler config (jest, babel, webpack) is refused.
+   *
+   * Everything the customer asked for still gets built: the pages, content and
+   * components the template is made of. Projects that are not templates are
+   * not restricted here.
+   */
+  private guardFiles(files: Record<string, string>): Record<string, string> {
+    if (!this.config.workingDir || !fs.existsSync(path.join(this.workspace.root, "template.json"))) return files;
+
+    const locked = /^(package-lock\.json|tsconfig(\.[\w-]+)?\.json|vite\.config\.[cm]?[jt]s|index\.html|template\.json|src\/main\.tsx|src\/lib\/.+|src\/styles\/base\.css)$/;
+    const foreign = /^(jest|vitest|babel|webpack|rollup)\.config\.[\w.]+$|^\.babelrc$/;
+    const kept: Record<string, string> = {};
+    const refused: string[] = [];
+
+    for (const [rawPath, content] of Object.entries(files)) {
+      const file = rawPath.replace(/\\/g, "/").replace(/^\.\//, "");
+      if (file === "package.json") {
+        const merged = this.mergePackageJson(content);
+        if (merged) kept[file] = merged;
+        else refused.push(file);
+      } else if (locked.test(file) || foreign.test(file)) {
+        refused.push(file);
+      } else {
+        kept[file] = content;
+      }
+    }
+
+    if (refused.length) {
+      reportStep(`Kept the template's build setup: ignored changes to ${listFiles(refused)}`);
+    }
+    return kept;
+  }
+
+  /**
+   * The template's package.json with any new dependencies the model asked for
+   * added — and nothing else changed. Null when there is nothing to add.
+   */
+  private mergePackageJson(proposed: string): string | null {
+    const file = path.join(this.workspace.root, "package.json");
+    let current: Record<string, any>;
+    let wanted: Record<string, any>;
+    try {
+      current = JSON.parse(fs.readFileSync(file, "utf8"));
+      wanted = JSON.parse(proposed);
+    } catch {
+      return null;
+    }
+    let added = 0;
+    for (const field of ["dependencies", "devDependencies"] as const) {
+      for (const [name, version] of Object.entries((wanted[field] ?? {}) as Record<string, string>)) {
+        const present = current.dependencies?.[name] ?? current.devDependencies?.[name];
+        if (present || typeof version !== "string") continue;
+        current[field] = { ...(current[field] ?? {}), [name]: version };
+        added += 1;
+      }
+    }
+    if (added === 0) return null;
+    reportStep(`Added ${added} dependenc${added === 1 ? "y" : "ies"} to the template's package.json`);
+    return `${JSON.stringify(current, null, 2)}\n`;
+  }
+
+  /**
    * Parse generated code into structured files
    */
   private parseGeneratedCode(response: string): Record<string, string> {
@@ -847,6 +968,7 @@ ${lines}
     }
 
     if (applied.length > 0) {
+      currentCode = this.guardFiles(currentCode);
       const label = applied.length > 3 ? `${applied.slice(0, 3).join(", ")}, +${applied.length - 3} more` : applied.join(", ");
       const result = await this.workspace.writeFiles(
         currentCode,

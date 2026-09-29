@@ -1,5 +1,5 @@
 import { site } from "./content";
-import { DemoBanner, Footer, Header, Section, SmartForm, WhatsAppButton, brandStyle, formatMoney } from "./lib/site";
+import { DemoBanner, HeroArt, Footer, Header, Section, SmartForm, WhatsAppButton, brandStyle, formatMoney } from "./lib/site";
 
 export default function App() {
   const { business, hero } = site;
@@ -24,9 +24,7 @@ export default function App() {
                 </a>
               </div>
             </div>
-            <div className="hero-art" aria-hidden="true">
-              {hero.art}
-            </div>
+            <HeroArt art={hero.art} image={hero.image} alt={business.name} />
           </div>
         </section>
 

@@ -10,6 +10,7 @@ import fs from "fs/promises";
 import path from "path";
 import { Executor } from "./Executor.js";
 import { Workspace } from "./Workspace.js";
+import { reportCheck } from "../utils/BuildContext.js";
 
 export type CheckName = "install" | "typecheck" | "build" | "test" | "lint";
 
@@ -63,7 +64,20 @@ export class Verifier {
    */
   static async scaffoldTests(workspace: Workspace): Promise<void> {
     const pkgPath = path.join(workspace.root, "package.json");
-    const pkg = (await readJson(pkgPath)) ?? { name: "generated-app", version: "0.0.1" };
+    const existing = await readJson(pkgPath);
+
+    // A package.json that exists but does not parse is a bug for the repair
+    // loop to fix, not an empty slate. Replacing it with a stub threw away the
+    // project's dependencies and build script, and every later check failed on
+    // a project that could no longer build (a customer order ended at 31/100).
+    if (!existing && (await exists(pkgPath))) return;
+
+    // A project that already runs its own tests needs nothing added: rewriting
+    // its package.json and dropping in a second test config only fights it.
+    const ownTestScript = existing?.scripts?.test as string | undefined;
+    if (ownTestScript && !/^echo\b/.test(ownTestScript) && !/no test specified/i.test(ownTestScript)) return;
+
+    const pkg = existing ?? { name: "generated-app", version: "0.0.1" };
 
     pkg.devDependencies = pkg.devDependencies ?? {};
     if (!pkg.devDependencies.vitest && !pkg.dependencies?.vitest) {
@@ -133,23 +147,30 @@ export class Verifier {
 
     const root = workspace.root;
     const checks: CheckResult[] = [];
+    // Each check is reported as it starts and ends, so a build in progress can
+    // show "typecheck: running" rather than nothing for minutes at a time.
+    const add = (check: CheckResult) => {
+      checks.push(check);
+      reportCheck(check.name, !check.applicable ? "skipped" : check.passed ? "passed" : "failed");
+    };
     const hasPackageJson = await exists(path.join(root, "package.json"));
 
     if (!hasPackageJson) {
-      checks.push(skip("install", "no package.json"));
-      checks.push(skip("typecheck", "no package.json"));
-      checks.push(skip("build", "no package.json"));
-      checks.push(skip("test", "no package.json"));
-      checks.push(skip("lint", "no package.json"));
+      add(skip("install", "no package.json"));
+      add(skip("typecheck", "no package.json"));
+      add(skip("build", "no package.json"));
+      add(skip("test", "no package.json"));
+      add(skip("lint", "no package.json"));
       return this.score(checks);
     }
 
+    reportCheck("install", "running");
     const installResult = await Executor.run("npm", ["install", "--no-audit", "--no-fund"], {
       cwd: root,
       timeoutMs: INSTALL_TIMEOUT_MS
     });
     const installPassed = installResult.exitCode === 0;
-    checks.push({
+    add({
       name: "install",
       applicable: true,
       passed: installPassed,
@@ -158,10 +179,10 @@ export class Verifier {
     });
 
     if (!installPassed) {
-      checks.push(skip("typecheck", "skipped: install failed"));
-      checks.push(skip("build", "skipped: install failed"));
-      checks.push(skip("test", "skipped: install failed"));
-      checks.push(skip("lint", "skipped: install failed"));
+      add(skip("typecheck", "skipped: install failed"));
+      add(skip("build", "skipped: install failed"));
+      add(skip("test", "skipped: install failed"));
+      add(skip("lint", "skipped: install failed"));
       return this.score(checks);
     }
 
@@ -169,8 +190,9 @@ export class Verifier {
 
     const hasTsconfig = await exists(path.join(root, "tsconfig.json"));
     if (hasTsconfig) {
+      reportCheck("typecheck", "running");
       const result = await Executor.run("npx", ["tsc", "--noEmit"], { cwd: root, timeoutMs: CHECK_TIMEOUT_MS });
-      checks.push({
+      add({
         name: "typecheck",
         applicable: true,
         passed: result.exitCode === 0,
@@ -178,13 +200,14 @@ export class Verifier {
         output: trim(`${result.stdout}\n${result.stderr}`)
       });
     } else {
-      checks.push(skip("typecheck", "no tsconfig.json"));
+      add(skip("typecheck", "no tsconfig.json"));
     }
 
     const hasBuildScript = Boolean(pkg.scripts?.build);
     if (hasBuildScript) {
+      reportCheck("build", "running");
       const result = await Executor.run("npm", ["run", "build"], { cwd: root, timeoutMs: CHECK_TIMEOUT_MS });
-      checks.push({
+      add({
         name: "build",
         applicable: true,
         passed: result.exitCode === 0,
@@ -192,11 +215,12 @@ export class Verifier {
         output: trim(`${result.stdout}\n${result.stderr}`)
       });
     } else {
-      checks.push(skip("build", "no build script"));
+      add(skip("build", "no build script"));
     }
 
+    reportCheck("test", "running");
     const testResult = await Executor.run("npm", ["test"], { cwd: root, timeoutMs: CHECK_TIMEOUT_MS });
-    checks.push({
+    add({
       name: "test",
       applicable: true,
       passed: testResult.exitCode === 0,
@@ -206,8 +230,9 @@ export class Verifier {
 
     const hasLintScript = Boolean(pkg.scripts?.lint);
     if (hasLintScript) {
+      reportCheck("lint", "running");
       const result = await Executor.run("npm", ["run", "lint"], { cwd: root, timeoutMs: CHECK_TIMEOUT_MS });
-      checks.push({
+      add({
         name: "lint",
         applicable: true,
         passed: result.exitCode === 0,
@@ -215,7 +240,7 @@ export class Verifier {
         output: trim(`${result.stdout}\n${result.stderr}`)
       });
     } else {
-      checks.push(skip("lint", "no lint script"));
+      add(skip("lint", "no lint script"));
     }
 
     return this.score(checks);

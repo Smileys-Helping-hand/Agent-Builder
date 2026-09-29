@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { api, type Build } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
+import { BuildLive } from "../build-live";
 
 const PROFILES = [
   { id: "fast" as const, label: "Fast", hint: "Fewer repair passes. Good for a rough first look." },
@@ -17,41 +18,8 @@ const EXAMPLES = [
   { name: "Booking form", description: "A booking page that takes a name, date and service, and emails the owner." }
 ];
 
-/** The stages an iteration moves through, in the order they happen. */
-const STAGE_LABEL: Record<string, string> = {
-  starting: "getting ready",
-  running: "writing code",
-  verifying: "running the tests",
-  repairing: "fixing what failed",
-  analyzing: "scoring the result",
-  improving: "improving it",
-  packaging: "packaging it up",
-  complete: "done with this pass",
-  error: "hit a problem"
-};
-
 const stateTone = (state: Build["state"]): string =>
   state === "running" ? "up" : state === "paused" ? "degraded" : state === "completed" ? "up" : "down";
-
-const Meter = ({ value }: { value: number }) => (
-  <div
-    style={{ height: 6, borderRadius: 99, background: "var(--line)", overflow: "hidden", marginTop: 9 }}
-    role="progressbar"
-    aria-valuenow={Math.round(value)}
-    aria-valuemin={0}
-    aria-valuemax={100}
-  >
-    <div
-      style={{
-        height: "100%",
-        width: `${Math.max(2, Math.min(100, value))}%`,
-        borderRadius: 99,
-        background: value >= 80 ? "var(--good)" : value >= 50 ? "var(--warn)" : "var(--bad)",
-        transition: "width .5s ease"
-      }}
-    />
-  </div>
-);
 
 export default function BuildPage() {
   const connected = useConnected();
@@ -221,11 +189,8 @@ export default function BuildPage() {
                 <span className={`pill ${stateTone(build.state)}`} style={{ marginTop: 7 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <strong style={{ fontSize: 15.5, display: "block" }}>{build.projectName}</strong>
-                  <small style={{ color: "var(--muted)" }}>
-                    Pass {build.iterations || 1} · {STAGE_LABEL[build.stage ?? "starting"] ?? build.stage} ·
-                    started {ago(build.startedAt)}
-                  </small>
-                  <Meter value={build.qualityScore} />
+                  <small style={{ color: "var(--muted)" }}>Started {ago(build.startedAt)}</small>
+                  <BuildLive buildId={build.buildId} initial={build} />
                   <div className="chips" style={{ marginTop: 9 }}>
                     <span className="chip accent">quality {Math.round(build.qualityScore)}</span>
                     {build.state === "paused" ? <span className="chip">paused</span> : null}

@@ -286,6 +286,26 @@ export interface Build {
   stage?: string;
   guidance: BuildGuidance[];
   iterationDetail: BuildIterationDetail[];
+  /** Live detail: stage, bars, checks, the model's answer as it is written, the log. */
+  progress?: BuildProgress | null;
+}
+
+export type StageId = "starting" | "writing" | "checking" | "fixing" | "scoring" | "improving" | "finished";
+
+export interface BuildProgress {
+  pass: number;
+  maxPasses: number;
+  target: number;
+  stage: StageId;
+  stageLabel: string;
+  stageStartedAt: string | null;
+  passStartedAt: string | null;
+  passPercent: number;
+  passEtaSeconds: number | null;
+  qualityPercent: number;
+  checks: Partial<Record<string, "running" | "passed" | "failed" | "skipped">>;
+  thinking: { phase: string; model: string; tail: string; chars: number; tokensPerSecond: number; done: boolean; at: string } | null;
+  log: Array<{ at: string; text: string; kind: "info" | "good" | "bad" | "model" }>;
 }
 
 export type OrderStatus =
@@ -673,6 +693,16 @@ export const api = {
   // --- builds ---
   builds: () => request<{ count: number; active: number; builds: Build[] }>("/api/autonomous/builds"),
   build: (id: string) => request<Build>(`/api/autonomous/${id}/status`),
+  /** A signed link to what a build has made so far, for an iframe. */
+  buildPreview: async (id: string): Promise<{ available: boolean; builtAt: string | null; url: string }> => {
+    const conn = loadConnection();
+    if (!conn) throw new ApiError("Not connected to a machine yet.", 0);
+    const res = await request<{ available: boolean; builtAt: string | null; path: string }>(
+      `/api/autonomous/${encodeURIComponent(id)}/preview-link`,
+      { method: "POST" }
+    );
+    return { available: res.available, builtAt: res.builtAt, url: `${conn.address}${res.path}` };
+  },
   startBuild: (config: {
     projectName: string;
     description: string;
@@ -776,10 +806,15 @@ export const api = {
       { method: "POST", body: JSON.stringify(options ?? {}) },
       45000
     ),
-  downloadPackageUrl: (id: string) => {
+  /**
+   * A one-hour link to download an order's package. It carries a signature for
+   * that one order, never the key: a key in a URL ends up in proxy logs.
+   */
+  downloadPackageUrl: async (id: string): Promise<string> => {
     const conn = loadConnection();
-    if (!conn) return "";
-    return `${conn.address}/api/orders/${encodeURIComponent(id)}/download?key=${encodeURIComponent(conn.key)}`;
+    if (!conn) throw new ApiError("Not connected to a machine yet.", 0);
+    const res = await request<{ path: string }>(`/api/orders/${encodeURIComponent(id)}/download-link`, { method: "POST" });
+    return `${conn.address}${res.path}`;
   },
 
   // --- Jarvis ---

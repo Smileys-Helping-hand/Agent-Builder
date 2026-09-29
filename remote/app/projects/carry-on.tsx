@@ -8,6 +8,7 @@ import { useState } from "react";
 
 import { api, type AccessCheck, type ProjectBuild, type PushPlan } from "@/lib/api";
 import { Busy, Icon, ago, useRemote, useToast } from "../ui";
+import { BuildLive } from "../build-live";
 
 const STATE_LABEL: Record<ProjectBuild["state"], string> = {
   running: "Working",
@@ -209,6 +210,8 @@ export function ProjectBuildList({ projectId, refreshKey = 0 }: { projectId: str
                 {ago(build.createdAt)} · {build.changes.length} file(s) changed
                 {running ? " · working on a copy; the project is untouched" : ""}
               </small>
+
+              {running ? <BuildLive buildId={build.buildId} /> : null}
 
               <div className="chips" style={{ marginTop: 8 }}>
                 <Step

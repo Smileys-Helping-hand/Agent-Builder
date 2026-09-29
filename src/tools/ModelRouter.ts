@@ -1,6 +1,7 @@
 import { OpenAIClient } from "./OpenAIClient.js";
 import { gpuLock } from "../utils/GpuLock.js";
 import { ModelPerfLog } from "./ModelPerfLog.js";
+import { buildActivity, currentBuild } from "../utils/BuildContext.js";
 
 export type ModelProvider = "openai" | "ollama" | "lmstudio";
 
@@ -17,6 +18,10 @@ const getProviderFromEnv = (): ModelProvider => {
   return "ollama";
 };
 
+/** How much of the answer-in-progress to share, and how often. */
+const THINKING_TAIL = 1800;
+const THINKING_EVERY_MS = 350;
+
 const generateWithOllama = async (prompt: string, model?: string): Promise<string> => {
   const baseUrl = process.env.OLLAMA_BASE_URL ?? process.env.OLLAMA_URL ?? "http://localhost:11434";
   const targetModel = model ?? process.env.OLLAMA_MODEL ?? process.env.MODEL ?? "qwen2.5-coder:7b";
@@ -25,6 +30,8 @@ const generateWithOllama = async (prompt: string, model?: string): Promise<strin
   // cost in an iterate-verify-repair loop that calls the model every few
   // seconds — keep_alive keeps it resident between calls.
   const keepAlive = process.env.OLLAMA_KEEP_ALIVE ?? "30m";
+  // Streamed, so a build can show its answer as it is written. The text
+  // returned is exactly what a non-streamed call returned.
   const response = await fetch(`${baseUrl}/api/generate`, {
     method: "POST",
     headers: {
@@ -33,18 +40,66 @@ const generateWithOllama = async (prompt: string, model?: string): Promise<strin
     body: JSON.stringify({
       model: targetModel,
       prompt,
-      stream: false,
+      stream: true,
       keep_alive: keepAlive
     })
   });
 
-  if (!response.ok) {
+  if (!response.ok || !response.body) {
     const message = await response.text();
     throw new Error(`Ollama request failed: ${response.status} ${response.statusText} - ${message}`);
   }
 
-  const data = (await response.json()) as { response?: string; output?: string };
-  return data.response ?? data.output ?? "";
+  const scope = currentBuild();
+  const started = Date.now();
+  let text = "";
+  let tokens = 0;
+  let pending = "";
+  let lastShared = 0;
+  const share = (done: boolean) => {
+    if (!scope) return;
+    const seconds = Math.max((Date.now() - started) / 1000, 0.001);
+    buildActivity.emit("thinking", {
+      buildId: scope.buildId,
+      phase: scope.phase ?? "thinking",
+      model: targetModel,
+      tail: text.slice(-THINKING_TAIL),
+      chars: text.length,
+      tokensPerSecond: Math.round((tokens / seconds) * 10) / 10,
+      done,
+      at: new Date().toISOString()
+    });
+    lastShared = Date.now();
+  };
+
+  const decoder = new TextDecoder();
+  const reader = response.body.getReader();
+  // Ollama streams one JSON object per line: { response, done, ... }.
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    pending += decoder.decode(value, { stream: true });
+    let newline = pending.indexOf("\n");
+    while (newline >= 0) {
+      const line = pending.slice(0, newline).trim();
+      pending = pending.slice(newline + 1);
+      newline = pending.indexOf("\n");
+      if (!line) continue;
+      const chunk = JSON.parse(line) as { response?: string; error?: string };
+      if (chunk.error) throw new Error(`Ollama: ${chunk.error}`);
+      if (chunk.response) {
+        text += chunk.response;
+        tokens += 1;
+      }
+    }
+    if (Date.now() - lastShared > THINKING_EVERY_MS) share(false);
+  }
+  if (pending.trim()) {
+    const chunk = JSON.parse(pending) as { response?: string };
+    text += chunk.response ?? "";
+  }
+  share(true);
+  return text;
 };
 
 const generateWithLMStudio = async (prompt: string, model?: string): Promise<string> => {

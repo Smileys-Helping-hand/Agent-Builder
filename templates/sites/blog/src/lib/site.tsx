@@ -206,6 +206,42 @@ export function Footer({ business }: { business: Business }) {
   );
 }
 
+/**
+ * The hero picture: a real photo when content.ts gives one (hero.image), the
+ * brand-coloured emoji panel otherwise, so a site never shows a broken image.
+ */
+export function HeroArt({ art, image, alt }: { art: string; image?: string; alt?: string }) {
+  if (image) {
+    return <img className="hero-art hero-photo" src={image} alt={alt ?? ""} loading="eager" />;
+  }
+  return (
+    <div className="hero-art" aria-hidden="true">
+      {art}
+    </div>
+  );
+}
+
+/**
+ * The business described for search engines (schema.org), built from
+ * content.ts: name, contact details, address and hours show up in Google's
+ * local results. main.tsx puts it in the page head; visitors never see it.
+ * "<" is escaped so nothing in the content can close the script tag early.
+ */
+export function businessSchema(business: Business, type = "LocalBusiness"): string {
+  const data = {
+    "@context": "https://schema.org",
+    "@type": type,
+    name: business.name,
+    description: business.description,
+    telephone: business.phone,
+    email: business.email,
+    address: business.address,
+    openingHours: business.hours?.map((row) => `${row.days} ${row.time}`),
+    sameAs: business.social?.map((link) => link.url)
+  };
+  return JSON.stringify(data).replace(/</g, "\\u003c");
+}
+
 export function Section({
   id,
   eyebrow,
@@ -222,7 +258,7 @@ export function Section({
   tone?: "plain" | "tinted";
 }) {
   return (
-    <section id={id} className={`section ${tone === "tinted" ? "section-tinted" : ""}`}>
+    <section id={id} className={`section reveal ${tone === "tinted" ? "section-tinted" : ""}`}>
       <div className="container">
         <div className="section-head">
           {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
@@ -284,6 +320,11 @@ export function describeSubmission(subject: string, values: Record<string, strin
   return `${subject}\n\n${lines.join("\n")}${extra ? `\n\n${extra}` : ""}`;
 }
 
+/** A form field people never see; anything in it means a bot filled the form in. */
+export const TRAP_FIELD = "website_url";
+
+export const isSpam = (values: Record<string, string>): boolean => Boolean(values[TRAP_FIELD]?.trim());
+
 /** Which required fields are empty, and whether the email address looks like one. */
 export function validateSubmission(values: Record<string, string>, fields: FieldSpec[]): string[] {
   const problems: string[] = [];
@@ -323,6 +364,12 @@ export function SmartForm({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    // The trap field is hidden from people; only a bot fills it in. Look
+    // successful so it moves on, and send nothing.
+    if (isSpam(values)) {
+      setState("sent");
+      return;
+    }
     const found = validateSubmission(values, fields);
     setProblems(found);
     if (found.length > 0) return;
@@ -333,7 +380,12 @@ export function SmartForm({
         const response = await fetch(settings.endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ subject, ...values, ...(extra ? { details: extra } : {}) })
+          // Everything the visitor typed except the empty spam trap.
+          body: JSON.stringify({
+            subject,
+            ...Object.fromEntries(Object.entries(values).filter(([name]) => name !== TRAP_FIELD)),
+            ...(extra ? { details: extra } : {})
+          })
         });
         if (!response.ok) throw new Error(`The form service answered ${response.status}.`);
       } else {
@@ -354,6 +406,16 @@ export function SmartForm({
 
   return (
     <form className="form" onSubmit={submit} noValidate>
+      {/* A spam trap: invisible and skipped by keyboard and screen readers. */}
+      <label className="trap" aria-hidden="true">
+        Leave this empty
+        <input
+          tabIndex={-1}
+          autoComplete="off"
+          value={values[TRAP_FIELD] ?? ""}
+          onChange={(event) => setValues({ ...values, [TRAP_FIELD]: event.target.value })}
+        />
+      </label>
       {fields.map((field) => (
         <label key={field.name} className={`field ${field.type === "textarea" ? "field-wide" : ""}`}>
           <span>

@@ -51,7 +51,9 @@ export const site = {
       "A properly sized solar and battery system, installed by certified electricians, with a free assessment before you commit to anything.",
     primaryCta: { label: "Get a free quote", href: "#contact" },
     secondaryCta: { label: "See pricing", href: "#pricing" },
-    art: "☀️"
+    art: "☀️",
+    /** A photo to show instead of the emoji panel: any https:// image address. Leave empty for the panel. */
+    image: ""
   },
 
   stats: [
