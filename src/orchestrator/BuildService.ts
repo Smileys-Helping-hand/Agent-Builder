@@ -28,6 +28,7 @@ import {
   type BuildThought
 } from "./AutonomousOrchestrator.js";
 import { Logger } from "../utils/Logger.js";
+import { buildActivity, buildScope, type BuildScope } from "../utils/BuildContext.js";
 
 export type BuildState = "running" | "paused" | "completed" | "stopped" | "error" | "interrupted";
 
@@ -109,6 +110,20 @@ export interface BuildRecord {
 /** A build as the API and the UI see it: the record plus whether it is live in memory. */
 export interface BuildView extends BuildRecord {
   live: boolean;
+  /** The model's answer as it is being written. Live builds only; never saved. */
+  writing?: LiveWriting | null;
+}
+
+/** What the model is writing right now, as ModelRouter streams it. */
+export interface LiveWriting {
+  phase: string;
+  model: string;
+  /** The last part of the answer so far. */
+  tail: string;
+  chars: number;
+  tokensPerSecond: number;
+  done: boolean;
+  at: string;
 }
 
 export interface StartBuildOptions extends Partial<AutonomousConfig> {
@@ -129,6 +144,13 @@ const STORE_PATH = path.resolve(process.env.BUILDS_DB_PATH ?? "./data/builds.jso
 
 const orchestrators = new Map<string, AutonomousOrchestrator>();
 const history = new Map<string, BuildRecord>();
+
+// The model's answer as it streams, per running build. Only the latest is
+// kept, in memory: it changes several times a second and is worthless later.
+const writing = new Map<string, LiveWriting>();
+buildActivity.on("thinking", ({ buildId, ...live }: LiveWriting & { buildId: string }) => {
+  if (orchestrators.has(buildId)) writing.set(buildId, live);
+});
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const now = (): string => new Date().toISOString();
@@ -344,6 +366,9 @@ export const BuildService = {
     const orchestrator = new AutonomousOrchestrator(config);
     const status = orchestrator.getStatus();
     const buildId = status.buildId as string;
+    // Carried through every await of this build, so the model router can say
+    // which build its streaming answer belongs to; phase follows the stage.
+    const scope: BuildScope = { buildId, phase: "Getting ready" };
 
     orchestrators.set(buildId, orchestrator);
     const record: BuildRecord = {
@@ -385,6 +410,7 @@ export const BuildService = {
     const current = (): BuildRecord => history.get(buildId) ?? record;
 
     const settle = (state: BuildState, extra: Partial<BuildRecord> = {}): BuildRecord => {
+      writing.delete(buildId);
       const base = current();
       const best = bestPass(base);
       const updated: BuildRecord = {
@@ -411,11 +437,13 @@ export const BuildService = {
     });
 
     orchestrator.on("iteration-started", ({ iteration }: { iteration: number }) => {
+      scope.phase = `${STAGE_WORDS.running} (pass ${iteration})`;
       patch(buildId, { iterations: iteration, stage: "running", repairAttempt: null, stageSince: now(), passSince: now() });
       log(buildId, "pass", `Pass ${iteration} started`);
     });
 
     orchestrator.on("iteration-status", ({ iteration, status: stage, attempt }: { iteration: number; status: string; attempt?: number }) => {
+      scope.phase = `${STAGE_WORDS[stage] ?? stage} (pass ${iteration}${stage === "repairing" && attempt ? `, attempt ${attempt}` : ""})`;
       patch(buildId, { stage, repairAttempt: attempt ?? null, stageSince: now() });
       if (stage === "repairing") {
         log(buildId, "repair", `Pass ${iteration}: repair attempt ${attempt ?? 1}`);
@@ -518,7 +546,9 @@ export const BuildService = {
     // Deliberately not awaited: a build runs for minutes to hours. start()
     // emits "error" before it rejects, and that handler has already recorded
     // the failure; this only covers a rejection that happens without one.
-    orchestrator.start().catch((error: unknown) => {
+    // Inside the build's scope, so the model router can say which build its
+    // streaming answer belongs to (see LiveWriting).
+    buildScope.run(scope, () => orchestrator.start()).catch((error: unknown) => {
       if (current().state === "error") return;
       Logger.error("Build failed to run", { buildId, error: errorMessage(error) });
       buildEvents.emit("failed", settle("error", { error: errorMessage(error), outcome: `Failed: ${errorMessage(error)}` }));
@@ -580,7 +610,8 @@ export const BuildService = {
       ...record,
       live: running,
       state: running ? (status.isPaused ? "paused" : "running") : record.state,
-      guidance: status.guidance ?? record.guidance
+      guidance: status.guidance ?? record.guidance,
+      writing: running ? writing.get(buildId) ?? null : null
     };
   },
 
@@ -594,6 +625,8 @@ export const BuildService = {
       ...build,
       thoughts: [],
       thoughtCount: build.thoughts.length,
+      // How fast it is writing, for a list; the text itself only on its own page.
+      writing: build.writing ? { ...build.writing, tail: "" } : null,
       events: build.events.slice(-3),
       iterationDetail: build.iterationDetail.map((pass) => ({
         ...pass,

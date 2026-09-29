@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { api, type Build, type BuildEvent, type BuildProfile, type BuildThought } from "@/lib/api";
 import { isLive, useActivity } from "../activity";
 import { Banner, Busy, CopyButton, Freshness, Header, Icon, Meter, Skeleton, ago, duration, useRemote, useToast } from "../ui";
+import { QUICK_STEERS, WritingPane } from "./writing";
 import { PreviewPane } from "../preview";
 import { BuildProgress, CHECK_LABEL, Checks, StateBadge, Stepper, bestPass, describe, latestPass } from "./parts";
 
@@ -73,7 +74,7 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
   const activity = useActivity();
   const fromList = activity.builds.find((build) => build.buildId === id) ?? null;
   // The single-build route has everything; poll it quickly only while it runs.
-  const detail = useRemote(() => api.build(id), fromList && !isLive(fromList) ? 0 : 4000, `build.${id}`);
+  const detail = useRemote(() => api.build(id), fromList && !isLive(fromList) ? 0 : 2500, `build.${id}`);
   const build: Build | null = detail.data ?? fromList;
 
   const [busy, setBusy] = useState<string | null>(null);
@@ -235,6 +236,14 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
         </aside>
         <div className="detail-main">
 
+        {/* ---------- what it is writing, token by token ---------- */}
+        {live ? (
+          <>
+            <div className="section-title">Watching it write — live</div>
+            <WritingPane writing={build.writing} stage={build.stage} />
+          </>
+        ) : null}
+
         {/* ---------- what it is thinking ---------- */}
         {thoughts.length > 0 ? (
           <>
@@ -261,6 +270,13 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
           <div className="card">
             <h2>Tell it something while it works</h2>
             <p className="hint">It joins the instructions from the next pass and stays for the rest of the build.</p>
+            <div className="chips" style={{ marginBottom: 10 }}>
+              {QUICK_STEERS.map((quick) => (
+                <button key={quick.label} className={`chip ${steer === quick.text ? "accent" : ""}`} onClick={() => setSteer(quick.text)}>
+                  {quick.label}
+                </button>
+              ))}
+            </div>
             <textarea
               rows={2}
               value={steer}

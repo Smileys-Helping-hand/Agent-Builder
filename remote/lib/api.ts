@@ -301,6 +301,17 @@ export interface BuildThought {
 export type BuildState = "running" | "paused" | "completed" | "stopped" | "error" | "interrupted";
 export type BuildProfile = "fast" | "balanced" | "deep";
 
+/** What the model is writing right now, streamed from the builder. */
+export interface LiveWriting {
+  phase: string;
+  model: string;
+  tail: string;
+  chars: number;
+  tokensPerSecond: number;
+  done: boolean;
+  at: string;
+}
+
 export interface Build {
   buildId: string;
   projectName: string;
@@ -338,6 +349,8 @@ export interface Build {
   /** The live feed of what it is thinking. Only on a single build; lists carry thoughtCount. */
   thoughts?: BuildThought[];
   thoughtCount?: number;
+  /** The model's answer as it is being written (live builds; lists get it without the text). */
+  writing?: LiveWriting | null;
 }
 
 export type OrderStatus =
