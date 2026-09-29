@@ -95,6 +95,10 @@ export interface BuildRecord {
   stage: string | null;
   /** Which repair attempt the current pass is on, while repairing. */
   repairAttempt: number | null;
+  /** When the current stage began, so the app can say how long it has been at it. */
+  stageSince: string | null;
+  /** When the current pass began. */
+  passSince: string | null;
   guidance: BuildGuidance[];
   iterationDetail: IterationSummary[];
   events: BuildEventEntry[];
@@ -206,6 +210,8 @@ const normalise = (raw: Partial<BuildRecord> & { buildId: string }): BuildRecord
   outcome: null,
   stage: null,
   repairAttempt: null,
+  stageSince: null,
+  passSince: null,
   guidance: [],
   iterationDetail: [],
   events: [],
@@ -361,6 +367,8 @@ export const BuildService = {
       outcome: null,
       stage: "starting",
       repairAttempt: null,
+      stageSince: now(),
+      passSince: now(),
       guidance: [],
       iterationDetail: [],
       thoughts: [],
@@ -403,12 +411,12 @@ export const BuildService = {
     });
 
     orchestrator.on("iteration-started", ({ iteration }: { iteration: number }) => {
-      patch(buildId, { iterations: iteration, stage: "running", repairAttempt: null });
+      patch(buildId, { iterations: iteration, stage: "running", repairAttempt: null, stageSince: now(), passSince: now() });
       log(buildId, "pass", `Pass ${iteration} started`);
     });
 
     orchestrator.on("iteration-status", ({ iteration, status: stage, attempt }: { iteration: number; status: string; attempt?: number }) => {
-      patch(buildId, { stage, repairAttempt: attempt ?? null });
+      patch(buildId, { stage, repairAttempt: attempt ?? null, stageSince: now() });
       if (stage === "repairing") {
         log(buildId, "repair", `Pass ${iteration}: repair attempt ${attempt ?? 1}`);
       } else if (STAGE_WORDS[stage]) {
@@ -428,7 +436,8 @@ export const BuildService = {
           passed: best?.passed ?? null,
           iterationDetail: detail,
           stage: "between passes",
-          repairAttempt: null
+          repairAttempt: null,
+          stageSince: now()
         };
       });
       const failing = summary.checks.filter((check) => check.applicable && !check.passed).map((check) => check.name);

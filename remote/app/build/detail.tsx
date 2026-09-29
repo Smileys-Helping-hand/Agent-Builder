@@ -5,7 +5,8 @@ import { useMemo, useState } from "react";
 import { api, type Build, type BuildEvent, type BuildProfile, type BuildThought } from "@/lib/api";
 import { isLive, useActivity } from "../activity";
 import { Banner, Busy, CopyButton, Freshness, Header, Icon, Meter, Skeleton, ago, duration, useRemote, useToast } from "../ui";
-import { CHECK_LABEL, Checks, STAGE_LABEL, StateBadge, Stepper, bestPass, describe, latestPass } from "./parts";
+import { PreviewPane } from "../preview";
+import { BuildProgress, CHECK_LABEL, Checks, StateBadge, Stepper, bestPass, describe, latestPass } from "./parts";
 
 const EVENT_TONE: Partial<Record<BuildEvent["kind"], string>> = {
   error: "bad",
@@ -154,14 +155,12 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
             {Math.round(score)}
             <small>/100{build.qualityThreshold ? ` · target ${build.qualityThreshold}` : ""}</small>
           </div>
-          <Meter value={score} target={build.qualityThreshold} />
-          <p className="hero-sub" style={{ marginTop: 10 }}>
-            {live
-              ? `Pass ${build.iterations || 1}${build.maxIterations ? ` of up to ${build.maxIterations}` : ""} · ${
-                  STAGE_LABEL[build.stage ?? "starting"] ?? build.stage
-                }${build.stage === "repairing" && build.repairAttempt ? ` (attempt ${build.repairAttempt})` : ""}`
-              : build.outcome ?? (build.error ? `Failed: ${build.error}` : `${label}.`)}
-          </p>
+          {live ? <BuildProgress build={build} /> : <Meter value={score} target={build.qualityThreshold} />}
+          {!live ? (
+            <p className="hero-sub" style={{ marginTop: 10 }}>
+              {build.outcome ?? (build.error ? `Failed: ${build.error}` : `${label}.`)}
+            </p>
+          ) : null}
           {live ? <Stepper stage={build.stage} attempt={build.repairAttempt} /> : null}
 
           <div className="mini-stats">
@@ -223,6 +222,18 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
         </section>
 
         {detail.error && detail.data ? <Banner kind="error">{detail.error}</Banner> : null}
+
+        {/* On a wide screen the preview sits beside everything else, so you
+            can watch what it is making and what it is thinking at once. */}
+        <div className="detail-grid">
+        <aside className="detail-side">
+          {/* ---------- what it has made, live ---------- */}
+          <div className="section-title">{live ? "Live preview — updates after every pass" : "Preview"}</div>
+          <div className="card">
+            <PreviewPane kind="build" id={build.buildId} refreshKey={`${build.iterations}-${build.state}-${build.qualityScore}`} title={`${build.projectName} preview`} />
+          </div>
+        </aside>
+        <div className="detail-main">
 
         {/* ---------- what it is thinking ---------- */}
         {thoughts.length > 0 ? (
@@ -528,6 +539,8 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
               </button>
             </div>
           ) : null}
+        </div>
+        </div>
         </div>
       </div>
     </>

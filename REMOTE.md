@@ -94,6 +94,31 @@ and says when it last heard from the PC.
 - The Build tab shows a badge with how many are running, and the app tells you
   when one finishes — even one that finished while it was closed.
 
+### Watching it work
+
+While a build runs, its page shows three bars — where this pass is (writing,
+checking, fixing, scoring, improving) and for how long, how many passes it has
+used, and its quality against the target — plus **what it is thinking**: its
+plan, what each check said (with the error when one fails), why it made each fix
+and which files it touched, and when it goes back to its best pass. The same
+bars show on the Build list and on orders that are building.
+
+### Previews
+
+- **Templates** (under Orders): pick a template and its live site shows beside
+  the list — switch between phone, tablet and desktop, or open it in a tab. The
+  first time, the builder builds the template's site (about a minute); after
+  that it is instant. **Rebuild** after changing a template's code.
+- **Builds**: every build's page has a live preview of what it has made,
+  refreshed after each pass. It shows the built site (`dist/`), or the folder
+  itself for a plain static page.
+
+Previews are served by the builder on your PC at `/preview/…` behind a link
+that only opens that one preview, and they run sandboxed, so a preview's
+scripts cannot touch the app. Open the built site from a server like this, not
+by double-clicking `index.html`: browsers refuse to run a module script from a
+file on disk, which is why that shows a blank page.
+
 **Settings → Connection check** says which builder this device is talking to,
 whether the address makes sense from here (an `127.0.0.1` address on a phone, or an
 `http://` address from the https app, never works), and whether the model server

@@ -5,7 +5,7 @@ import { useState } from "react";
 
 import { api, type Order, type OrderStatus } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
-import { STAGE_LABEL } from "../build/parts";
+import { BuildProgress, STAGE_LABEL } from "../build/parts";
 import { TemplateStudio } from "./templates";
 
 /**
@@ -278,6 +278,7 @@ export default function Orders() {
                           ) : null}
                         </div>
 
+                        {building && order.build?.live ? <BuildProgress build={order.build} compact /> : null}
                         {order.build ? (
                           <Link
                             href={`/build/?id=${encodeURIComponent(order.build.buildId)}`}

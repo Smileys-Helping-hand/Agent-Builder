@@ -320,6 +320,9 @@ export interface Build {
   /** What the current pass is doing right now. */
   stage?: string | null;
   repairAttempt?: number | null;
+  /** When the current stage and pass began. */
+  stageSince?: string | null;
+  passSince?: string | null;
   guidance: BuildGuidance[];
   iterationDetail: BuildIterationDetail[];
   // Present on builders from this version on; older ones leave them out.
@@ -474,6 +477,27 @@ export const servedByBuilder = async (): Promise<string | null> => {
   } catch {
     return null;
   }
+};
+
+/** Where a live preview is served, from the builder. `url` is a path on the builder. */
+export interface PreviewInfo {
+  kind: "template" | "build";
+  id: string;
+  ready: boolean;
+  url: string | null;
+  reason: string | null;
+  preparing?: boolean;
+  failed?: boolean;
+  /** Changes when the built site changes, so the pane knows to reload. */
+  version?: number | null;
+  /** A template's published example, when it has one. */
+  hosted?: string | null;
+}
+
+/** A path on the builder as a full address this device can load. */
+export const onMachine = (pathOnMachine: string): string => {
+  const connection = loadConnection();
+  return connection ? `${connection.address}${pathOnMachine}` : pathOnMachine;
 };
 
 export const api = {
@@ -662,6 +686,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ target })
     }),
+  preview: (kind: "template" | "build", id: string) =>
+    request<PreviewInfo>(`/api/previews/${kind}/${encodeURIComponent(id)}`),
+  rebuildTemplatePreview: (id: string) =>
+    request<{ success: boolean }>(`/api/previews/template/${encodeURIComponent(id)}/rebuild`, { method: "POST" }),
   pauseBuild: (id: string) => request<unknown>(`/api/autonomous/${id}/pause`, { method: "POST" }),
   resumeBuild: (id: string) => request<unknown>(`/api/autonomous/${id}/resume`, { method: "POST" }),
   stopBuild: (id: string) => request<unknown>(`/api/autonomous/${id}/stop`, { method: "POST" }),
