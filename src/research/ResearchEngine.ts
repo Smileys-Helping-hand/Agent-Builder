@@ -107,6 +107,20 @@ export class ResearchEngine {
     return running.length;
   }
 
+  /**
+   * Switch research back on, for the power controls. resumeAll only restarts
+   * topics already marked running (what a boot should do), but "Free the GPU"
+   * marks them paused — so the app's Start buttons, which used to call
+   * resumeAll, could never bring research back once it had been paused.
+   * Stopped topics stay stopped: that was a decision about the topic, not the GPU.
+   */
+  startAll(): number {
+    for (const topic of ResearchStore.listTopics()) {
+      if (topic.status === "paused") this.changeStatus(topic.id, "running", "Research resumed");
+    }
+    return this.resumeAll();
+  }
+
   start(title: string, question: string): ResearchTopic {
     const topic = ResearchStore.createTopic(title, question);
     ResearchStore.logActivity(topic.id, 0, "status", "Research started");

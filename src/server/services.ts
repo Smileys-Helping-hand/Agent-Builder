@@ -39,6 +39,11 @@ export interface ServiceReport {
   state: ServiceState;
   detail: string;
   canStart: boolean;
+  /**
+   * Useful, but Agent Builder works without it. Shown and startable like any
+   * other service, but being off does not make the machine "unhealthy".
+   */
+  optional?: boolean;
 }
 
 export interface Problem {
@@ -142,7 +147,10 @@ const collectStatus = async () => {
       label: "Comfy Desktop (AI Image/UI)",
       state: comfy.state,
       detail: comfy.detail,
-      canStart: comfy.state !== "up" && Boolean(comfyBinary())
+      canStart: comfy.state !== "up" && Boolean(comfyBinary()),
+      // An image tool for PrintForge that "Free the GPU" stops on purpose;
+      // nothing Agent Builder does needs it.
+      optional: true
     },
     {
       id: "research",
@@ -197,7 +205,7 @@ const collectStatus = async () => {
     counts,
     research: { running: research.running, topics: research.topics.length, findings: research.findings },
     metrics,
-    healthy: services.every((service) => service.state === "up" || service.state === "unknown")
+    healthy: services.every((service) => service.optional || service.state === "up" || service.state === "unknown")
   };
 };
 
@@ -325,7 +333,7 @@ export const registerServiceRoutes = (app: Express) => {
     }
 
     try {
-      const resumed = ResearchEngine.getInstance().resumeAll();
+      const resumed = ResearchEngine.getInstance().startAll();
       steps.push({ service: "research", action: `${resumed} topic(s) resumed`, ok: true });
     } catch (error) {
       steps.push({ service: "research", action: `failed: ${error instanceof Error ? error.message : String(error)}`, ok: false });
@@ -416,7 +424,7 @@ export const registerServiceRoutes = (app: Express) => {
     EcosystemLoop.stop();
     steps.push({ service: "research", action: `${paused} topic(s) paused`, ok: true });
 
-    const resumed = ResearchEngine.getInstance().resumeAll();
+    const resumed = ResearchEngine.getInstance().startAll();
     EcosystemLoop.start();
     steps.push({ service: "research", action: `${resumed} topic(s) resumed`, ok: true });
     steps.push({ service: "ecosystem", action: "project watch restarted", ok: true });
@@ -492,7 +500,7 @@ export const registerServiceRoutes = (app: Express) => {
       const runningCount = topics.filter((t) => t.status === "running").length;
       const shouldStart = action ? action === "start" : runningCount === 0;
       if (shouldStart) {
-        const resumed = ResearchEngine.getInstance().resumeAll();
+        const resumed = ResearchEngine.getInstance().startAll();
         outcome = `Resumed ${resumed} research topic(s).`;
       } else {
         let paused = 0;
@@ -554,7 +562,7 @@ export const registerServiceRoutes = (app: Express) => {
     }
 
     if (fixId === "resume_research") {
-      const resumed = ResearchEngine.getInstance().resumeAll();
+      const resumed = ResearchEngine.getInstance().startAll();
       return res.json({ ok: true, message: `Resumed ${resumed} research topic(s).` });
     }
 
