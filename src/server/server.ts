@@ -53,6 +53,7 @@ import { registerEcosystemRoutes } from "./ecosystem.js";
 import { registerServiceRoutes } from "./services.js";
 import { registerJarvisRoutes } from "./jarvis.js";
 import { registerOrderRoutes } from "./orders.js";
+import { registerPreviewRoutes } from "./previews.js";
 import { registerHubSsoRoutes } from "./hubSso.js";
 
 const warnIfNoAccountsExist = () => {
@@ -243,6 +244,7 @@ registerEcosystemRoutes(app);
 registerServiceRoutes(app);
 registerJarvisRoutes(app);
 registerOrderRoutes(app);
+registerPreviewRoutes(app);
 registerHubSsoRoutes(app);
 app.use("/api/env", authenticate, authorizeRoles(["admin", "owner"]), envRouter);
 const healthMonitor = new HealthMonitor();

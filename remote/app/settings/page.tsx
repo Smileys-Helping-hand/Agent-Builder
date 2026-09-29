@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { api, clearConnection, loadConnection, saveConnection, testConnection } from "@/lib/api";
 import { Banner, Busy, Header, Icon, useToast } from "../ui";
+import { ConnectionCheck } from "./check";
 
 /**
  * Pull an address and key out of whatever was pasted: the whole connection link
@@ -38,6 +39,8 @@ export default function Settings() {
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [connected, setConnected] = useState(false);
   const [shuttingDown, setShuttingDown] = useState(false);
+  // Bumped whenever a new connection is saved, so the check runs against it.
+  const [checkVersion, setCheckVersion] = useState(0);
 
   useEffect(() => {
     // The launcher's QR code carries the address and key, so scanning it
@@ -86,6 +89,7 @@ export default function Settings() {
       setKey(parsed.key);
       setConnected(true);
       setPasted("");
+      setCheckVersion((value) => value + 1);
       toast("Connected", "ok");
     } else {
       toast(outcome.message, "error");
@@ -100,6 +104,7 @@ export default function Settings() {
     if (outcome.ok) {
       saveConnection({ address, key });
       setConnected(true);
+      setCheckVersion((value) => value + 1);
       toast("Connected", "ok");
     } else {
       toast(outcome.message, "error");
@@ -243,6 +248,8 @@ export default function Settings() {
 
           {result ? <Banner kind={result.ok ? "ok" : "error"}>{result.message}</Banner> : null}
         </div>
+
+        {connected ? <ConnectionCheck key={checkVersion} /> : null}
 
         <div className="card">
           <h2>New here?</h2>

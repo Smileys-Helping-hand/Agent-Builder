@@ -4,6 +4,7 @@
  * Carrying on with projects from the app: cloning one from GitHub, and the
  * builds that work on a copy of a project until you apply what they did.
  */
+import Link from "next/link";
 import { useState } from "react";
 
 import { api, type ProjectBuild } from "@/lib/api";
@@ -15,7 +16,8 @@ const STATE_LABEL: Record<ProjectBuild["state"], string> = {
   completed: "Finished",
   ended: "Ended",
   stopped: "Stopped",
-  error: "Failed"
+  error: "Failed",
+  interrupted: "Interrupted"
 };
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -158,6 +160,9 @@ export function ProjectBuildList({ projectId, refreshKey = 0 }: { projectId: str
                 {ago(build.createdAt)} · {build.changes.length} file(s) changed
                 {build.appliedAt ? ` · applied ${ago(build.appliedAt)}` : running ? " · working on a copy; the project is untouched" : ""}
               </small>
+              <Link href={`/build/?id=${encodeURIComponent(build.buildId)}`} className="follow-link">
+                {running ? "Follow it live — its thinking, checks and files →" : "See how it went →"}
+              </Link>
               {build.lastApply?.conflicts.length ? (
                 <small style={{ color: "var(--warn)", display: "block", marginTop: 4 }}>
                   Not applied (you had changed them): {build.lastApply.conflicts.join(", ")}

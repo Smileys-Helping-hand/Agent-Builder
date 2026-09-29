@@ -4,16 +4,19 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { api, type Problem } from "@/lib/api";
-import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "./ui";
+import { isLive, useActivity } from "./activity";
+import { StateBadge, STAGE_LABEL } from "./build/parts";
+import { Banner, Busy, Freshness, Header, Icon, Meter, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "./ui";
 
 type Step = { service: string; action: string; ok: boolean };
 
 export default function Home() {
   const connected = useConnected();
   const toast = useToast();
-  const status = useRemote(() => api.status(), 15000);
-  const feed = useRemote(() => api.feed(6), 20000);
-  const carryOn = useRemote(() => api.continueTimeline(), 60000);
+  const status = useRemote(() => api.status(), 15000, "status");
+  const feed = useRemote(() => api.feed(6), 20000, "feed");
+  const carryOn = useRemote(() => api.continueTimeline(), 60000, "continue");
+  const activity = useActivity();
   const [working, setWorking] = useState<string | null>(null);
   const [steps, setSteps] = useState<Step[] | null>(null);
   const [problems, setProblems] = useState<Problem[] | null>(null);
@@ -24,7 +27,8 @@ export default function Home() {
 
   const data = status.data;
   const healthy = data?.healthy ?? false;
-  const unreachable = Boolean(status.error);
+  const unreachable = Boolean(status.error) && !status.fresh;
+  const recentBuilds = activity.live.length > 0 ? activity.live : activity.builds.slice(0, 3);
 
   const heroTone = unreachable ? "bad" : healthy ? "good" : "";
   const heroTitle = unreachable ? "Can't reach your PC" : healthy ? "Everything is running" : "Some things are off";
@@ -202,6 +206,45 @@ export default function Home() {
             </div>
           ) : null}
         </section>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: -4 }}>
+          <Freshness updatedAt={status.updatedAt} fresh={status.fresh} error={status.error} />
+        </div>
+
+        {recentBuilds.length > 0 ? (
+          <>
+            <div className="section-title">{activity.live.length > 0 ? `Building now (${activity.live.length})` : "Latest builds"}</div>
+            <div className="card">
+              {recentBuilds.map((build) => {
+                const live = isLive(build);
+                const score = live ? build.qualityScore : build.bestScore ?? build.qualityScore;
+                return (
+                  <Link key={build.buildId} href={`/build/?id=${encodeURIComponent(build.buildId)}`} className="live-build">
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                        <strong style={{ fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {build.projectName}
+                        </strong>
+                        <StateBadge build={build} />
+                      </div>
+                      <small className="muted">
+                        {live
+                          ? `Pass ${build.iterations || 1} · ${STAGE_LABEL[build.stage ?? "starting"] ?? build.stage} · quality ${Math.round(score)}`
+                          : `Quality ${Math.round(score)} · ${build.finishedAt ? ago(build.finishedAt) : ago(build.startedAt)}`}
+                      </small>
+                      {live ? <Meter value={score} target={build.qualityThreshold} /> : null}
+                    </div>
+                  </Link>
+                );
+              })}
+              <div style={{ marginTop: 12 }}>
+                <Link href="/build">
+                  <button className="btn ghost small">{Icon.sparkle} All builds</button>
+                </Link>
+              </div>
+            </div>
+          </>
+        ) : null}
 
         {troubleshootProgress !== null ? (
           <div className="card" style={{ borderColor: "var(--accent)", backgroundColor: "rgba(99, 102, 241, 0.08)" }}>

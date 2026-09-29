@@ -9,8 +9,9 @@
 import { useState } from "react";
 
 import { api, type Template, type TemplateKind } from "@/lib/api";
+import { PreviewPane } from "../preview";
 import { ProjectBuildList } from "../projects/carry-on";
-import { Banner, Busy, Icon, Skeleton, useRemote, useToast } from "../ui";
+import { Banner, Busy, Icon, Skeleton, usePersistentState, useRemote, useToast } from "../ui";
 
 const KINDS: Array<{ id: TemplateKind; label: string }> = [
   { id: "website", label: "Website" },
@@ -117,8 +118,11 @@ export function TemplateStudio({ publishedNote }: { publishedNote?: string | nul
   const projects = useRemote(() => api.projects(), 0);
   const [panel, setPanel] = useState<Panel | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // Which template the preview shows. Clicking a card picks it; kept across refreshes.
+  const [selectedId, setSelectedId] = usePersistentState<string | null>("template-selected", null);
 
   const all = templates.data?.all ?? [];
+  const selected = all.find((t) => t.id === selectedId) ?? all.find((t) => !t.hidden && t.sourcePath) ?? all[0] ?? null;
   const shown = all.filter((t) => !t.hidden).length;
 
   const run = async (key: string, ok: string, work: () => Promise<unknown>) => {
@@ -182,9 +186,59 @@ export function TemplateStudio({ publishedNote }: { publishedNote?: string | nul
       {templates.error ? <Banner kind="error">{templates.error}</Banner> : null}
       {templates.loading ? <Skeleton rows={3} /> : null}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(270px, 1fr))", gap: 14 }}>
+      <div className="studio">
+        {selected ? (
+          <div className="studio-preview card">
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", marginBottom: 10 }}>
+              <div style={{ minWidth: 0 }}>
+                <div className="hero-label">Previewing</div>
+                <strong style={{ fontSize: 17 }}>
+                  {selected.icon} {selected.name}
+                </strong>
+                <p className="muted small" style={{ margin: "4px 0 0" }}>
+                  {selected.price ? `From R${selected.price.toLocaleString("en-ZA")}` : "No price"}
+                  {selected.timeframe ? ` · ${selected.timeframe}` : ""}
+                  {selected.techStack?.length ? ` · ${selected.techStack.join(", ")}` : ""}
+                </p>
+              </div>
+              <button className="btn small primary" onClick={() => setPanel({ kind: "customer", template: selected, customerName: "", brief: "" })}>
+                {Icon.sparkle} Build for a customer
+              </button>
+            </div>
+            <PreviewPane kind="template" id={selected.id} height={520} title={`${selected.name} preview`} />
+            {selected.features.length ? (
+              <div className="chips" style={{ marginTop: 10 }}>
+                {selected.features.slice(0, 8).map((feature) => (
+                  <span key={feature} className="chip">
+                    {feature}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+      <div className="studio-list">
         {all.map((t) => (
-          <div key={t.id} className="card" style={{ margin: 0, display: "flex", flexDirection: "column", gap: 8, opacity: t.hidden ? 0.55 : 1 }}>
+          <div
+            key={t.id}
+            className={`card template-card ${selected?.id === t.id ? "selected" : ""}`}
+            role="button"
+            tabIndex={0}
+            aria-pressed={selected?.id === t.id}
+            onClick={(event) => {
+              // Buttons inside the card do their own thing; anywhere else picks it for the preview.
+              if ((event.target as HTMLElement).closest("button, a")) return;
+              setSelectedId(t.id);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                setSelectedId(t.id);
+              }
+            }}
+            style={{ margin: 0, display: "flex", flexDirection: "column", gap: 8, opacity: t.hidden ? 0.55 : 1 }}
+          >
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
               <strong style={{ fontSize: 15 }}>
                 {t.icon} {t.name}
@@ -234,6 +288,7 @@ export function TemplateStudio({ publishedNote }: { publishedNote?: string | nul
             </div>
           </div>
         ))}
+      </div>
       </div>
 
       {panel?.kind === "edit" ? (

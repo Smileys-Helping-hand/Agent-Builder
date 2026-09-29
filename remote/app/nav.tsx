@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { useActivity } from "./activity";
 import { Icon } from "./ui";
 
 // Six is the most that stays legible across the bottom of a phone. Research,
@@ -18,6 +19,7 @@ const items = [
 
 export const Nav = () => {
   const pathname = usePathname();
+  const { live } = useActivity();
   return (
     <nav className="nav">
       <div className="nav-inner">
@@ -25,7 +27,10 @@ export const Nav = () => {
           const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           return (
             <Link key={item.href} href={item.href} className={active ? "active" : ""}>
-              {item.icon}
+              <span className="nav-icon">
+                {item.icon}
+                {item.href === "/build" && live.length > 0 ? <b className="nav-badge">{live.length}</b> : null}
+              </span>
               {item.label}
             </Link>
           );

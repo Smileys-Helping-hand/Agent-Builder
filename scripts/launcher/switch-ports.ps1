@@ -7,7 +7,7 @@ if ($rd) {
 }
 
 Write-Host "Starting Agent Builder on port 4000..."
-$process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c set HOST=0.0.0.0&& npx tsx src/server/server.ts" -WorkingDirectory "e:\Projects\Agent-Builder" -WindowStyle Hidden -PassThru
+$process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c set HOST=0.0.0.0&& npx tsx src/server/server.ts" -WorkingDirectory (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) -WindowStyle Hidden -PassThru
 Write-Host "Agent Builder started with PID $($process.Id)"
 
 for ($i = 0; $i -lt 15; $i++) {

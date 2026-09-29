@@ -72,6 +72,58 @@ rather than a one-off. Pause frees the GPU without losing the work; Stop ends it
 
 You can close the app. The build keeps going on the PC.
 
+### Keeping track of builds
+
+Every build is saved on the PC in `data/builds.json` as it runs, with each pass,
+what every check (install, typecheck, build, tests, lint) said, and a log of what
+happened. Refreshing the app, closing the phone, or restarting the builder loses
+nothing; the app also keeps its last copy on the device, so it shows straight away
+and says when it last heard from the PC.
+
+- **Build** lists every build, filtered by *Building*, *Works* (every check passes)
+  and *Needs a look* (failed, interrupted, or finished with a check still failing).
+  Tap one for its page — its address (`/build/?id=…`) survives a refresh.
+- A build page shows the live stage, each pass's checks, **why it is not passing
+  yet** (the end of the failing check's output), the files it wrote, and buttons to
+  open its folder in VS Code or Explorer on the PC.
+- **Continue building** starts a new build in the same folder from the best code
+  the last one left, told what still fails. A build interrupted by a restart comes
+  back as *Interrupted* and can be continued the same way.
+- A build stops by itself once passes stop getting better (Fast: 3 passes without
+  a new best, Balanced: 5, Deep: 8) rather than running to its pass limit.
+- The Build tab shows a badge with how many are running, and the app tells you
+  when one finishes — even one that finished while it was closed.
+
+### Watching it work
+
+While a build runs, its page shows three bars — where this pass is (writing,
+checking, fixing, scoring, improving) and for how long, how many passes it has
+used, and its quality against the target — plus **what it is thinking**: its
+plan, what each check said (with the error when one fails), why it made each fix
+and which files it touched, and when it goes back to its best pass. The same
+bars show on the Build list and on orders that are building.
+
+### Previews
+
+- **Templates** (under Orders): pick a template and its live site shows beside
+  the list — switch between phone, tablet and desktop, or open it in a tab. The
+  first time, the builder builds the template's site (about a minute); after
+  that it is instant. **Rebuild** after changing a template's code.
+- **Builds**: every build's page has a live preview of what it has made,
+  refreshed after each pass. It shows the built site (`dist/`), or the folder
+  itself for a plain static page.
+
+Previews are served by the builder on your PC at `/preview/…` behind a link
+that only opens that one preview, and they run sandboxed, so a preview's
+scripts cannot touch the app. Open the built site from a server like this, not
+by double-clicking `index.html`: browsers refuse to run a module script from a
+file on disk, which is why that shows a blank page.
+
+**Settings → Connection check** says which builder this device is talking to,
+whether the address makes sense from here (an `127.0.0.1` address on a phone, or an
+`http://` address from the https app, never works), and whether the model server
+and the other services on that PC are up.
+
 ## Carrying on with a project
 
 **Projects** → the project → **AI Coder & Build** → say what to do next → **Carry on**.
