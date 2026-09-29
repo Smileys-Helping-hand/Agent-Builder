@@ -10,6 +10,7 @@
  * that cannot be delivered is kept in a short queue and retried, because Jarvis
  * is frequently asleep while the builder keeps running.
  */
+import { AgentActivity } from "../state/AgentActivity.js";
 import { Logger } from "../utils/Logger.js";
 
 export type JarvisEventType = "build" | "repair" | "issue" | "research" | "status" | "test";
@@ -146,6 +147,15 @@ export const JarvisClient = {
   async send(event: JarvisEvent): Promise<{ ok: boolean; detail: string }> {
     const result = await deliver(event);
     lastResult = { at: new Date().toISOString(), ...result };
+    // The app's Jarvis log shows what we told him as well as what he did here.
+    AgentActivity.record({
+      direction: "out",
+      agent: "jarvis",
+      method: event.type,
+      path: "webhook",
+      status: result.ok ? 200 : 0,
+      summary: result.ok ? event.subject : `${event.subject} — not delivered: ${result.detail}`
+    });
 
     if (!result.ok) {
       queue.push({ ...event, attempts: 1, firstTried: Date.now() });

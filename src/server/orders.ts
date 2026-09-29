@@ -17,8 +17,10 @@ import { ProjectBuilds } from "../ecosystem/ProjectBuilds.js";
 import { Catalog } from "../orders/Catalog.js";
 import { OrderPipeline } from "../orders/OrderPipeline.js";
 import { OrderStore, ORDER_STATUSES, type OrderStatus } from "../orders/OrderStore.js";
+import { Packager } from "../orders/Packager.js";
 import { SiteClient } from "../orders/SiteClient.js";
 import { Logger } from "../utils/Logger.js";
+import { signLink, verifyLink } from "../utils/SignedLinks.js";
 
 /** The build as a list needs it, without its thought feed and logs. */
 const summarise = (buildId: string) => {
@@ -308,54 +310,42 @@ export const registerOrderRoutes = (app: Express) => {
   });
 
   /**
-   * Download the complete packaged codebase (.zip) for an order.
-   * Can be requested by the remote dashboard, customer download link, or Consolidated Hub.
+   * A link to download an order's package, for a browser tab: it carries a
+   * signature for this one order instead of the agent key (a key in a URL ends
+   * up in every proxy and tunnel log). Valid for an hour.
    */
-  app.get("/api/orders/:id/download", async (req: Request, res: Response) => {
+  app.post("/api/orders/:id/download-link", authenticateAgent("read"), (req: Request, res: Response) => {
+    const order = OrderStore.get(req.params.id);
+    if (!order) return res.status(404).json({ error: "Order not found." });
+    const token = signLink("download", order.id, 60 * 60 * 1000);
+    res.json({ path: `/api/orders/${encodeURIComponent(order.id)}/download?t=${encodeURIComponent(token)}`, expiresInMinutes: 60 });
+  });
+
+  /**
+   * The order's package: the built site as one double-clickable file, the
+   * source without node_modules, and how to open both (see Packager). Needs an
+   * agent key or a signed link — an order's code is the customer's, not public.
+   */
+  app.get("/api/orders/:id/download", async (req: Request, res: Response, next) => {
+    // A signed link stands in for the key; anything else goes through the usual check.
+    if (!verifyLink("download", req.params.id, req.query.t)) {
+      return authenticateAgent("read")(req, res, next);
+    }
+    next();
+  }, async (req: Request, res: Response) => {
     const order = OrderStore.get(req.params.id);
     if (!order) return res.status(404).json({ error: "Order not found." });
 
-    const pkgDir = path.resolve("data", "packages");
-    if (!fs.existsSync(pkgDir)) fs.mkdirSync(pkgDir, { recursive: true });
-    const zipPath = path.join(pkgDir, `${order.id}.zip`);
-
-    if (!fs.existsSync(zipPath)) {
-      let sourceDir = order.deliverablePath;
-      if (!sourceDir && order.buildId) {
-        sourceDir = BuildService.view(order.buildId)?.outputDir ?? null;
-      }
-
-      if (!sourceDir || !fs.existsSync(sourceDir)) {
-        // Generate a clean production scaffold for immediate download
-        sourceDir = path.join(pkgDir, `temp-${order.id}`);
-        if (!fs.existsSync(sourceDir)) fs.mkdirSync(sourceDir, { recursive: true });
-        fs.writeFileSync(
-          path.join(sourceDir, "README.md"),
-          `# ${order.title}\n\n${order.brief}\n\nBuilt by Agent Builder for ${order.customerName}.\n`
-        );
-        fs.writeFileSync(
-          path.join(sourceDir, "package.json"),
-          JSON.stringify({ name: order.id, version: "1.0.0", private: true, scripts: { start: "node index.js" } }, null, 2)
-        );
-        fs.writeFileSync(
-          path.join(sourceDir, "index.html"),
-          `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${order.title}</title><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="font-family:sans-serif;padding:2rem;"><h1>${order.title}</h1><p>${order.brief}</p><hr><small>Ready for deployment to arpcloudsolutions.co.za</small></body></html>`
-        );
-      }
-
-      try {
-        await execFileAsync("powershell.exe", [
-          "-NoProfile",
-          "-Command",
-          `Compress-Archive -Path '${sourceDir}\\*' -DestinationPath '${zipPath}' -Force`
-        ], { windowsHide: true });
-      } catch (err: unknown) {
-        return res.status(500).json({ error: `Failed to archive package: ${err instanceof Error ? err.message : String(err)}` });
-      }
+    const sourceDir = order.deliverablePath ?? (order.buildId ? BuildService.view(order.buildId)?.outputDir ?? null : null);
+    if (!sourceDir || !fs.existsSync(sourceDir)) {
+      return res.status(409).json({ error: "Nothing has been built for this order yet, so there is nothing to download." });
     }
-
-    const cleanTitle = (order.title || "package").replace(/[^a-zA-Z0-9_-]/g, "_");
-    res.download(zipPath, `${cleanTitle}.zip`);
+    try {
+      const pkg = await Packager.packageBuild(path.resolve(sourceDir), order.title, order.id);
+      res.download(pkg.zipPath, pkg.fileName);
+    } catch (error) {
+      res.status(500).json({ error: `Could not package it: ${error instanceof Error ? error.message : String(error)}` });
+    }
   });
 
   app.get("/api/orders/:id", authenticateAgent("read"), (req: Request, res: Response) => {

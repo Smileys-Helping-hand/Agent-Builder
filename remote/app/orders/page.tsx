@@ -7,6 +7,7 @@ import { api, type Order, type OrderStatus } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
 import { BuildProgress, STAGE_LABEL } from "../build/parts";
 import { TemplateStudio } from "./templates";
+import { PreviewPane } from "../preview";
 
 /**
  * What each state means, in the customer's terms rather than the code's.
@@ -290,6 +291,14 @@ export default function Orders() {
                           </Link>
                         ) : null}
 
+                        {/* Finished work can be looked at right here, not only downloaded. */}
+                        {!building && order.buildId && ["review", "delivered", "maintained"].includes(order.status) ? (
+                          <details style={{ marginTop: 10 }}>
+                            <summary style={{ cursor: "pointer", fontWeight: 600 }}>Preview what was built</summary>
+                            <PreviewPane kind="build" id={order.buildId} height={460} title={`${order.title} preview`} />
+                          </details>
+                        ) : null}
+
                         {order.status === "review" ? (
                           <Banner kind="info">
                             Finished and waiting for you. Look at it in {order.deliverablePath ?? "the build folder"}, then hand it over.
@@ -331,16 +340,27 @@ export default function Orders() {
                             </button>
                           ) : null}
                           {(order.deliverablePath || ["review", "delivered", "maintained"].includes(order.status)) ? (
-                            <a
+                            <button
                               className="btn accent"
-                              href={api.downloadPackageUrl(order.id)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              title="Download complete codebase as .zip archive"
-                              style={{ display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none" }}
+                              title="The built site (double-click to open) and its source, as a .zip"
+                              disabled={busy}
+                              onClick={() => {
+                                // Open the tab now, while it still counts as the click; point it at the link once it arrives.
+                                const tab = window.open("about:blank", "_blank");
+                                void api.downloadPackageUrl(order.id).then(
+                                  (url) => {
+                                    if (tab) tab.location.href = url;
+                                    else window.location.href = url;
+                                  },
+                                  (error: unknown) => {
+                                    tab?.close();
+                                    toast(error instanceof Error ? error.message : String(error), "error");
+                                  }
+                                );
+                              }}
                             >
                               {Icon.folder} Download .zip
-                            </a>
+                            </button>
                           ) : null}
                           <button className="btn" onClick={() => setOpen(expanded ? null : order.id)}>
                             {expanded ? "Less" : "The brief"}

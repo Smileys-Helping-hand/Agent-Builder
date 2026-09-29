@@ -107,7 +107,7 @@ export const SiteClient = {
    */
   async reportProgress(
     externalId: string,
-    update: { status: string; message?: string; qualityScore?: number; previewUrl?: string | null; downloadUrl?: string | null }
+    update: { status: string; message?: string; qualityScore?: number; previewUrl?: string | null; downloadUrl?: string | null; progress?: number }
   ): Promise<boolean> {
     const url = base();
     if (!url || !key()) return false;

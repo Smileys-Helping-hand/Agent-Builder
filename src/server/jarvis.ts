@@ -7,12 +7,154 @@
  */
 import type { Express, Request, Response } from "express";
 
-import { authenticateAgent } from "./agentAuth.js";
+import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
 import { JarvisClient, type JarvisEventType } from "../integrations/JarvisClient.js";
 import { ContextPack } from "../ecosystem/ContextPack.js";
+import { AgentKeyModel } from "../models/AgentKeyModel.js";
+import { AgentActivity } from "../state/AgentActivity.js";
+import { setEnvValues } from "../utils/EnvFile.js";
 import { Logger } from "../utils/Logger.js";
+import { readPublicUrl } from "../utils/PublicUrl.js";
+
+/** The agent key Jarvis uses to reach into the builder. */
+const JARVIS_KEY_NAME = "jarvis";
+/** Jarvis counts as monitoring if he has made a request within this long. */
+const MONITORING_WINDOW_MIN = 15;
+
+/** Is Jarvis's server answering at all? Cached briefly so the app's polling does not hammer it. */
+let reachability: { at: number; host: string; reachable: boolean; status: number | null; detail: string } | null = null;
+const probeJarvis = async (): Promise<NonNullable<typeof reachability> | null> => {
+  const host = process.env.JARVIS_HOST?.trim().replace(/\/+$/, "");
+  if (!host) return null;
+  if (reachability && reachability.host === host && Date.now() - reachability.at < 30_000) return reachability;
+  try {
+    const response = await fetch(host, { method: "GET", signal: AbortSignal.timeout(6000), redirect: "manual" });
+    // 5xx from the tunnel in front of him (530, 502) means Jarvis himself is not running.
+    const reachable = response.status < 500;
+    reachability = {
+      at: Date.now(),
+      host,
+      reachable,
+      status: response.status,
+      detail: reachable ? `Answering at ${host}` : `${host} answered ${response.status}: Jarvis is not running behind it`
+    };
+  } catch (error) {
+    reachability = { at: Date.now(), host, reachable: false, status: null, detail: `No answer from ${host}` };
+  }
+  return reachability;
+};
+
+/** Show only the end of a secret. */
+const hint = (value: string | undefined): string | null => (value ? `…${value.slice(-4)}` : null);
 
 export const registerJarvisRoutes = (app: Express) => {
+  /**
+   * Everything the app's Jarvis screen shows: both directions of the link,
+   * whether he is actually watching, his access, and the log of what happened.
+   */
+  app.get("/api/jarvis/overview", authenticateAgent("read"), async (req: Request, res: Response) => {
+    const key = AgentKeyModel.list().find((entry) => entry.name === JARVIS_KEY_NAME && !entry.revokedAt) ?? null;
+    const lastSeen = [AgentActivity.lastSeen(JARVIS_KEY_NAME), key?.lastUsedAt ?? null]
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .pop() ?? null;
+    const recent = AgentActivity.countSince(JARVIS_KEY_NAME, MONITORING_WINDOW_MIN);
+    const limit = Math.min(Number(req.query.limit) || 100, 300);
+
+    res.json({
+      // Builder → Jarvis: can we tell him things?
+      outbound: {
+        ...JarvisClient.describe(),
+        reachability: await probeJarvis()
+      },
+      // Jarvis → builder: is he looking?
+      inbound: {
+        hasAccess: Boolean(key),
+        scopes: key?.scopes ?? [],
+        keyCreatedAt: key?.createdAt ?? null,
+        lastSeen,
+        requestsLastWindow: recent,
+        monitoring: Boolean(lastSeen && Date.now() - new Date(lastSeen).getTime() < MONITORING_WINDOW_MIN * 60_000),
+        windowMinutes: MONITORING_WINDOW_MIN
+      },
+      config: {
+        host: process.env.JARVIS_HOST ?? null,
+        apiKeySet: Boolean(process.env.JARVIS_API_KEY),
+        apiKeyHint: hint(process.env.JARVIS_API_KEY),
+        ownerId: process.env.JARVIS_OWNER_ID ?? null
+      },
+      activity: AgentActivity.list({ agent: JARVIS_KEY_NAME, limit })
+    });
+  });
+
+  /**
+   * Set Jarvis's address and API key from the app. Saved into .env on the PC
+   * (never shown back in full) and used from the next message on.
+   */
+  app.post("/api/jarvis/config", authenticateAgent("execute"), (req: Request, res: Response) => {
+    const { host, apiKey, ownerId } = (req.body ?? {}) as { host?: string; apiKey?: string; ownerId?: string };
+    const changes: Record<string, string | null> = {};
+
+    if (typeof host === "string" && host.trim()) {
+      const clean = host.trim().replace(/\/+$/, "");
+      if (!/^https?:\/\/[^\s/]+$/.test(clean)) return res.status(400).json({ error: "The address should look like https://jarvis.example.com" });
+      changes.JARVIS_HOST = clean;
+    }
+    if (typeof apiKey === "string" && apiKey.trim()) {
+      const clean = apiKey.trim();
+      if (!/^jb_live_sk_[A-Za-z0-9]{16,}$/.test(clean)) {
+        return res.status(400).json({ error: "That does not look like a Jarvis key: it should start with jb_live_sk_." });
+      }
+      changes.JARVIS_API_KEY = clean;
+      // An explicit webhook URL would carry the old key inside it; build it from host + key instead.
+      changes.JARVIS_WEBHOOK_URL = null;
+    }
+    if (typeof ownerId === "string" && ownerId.trim()) changes.JARVIS_OWNER_ID = ownerId.trim();
+    if (Object.keys(changes).length === 0) return res.status(400).json({ error: "Nothing to save." });
+
+    try {
+      setEnvValues(changes);
+    } catch (error) {
+      return res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+    reachability = null;
+    Logger.log("Jarvis settings changed from the app", { fields: Object.keys(changes), by: (req as AgentRequest).actor });
+    AgentActivity.record({
+      direction: "in",
+      agent: JARVIS_KEY_NAME,
+      method: "CONFIG",
+      path: "settings",
+      status: 200,
+      summary: `Settings changed from the app: ${Object.keys(changes).filter((k) => changes[k] !== null).join(", ")}`
+    });
+    res.json({ success: true, config: { host: process.env.JARVIS_HOST ?? null, apiKeySet: Boolean(process.env.JARVIS_API_KEY), apiKeyHint: hint(process.env.JARVIS_API_KEY) } });
+  });
+
+  /**
+   * Give Jarvis his key into the builder: read, write and execute — he can see
+   * every project and file, report issues, and run builds, repairs and the
+   * machine's services. Shown once. Issuing again replaces the old key, so
+   * Jarvis must be given the new one.
+   */
+  app.post("/api/jarvis/access", authenticateAgent("execute"), (req: Request, res: Response) => {
+    const { secret, key } = AgentKeyModel.issue(JARVIS_KEY_NAME, ["read", "write", "execute"]);
+    Logger.log("Jarvis access key issued from the app", { by: (req as AgentRequest).actor });
+    AgentActivity.record({ direction: "in", agent: JARVIS_KEY_NAME, method: "ACCESS", path: "key", status: 200, summary: "New access key issued; the old one stops working" });
+    res.json({
+      key: secret,
+      scopes: key.scopes,
+      builderAddress: readPublicUrl(),
+      howTo: "In Jarvis, set the Agent Builder address and this key (sent as the x-agent-key header). It is shown only once."
+    });
+  });
+
+  app.delete("/api/jarvis/access", authenticateAgent("execute"), (req: Request, res: Response) => {
+    const revoked = AgentKeyModel.revoke(JARVIS_KEY_NAME);
+    Logger.log("Jarvis access revoked from the app", { by: (req as AgentRequest).actor, revoked });
+    AgentActivity.record({ direction: "in", agent: JARVIS_KEY_NAME, method: "ACCESS", path: "key", status: 200, summary: "Access revoked from the app" });
+    res.json({ success: true, revoked });
+  });
+
   app.get("/api/jarvis/status", authenticateAgent("read"), (_req: Request, res: Response) => {
     res.json(JarvisClient.describe());
   });

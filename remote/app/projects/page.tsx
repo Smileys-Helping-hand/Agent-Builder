@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { api, type AiSession, type Commit, type Project, type ProjectEntry } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
-import { CloneCard, ProjectBuildList } from "./carry-on";
+import { CloneCard, GitPanel, ProjectBuildList } from "./carry-on";
 
 type Filter = "all" | "attention" | "dirty" | "unpushed";
 
@@ -158,19 +158,6 @@ export default function Projects() {
     try {
       await api.editFile(project.id, file.path, file.content);
       toast(`Saved ${file.path} successfully.`, "ok");
-      await projects.refresh();
-    } catch (error) {
-      toast(error instanceof Error ? error.message : String(error), "error");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const handleGitSync = async (project: Project, action: "push" | "pull") => {
-    setBusy(`${project.id}:git:${action}`);
-    try {
-      const res = await api.gitSync(project.id, action);
-      toast(res.message, "ok");
       await projects.refresh();
     } catch (error) {
       toast(error instanceof Error ? error.message : String(error), "error");
@@ -594,19 +581,13 @@ export default function Projects() {
                   {tab === "git" ? (
                     <div>
                       <p className="hint">
-                        Sync changes with GitHub and manage commits remotely from your phone or browser.
+                        Test that this PC can push, pull, and push with a look at exactly what will go. After a push the app asks
+                        GitHub where the branch is, so a tick means it is really there.
                       </p>
-                      <div className="btn-row" style={{ marginBottom: 12 }}>
-                        <button className="btn small" onClick={() => handleGitSync(project, "pull")} disabled={Boolean(busy)}>
-                          {busy === `${project.id}:git:pull` ? <Busy label="Pulling…" /> : <>Git Pull</>}
-                        </button>
-                        <button className="btn small" onClick={() => handleGitSync(project, "push")} disabled={Boolean(busy)}>
-                          {busy === `${project.id}:git:push` ? <Busy label="Pushing…" /> : <>Git Push</>}
-                        </button>
-                      </div>
+                      <GitPanel projectId={project.id} onChanged={() => projects.refresh()} />
 
                       <div style={{ borderTop: "1px solid var(--line)", paddingTop: 10 }}>
-                        <small style={{ color: "var(--muted)", display: "block", marginBottom: 4 }}>Commit all working changes:</small>
+                        <small style={{ color: "var(--muted)", display: "block", marginBottom: 4 }}>Commit every change in the project (all files, including your own edits):</small>
                         <input
                           placeholder="Commit message..."
                           value={commitMessages[project.id] ?? ""}

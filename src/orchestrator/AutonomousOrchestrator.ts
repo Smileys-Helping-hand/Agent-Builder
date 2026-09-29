@@ -1,4 +1,6 @@
 import { EventEmitter } from "events";
+import fs from "fs";
+import path from "path";
 import { ModelRouter } from "../tools/ModelRouter.js";
 import { Logger } from "../utils/Logger.js";
 import { QualityAnalyzer } from "./QualityAnalyzer.js";
@@ -332,7 +334,7 @@ export class AutonomousOrchestrator extends EventEmitter {
       const generatedCode = await this.generateCode(buildContext);
       iteration.artifacts.push(...generatedCode.artifacts);
 
-      let currentFiles = generatedCode.files;
+      let currentFiles = this.guardFiles(generatedCode.files);
       if (!this.config.workingDir && Object.keys(currentFiles).length === 0) {
         // Nothing to write means nothing to verify; scoring an empty folder only
         // burns a pass. Failing it lets the loop retry, and stop if it persists.
@@ -400,7 +402,7 @@ export class AutonomousOrchestrator extends EventEmitter {
           break;
         }
 
-        currentFiles = repaired;
+        currentFiles = this.guardFiles(repaired);
         const repairWrite = await this.workspace.writeFiles(
           currentFiles,
           `Iteration ${iterationNum}: repair attempt ${repairAttempt} (${verification.blockingCheck?.name ?? "unknown"})`
@@ -926,6 +928,78 @@ ${lines}
     return [...this.guidance];
   }
 
+  /**
+   * Keep a template's build setup out of the model's reach.
+   *
+   * A build that starts from one of our templates (it has template.json) has
+   * a known-good setup: the Vite config that makes the site open by
+   * double-clicking, the TypeScript config, the entry point, the shared kit.
+   * Left alone, a 7B model rewrote them on most passes — once it replaced
+   * package.json and the build could never work again. So here:
+   *
+   *   - those files keep what they had; the model's versions are dropped;
+   *   - package.json may gain new dependencies, and nothing else changes;
+   *   - a second test or bundler config (jest, babel, webpack) is refused.
+   *
+   * Everything the customer asked for still gets built: the pages, content and
+   * components the template is made of. Projects that are not templates are
+   * not restricted here.
+   */
+  private guardFiles(files: Record<string, string>): Record<string, string> {
+    if (!this.config.workingDir || !fs.existsSync(path.join(this.workspace.root, "template.json"))) return files;
+
+    const locked = /^(package-lock\.json|tsconfig(\.[\w-]+)?\.json|vite\.config\.[cm]?[jt]s|index\.html|template\.json|src\/main\.tsx|src\/lib\/.+|src\/styles\/base\.css)$/;
+    const foreign = /^(jest|vitest|babel|webpack|rollup)\.config\.[\w.]+$|^\.babelrc$/;
+    const kept: Record<string, string> = {};
+    const refused: string[] = [];
+
+    for (const [rawPath, content] of Object.entries(files)) {
+      const file = rawPath.replace(/\\/g, "/").replace(/^\.\//, "");
+      if (file === "package.json") {
+        const merged = this.mergePackageJson(content);
+        if (merged) kept[file] = merged;
+        else refused.push(file);
+      } else if (locked.test(file) || foreign.test(file)) {
+        refused.push(file);
+      } else {
+        kept[file] = content;
+      }
+    }
+
+    if (refused.length) {
+      this.think(this.currentIteration, "decision", "Kept the template's build setup", `Ignored changes to ${refused.join(", ")}: they would break how the template builds.`, refused);
+    }
+    return kept;
+  }
+
+  /**
+   * The template's package.json with any new dependencies the model asked for
+   * added — and nothing else changed. Null when there is nothing to add.
+   */
+  private mergePackageJson(proposed: string): string | null {
+    const file = path.join(this.workspace.root, "package.json");
+    let current: Record<string, any>;
+    let wanted: Record<string, any>;
+    try {
+      current = JSON.parse(fs.readFileSync(file, "utf8"));
+      wanted = JSON.parse(proposed);
+    } catch {
+      return null;
+    }
+    let added = 0;
+    for (const field of ["dependencies", "devDependencies"] as const) {
+      for (const [name, version] of Object.entries((wanted[field] ?? {}) as Record<string, string>)) {
+        const present = current.dependencies?.[name] ?? current.devDependencies?.[name];
+        if (present || typeof version !== "string") continue;
+        current[field] = { ...(current[field] ?? {}), [name]: version };
+        added += 1;
+      }
+    }
+    if (added === 0) return null;
+    this.think(this.currentIteration, "decision", `Added ${added} dependenc${added === 1 ? "y" : "ies"} to the template's package.json`, "");
+    return `${JSON.stringify(current, null, 2)}\n`;
+  }
+
   /** Tell whoever is watching what the build is thinking. Never allowed to fail the build. */
   private think(iteration: number, kind: BuildThought["kind"], title: string, text: string, files?: string[], score?: number): void {
     try {
@@ -1062,6 +1136,7 @@ ${lines}
     }
 
     if (applied.length > 0) {
+      currentCode = this.guardFiles(currentCode);
       const label = applied.length > 3 ? `${applied.slice(0, 3).join(", ")}, +${applied.length - 3} more` : applied.join(", ");
       const result = await this.workspace.writeFiles(
         currentCode,

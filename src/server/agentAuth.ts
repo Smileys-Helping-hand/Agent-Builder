@@ -13,6 +13,7 @@
 import type { NextFunction, Request, Response } from "express";
 
 import { AgentKeyModel, type AgentKey, type AgentScope } from "../models/AgentKeyModel.js";
+import { AgentActivity } from "../state/AgentActivity.js";
 import { JWT } from "../utils/jwt.js";
 import { UserModel } from "../models/UserModel.js";
 
@@ -39,6 +40,29 @@ const presentedKey = (req: Request): string | null => {
   return null;
 };
 
+/** Keys the app itself uses; they poll constantly, so only their actions are worth a log line. */
+const isAppKey = (name: string): boolean => name === "phone" || name.startsWith("hub-admin-");
+
+/**
+ * Record what an agent key was used for, once the response is sent. Everything
+ * another agent (Jarvis) does is logged; the app's own keys log only actions,
+ * not the reads it makes every few seconds.
+ */
+const logAgentRequest = (req: Request, res: Response, agent: string): void => {
+  if (isAppKey(agent) && req.method === "GET") return;
+  const started = Date.now();
+  res.on("finish", () => {
+    AgentActivity.record({
+      direction: "in",
+      agent,
+      method: req.method,
+      path: req.originalUrl.split("?")[0],
+      status: res.statusCode,
+      ms: Date.now() - started
+    });
+  });
+};
+
 export const authenticateAgent = (scope: AgentScope) => (req: Request, res: Response, next: NextFunction) => {
   const request = req as AgentRequest;
 
@@ -53,6 +77,7 @@ export const authenticateAgent = (scope: AgentScope) => (req: Request, res: Resp
     }
     request.agent = key;
     request.actor = `agent:${key.name}`;
+    logAgentRequest(req, res, key.name);
     return next();
   }
 

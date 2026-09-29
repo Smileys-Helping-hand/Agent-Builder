@@ -366,6 +366,12 @@ export interface ProjectBuild {
   qualityScore: number | null;
   iterations: number | null;
   changes: FileChange[];
+  /** The project's checks, run on the build's copy before applying. */
+  lastTest?: BuildTest | null;
+  /** The commit made from exactly the files this build applied. */
+  commit?: { hash: string; branch: string; message: string; files: string[]; at: string } | null;
+  /** The last push of that work, as the remote confirmed it. */
+  push?: PushResult | null;
 }
 
 export interface FileChange {
@@ -500,6 +506,86 @@ export const onMachine = (pathOnMachine: string): string => {
   return connection ? `${connection.address}${pathOnMachine}` : pathOnMachine;
 };
 
+export interface AccessCheck {
+  remote: string | null;
+  remoteUrl: string | null;
+  webUrl: string | null;
+  isGitHub: boolean;
+  branch: string | null;
+  canRead: boolean;
+  canPush: boolean;
+  behind: boolean;
+  detail: string;
+}
+
+export interface BuildTest {
+  state: "running" | "done" | "error";
+  startedAt: string;
+  finishedAt: string | null;
+  score: number | null;
+  passed: boolean;
+  checks: Array<{ name: string; applicable: boolean; passed: boolean; output: string }>;
+  error?: string;
+}
+
+export interface JarvisActivity {
+  id: number;
+  at: string;
+  /** "in": Jarvis did something here. "out": we told Jarvis something. */
+  direction: "in" | "out";
+  agent: string;
+  method: string;
+  path: string;
+  status: number;
+  ms: number | null;
+  summary: string | null;
+}
+
+export interface JarvisOverview {
+  outbound: JarvisStatus & {
+    reachability: { host: string; reachable: boolean; status: number | null; detail: string } | null;
+  };
+  inbound: {
+    hasAccess: boolean;
+    scopes: string[];
+    keyCreatedAt: string | null;
+    lastSeen: string | null;
+    requestsLastWindow: number;
+    monitoring: boolean;
+    windowMinutes: number;
+  };
+  config: { host: string | null; apiKeySet: boolean; apiKeyHint: string | null; ownerId: string | null };
+  activity: JarvisActivity[];
+}
+
+export interface PendingCommit {
+  hash: string;
+  subject: string;
+}
+
+export interface PushPlan {
+  branch: string;
+  remote: string | null;
+  remoteUrl: string | null;
+  webUrl: string | null;
+  isGitHub: boolean;
+  hasUpstream: boolean;
+  commits: PendingCommit[];
+  uncommitted: number;
+}
+
+export interface PushResult {
+  pushed: boolean;
+  /** The remote now points the branch at the local commit. */
+  confirmed: boolean;
+  branch: string;
+  commit: string | null;
+  commits: PendingCommit[];
+  commitUrl: string | null;
+  message: string;
+  at: string;
+}
+
 export const api = {
   status: () => request<StatusResponse>("/api/services/status"),
   feed: (limit = 40) => request<{ feed: FeedEntry[] }>(`/api/services/feed?limit=${limit}`),
@@ -578,10 +664,11 @@ export const api = {
       body: JSON.stringify({ message })
     }),
   gitSync: (id: string, action: "push" | "pull") =>
-    request<{ success: boolean; message: string }>(`/api/ecosystem/projects/${id}/git/sync`, {
-      method: "POST",
-      body: JSON.stringify({ action })
-    }),
+    request<{ success: boolean; message: string } & Partial<PushResult>>(
+      `/api/ecosystem/projects/${id}/git/sync`,
+      { method: "POST", body: JSON.stringify({ action }) },
+      200000
+    ),
   instructProject: (id: string, instruction: string) =>
     request<{ success: boolean; buildId: string; message: string }>(
       `/api/ecosystem/projects/${id}/instruct`,
@@ -779,10 +866,15 @@ export const api = {
       { method: "POST", body: JSON.stringify(options ?? {}) },
       45000
     ),
-  downloadPackageUrl: (id: string) => {
+  /**
+   * A download link for an order's package. The builder signs it for an hour,
+   * so the phone key never goes into a URL (and from there into history or logs).
+   */
+  downloadPackageUrl: async (id: string): Promise<string> => {
     const conn = loadConnection();
-    if (!conn) return "";
-    return `${conn.address}/api/orders/${encodeURIComponent(id)}/download?key=${encodeURIComponent(conn.key)}`;
+    if (!conn) throw new ApiError("Not connected to a machine yet.", 0);
+    const res = await request<{ path: string }>(`/api/orders/${encodeURIComponent(id)}/download-link`, { method: "POST" });
+    return `${conn.address}${res.path}`;
   },
 
   // --- Jarvis ---
@@ -795,7 +887,33 @@ export const api = {
   startResearch: (title: string, question: string) =>
     request<{ topic: Topic }>("/api/research/topics", { method: "POST", body: JSON.stringify({ title, question }) }),
   pauseTopic: (id: string) => request<unknown>(`/api/research/topics/${id}/pause`, { method: "POST" }),
-  resumeTopic: (id: string) => request<unknown>(`/api/research/topics/${id}/resume`, { method: "POST" })
+  resumeTopic: (id: string) => request<unknown>(`/api/research/topics/${id}/resume`, { method: "POST" }),
+
+  testProjectBuild: (buildId: string) =>
+    request<{ test: BuildTest }>(`/api/ecosystem/project-builds/${encodeURIComponent(buildId)}/test`, { method: "POST" }),
+  commitProjectBuild: (buildId: string, options: { message?: string; push?: boolean } = {}) =>
+    request<{ success: boolean; commit: NonNullable<ProjectBuild["commit"]>; push: PushResult | null }>(
+      `/api/ecosystem/project-builds/${encodeURIComponent(buildId)}/commit`,
+      { method: "POST", body: JSON.stringify(options) },
+      200000
+    ),
+  pushProjectBuild: (buildId: string) =>
+    request<{ success: boolean } & PushResult>(
+      `/api/ecosystem/project-builds/${encodeURIComponent(buildId)}/push`,
+      { method: "POST" },
+      200000
+    ),
+  gitPlan: (id: string) => request<PushPlan>(`/api/ecosystem/projects/${id}/git/plan`, {}, 60000),
+  gitCheck: (id: string) => request<AccessCheck>(`/api/ecosystem/projects/${id}/git/check`, { method: "POST" }, 200000),
+  jarvisOverview: (limit = 100) => request<JarvisOverview>(`/api/jarvis/overview?limit=${limit}`, {}, 30000),
+  saveJarvisConfig: (config: { host?: string; apiKey?: string; ownerId?: string }) =>
+    request<{ success: boolean; config: JarvisOverview["config"] }>("/api/jarvis/config", {
+      method: "POST",
+      body: JSON.stringify(config)
+    }),
+  grantJarvisAccess: () =>
+    request<{ key: string; scopes: string[]; builderAddress: string | null; howTo: string }>("/api/jarvis/access", { method: "POST" }),
+  revokeJarvisAccess: () => request<{ success: boolean; revoked: boolean }>("/api/jarvis/access", { method: "DELETE" }),
 };
 
 /**

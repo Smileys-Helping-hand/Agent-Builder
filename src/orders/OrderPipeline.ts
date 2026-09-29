@@ -161,6 +161,9 @@ const notifyJarvis = (order: Order, subject: string, body: string): void => {
   });
 };
 
+/** The least a build must score to be shown to anyone: roughly install, typecheck and build all passing. */
+const SHIPPABLE_SCORE = 60;
+
 const publicHttpsUrl = (): string | null => {
   const url = readPublicUrl();
   return url && url.startsWith("https://") ? url.replace(/\/+$/, "") : null;
@@ -479,6 +482,21 @@ export const OrderPipeline = {
       OrderStore.update(order.id, { status: "accepted", buildId: null });
     }
 
+    // Every pass of a customer's build tells the site how far along it is, so
+    // the admin sees movement rather than one flat "Building" for an hour.
+    buildEvents.on("iteration", (record: BuildRecord) => {
+      if (!record.orderId) return;
+      const order = OrderStore.get(record.orderId);
+      if (!order?.externalId) return;
+      const target = record.qualityThreshold || 92;
+      void SiteClient.reportProgress(order.externalId, {
+        status: "building",
+        message: `Pass ${record.iterations} done: quality ${Math.round(record.qualityScore)} of a target ${target}`,
+        qualityScore: record.qualityScore,
+        progress: Math.round(16 + Math.min(record.qualityScore / target, 1) * 72)
+      });
+    });
+
     // A build finishing is what moves an order forward, so the pipeline
     // listens rather than polls for it.
     buildEvents.on("completed", (record: BuildRecord) => {
@@ -487,6 +505,37 @@ export const OrderPipeline = {
       if (!order) return;
 
       const wasMaintained = order.status === "maintained";
+
+      // Finishing is not the same as being fit to show anyone. Below this the
+      // site does not even build (install, typecheck and build together are
+      // about 60 of the 100), so it cannot be opened, let alone handed over:
+      // one such build reached "review" at 31 and downloaded as a blank page.
+      if (!wasMaintained && record.qualityScore < SHIPPABLE_SCORE) {
+        const giveUp = order.attempts >= 3;
+        OrderStore.update(order.id, {
+          status: giveUp ? "failed" : "accepted",
+          buildId: null,
+          qualityScore: record.qualityScore,
+          // Start the next try from the template's clean code, not from this attempt.
+          deliverablePath: null
+        });
+        OrderStore.note(
+          order.id,
+          "failed",
+          `Build finished at quality ${Math.round(record.qualityScore)}, below the ${SHIPPABLE_SCORE} it needs to be usable, so it was not offered for checking. ` +
+            (giveUp ? "Three tries have not got there; it needs a person." : "Trying again from the template's clean code.") +
+            ` The attempt is kept at ${record.outputDir}.`
+        );
+        if (giveUp) {
+          notifyJarvis(
+            order,
+            `Needs a person: ${order.title}`,
+            `Three builds for ${order.customerName} finished below a usable standard (last: ${Math.round(record.qualityScore)}/100). The last attempt is at ${record.outputDir}.`
+          );
+        }
+        return;
+      }
+
       OrderStore.update(order.id, {
         status: wasMaintained ? "maintained" : "review",
         qualityScore: record.qualityScore,
