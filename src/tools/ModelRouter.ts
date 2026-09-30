@@ -22,6 +22,24 @@ const getProviderFromEnv = (): ModelProvider => {
 const THINKING_TAIL = 1800;
 const THINKING_EVERY_MS = 350;
 
+const positiveInt = (value: string | undefined, fallback: number): number => {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+/**
+ * Settings sent with every Ollama call. Anything that loads the model (the
+ * warm-up button too) must send the same window, or Ollama reloads it.
+ */
+export const ollamaOptions = () => ({
+  // Ollama's default window is 4096 tokens, and it silently drops the start
+  // of a longer prompt: the instructions. Build prompts run to ~10k tokens.
+  num_ctx: positiveInt(process.env.OLLAMA_NUM_CTX, 16384),
+  // A ceiling on the answer, so a model that loses its way cannot hold the
+  // GPU (and every build queued behind it) for ten minutes.
+  num_predict: positiveInt(process.env.OLLAMA_NUM_PREDICT, 8192)
+});
+
 const generateWithOllama = async (prompt: string, model?: string): Promise<string> => {
   const baseUrl = process.env.OLLAMA_BASE_URL ?? process.env.OLLAMA_URL ?? "http://localhost:11434";
   const targetModel = model ?? process.env.OLLAMA_MODEL ?? process.env.MODEL ?? "qwen2.5-coder:7b";
@@ -41,7 +59,8 @@ const generateWithOllama = async (prompt: string, model?: string): Promise<strin
       model: targetModel,
       prompt,
       stream: true,
-      keep_alive: keepAlive
+      keep_alive: keepAlive,
+      options: ollamaOptions()
     })
   });
 

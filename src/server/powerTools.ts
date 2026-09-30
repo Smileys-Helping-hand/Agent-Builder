@@ -19,6 +19,7 @@ import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
 import { BuildService } from "../orchestrator/BuildService.js";
 import { Logger } from "../utils/Logger.js";
 import { OLLAMA_URL, ensureOllama } from "../utils/Ollama.js";
+import { ollamaOptions } from "../tools/ModelRouter.js";
 
 const run = promisify(execFile);
 const API_LOG = path.resolve("data/api.log");
@@ -94,7 +95,7 @@ export const registerPowerToolRoutes = (app: Express) => {
       const response = await fetch(`${OLLAMA_URL}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, prompt: "", keep_alive: process.env.OLLAMA_KEEP_ALIVE ?? "30m" }),
+        body: JSON.stringify({ model, prompt: "", keep_alive: process.env.OLLAMA_KEEP_ALIVE ?? "30m", options: ollamaOptions() }),
         signal: AbortSignal.timeout(180_000)
       });
       if (!response.ok) return res.status(502).json({ error: `Ollama answered ${response.status}: ${(await response.text()).slice(0, 200)}` });
