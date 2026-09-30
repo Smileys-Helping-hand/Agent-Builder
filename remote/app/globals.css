@@ -1041,3 +1041,49 @@ button.link { background: none; border: none; color: var(--accent); font: inheri
 .writing-caret { display: inline-block; width: 7px; height: 14px; margin-left: 2px; vertical-align: -2px; background: var(--accent); animation: blink 1s steps(1) infinite; }
 .writing-jump { position: absolute; right: 12px; bottom: 12px; }
 @keyframes blink { 50% { opacity: 0; } }
+
+/* ---------- builder settings ---------- */
+
+.setting-rows { display: grid; gap: 2px; }
+.setting-row { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 12px 10px; margin: 0 -10px; border-radius: var(--radius-sm); }
+.setting-row.changed { background: var(--accent-soft); }
+.setting-text { display: grid; gap: 3px; min-width: 0; }
+.setting-text small { color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+.setting-text .setting-restart { color: var(--warn); }
+.setting-control { flex: none; width: min(46%, 260px); display: flex; justify-content: flex-end; }
+.setting-control select, .setting-control input { padding: 10px 12px; border-radius: 11px; font-size: 14px; }
+.switch { position: relative; width: 48px; height: 28px; border-radius: 99px; border: 1px solid var(--line-strong); background: rgba(255, 255, 255, 0.08); cursor: pointer; transition: background 0.16s var(--ease), border-color 0.16s var(--ease); padding: 0; }
+.switch span { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--muted); transition: transform 0.18s var(--ease), background 0.16s var(--ease); }
+.switch.on { background: var(--accent-soft); border-color: var(--accent); }
+.switch.on span { transform: translateX(20px); background: var(--accent); }
+.stepper { display: flex; align-items: center; gap: 10px; }
+.stepper b { min-width: 18px; text-align: center; font-size: 16px; }
+.save-bar { position: sticky; bottom: calc(var(--nav-h, 68px) + 10px); z-index: 20; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 14px; border-radius: var(--radius); border: 1px solid var(--accent); background: rgba(9, 15, 28, 0.94); backdrop-filter: blur(10px); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45); }
+@media (max-width: 560px) {
+  .setting-row { flex-direction: column; align-items: stretch; }
+  .setting-control { width: 100%; justify-content: flex-start; }
+}
+
+/* ---------- Home: jump in, and the shop at a glance ---------- */
+
+.jump-in { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 14px 0 6px; }
+.jump-tile { display: grid; gap: 4px; align-content: start; padding: 16px; border-radius: var(--radius); border: 1px solid var(--line); background: linear-gradient(160deg, rgba(76, 196, 255, 0.08), rgba(255, 255, 255, 0.02)); color: var(--text); text-decoration: none; transition: transform 0.14s var(--ease), border-color 0.16s var(--ease), background 0.16s var(--ease); }
+.jump-tile:hover { border-color: var(--accent); transform: translateY(-2px); background: linear-gradient(160deg, rgba(76, 196, 255, 0.14), rgba(255, 255, 255, 0.03)); }
+.jump-tile:active { transform: scale(0.98); }
+.jump-tile strong { font-size: 14.5px; }
+.jump-tile small { color: var(--muted); font-size: 12.5px; line-height: 1.35; }
+.jump-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 11px; background: var(--accent-soft); color: var(--accent); margin-bottom: 6px; }
+.jump-icon svg { width: 18px; height: 18px; }
+
+.hub-strip { display: flex; align-items: center; gap: 12px; margin-top: 10px; padding: 12px 14px; border-radius: var(--radius); border: 1px solid var(--line); background: rgba(255, 255, 255, 0.03); color: var(--text); text-decoration: none; }
+.hub-strip.ok { border-color: rgba(61, 220, 154, 0.3); }
+.hub-strip.bad { border-color: rgba(255, 107, 129, 0.35); }
+.hub-strip-main { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.hub-strip-main small { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub-strip-counts { display: flex; gap: 14px; font-size: 12.5px; color: var(--muted); }
+.hub-strip-counts b { color: var(--text); font-size: 15px; margin-right: 3px; }
+
+@media (max-width: 760px) {
+  .jump-in { grid-template-columns: repeat(2, 1fr); }
+  .hub-strip-counts { display: none; }
+}

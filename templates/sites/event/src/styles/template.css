@@ -1,0 +1,26 @@
+/* Styles for this template only: an invitation's softer look. */
+
+.event-hero h1 { font-size: clamp(40px, 7vw, 72px); font-weight: 500; letter-spacing: 0.01em; }
+.event-date { font-size: 20px; color: var(--primary); margin: 6px 0 2px; }
+
+.countdown { display: flex; gap: 12px; margin: 18px 0 22px; }
+.countdown div { min-width: 76px; padding: 12px 10px; text-align: center; border-radius: var(--radius); background: var(--surface); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+.countdown b { display: block; font-size: 30px; line-height: 1.1; color: var(--primary); font-variant-numeric: tabular-nums; }
+.countdown span { font-size: 12px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+.countdown-done { font-size: 22px; color: var(--primary); }
+
+.timeline { list-style: none; padding: 0; margin: 0 auto; max-width: 720px; display: grid; gap: 0; }
+.timeline li { display: grid; grid-template-columns: 80px 1fr; gap: 20px; padding: 18px 0; border-left: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); padding-left: 22px; position: relative; }
+.timeline li::before { content: ""; position: absolute; left: -7px; top: 26px; width: 12px; height: 12px; border-radius: 50%; background: var(--primary); }
+.timeline time { font-size: 20px; color: var(--primary); font-variant-numeric: tabular-nums; }
+.timeline h3 { margin: 0 0 4px; }
+
+.venue iframe { width: 100%; min-height: 300px; border: 0; border-radius: var(--radius); background: var(--surface); }
+.details { margin-top: 20px; }
+.rsvp { max-width: 640px; margin: 0 auto; }
+.faq { display: grid; gap: 10px; max-width: 760px; margin: 0 auto; }
+.faq summary { cursor: pointer; font-weight: 600; }
+
+@media (max-width: 640px) {
+  .timeline li { grid-template-columns: 1fr; gap: 4px; }
+}

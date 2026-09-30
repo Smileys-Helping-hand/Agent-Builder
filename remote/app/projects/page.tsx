@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { api, type AiSession, type Commit, type Project, type ProjectEntry } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
@@ -46,6 +46,10 @@ export default function Projects() {
   // New project creation state
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [isCloning, setIsCloning] = useState(false);
+  // Home's "Clone from GitHub" tile lands here with ?clone=1: open the form.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("clone") === "1") setIsCloning(true);
+  }, []);
   // Bumped when a build starts, so the build list under the instruction box refreshes at once.
   const [buildsKey, setBuildsKey] = useState(0);
   const [newProjectName, setNewProjectName] = useState("");

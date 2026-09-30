@@ -1,0 +1,5 @@
+{
+  "name": "Web app starter",
+  "description": "The working setup every new web build starts from: React, TypeScript, Vite and Vitest, building to one file that opens anywhere.",
+  "starter": true
+}

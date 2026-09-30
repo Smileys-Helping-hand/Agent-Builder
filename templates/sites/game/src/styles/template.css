@@ -1,0 +1,21 @@
+/* Styles for this template only: the arcade board and its HUD. */
+
+.arcade-site { background: radial-gradient(1200px 600px at 50% -10%, color-mix(in srgb, var(--primary) 28%, transparent), transparent 70%), var(--bg); }
+.arcade-hero { text-align: center; padding-bottom: 32px; }
+.arcade-hero h1 { text-shadow: 0 0 28px color-mix(in srgb, var(--primary) 70%, transparent); letter-spacing: 0.02em; }
+
+.arcade { max-width: 680px; margin: 26px auto 0; }
+.hud { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 14px; margin-bottom: 10px; border-radius: var(--radius); background: var(--surface); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); font-variant-numeric: tabular-nums; }
+.hud b { color: var(--accent); }
+.hud span:last-child { color: #f472b6; letter-spacing: 0.15em; }
+
+.board { position: relative; border-radius: var(--radius); overflow: hidden; border: 1px solid color-mix(in srgb, var(--primary) 45%, transparent); box-shadow: 0 0 40px color-mix(in srgb, var(--primary) 30%, transparent), inset 0 0 60px rgba(0, 0, 0, 0.5); background: #05030d; touch-action: none; }
+.board canvas { display: block; width: 100%; height: auto; cursor: none; }
+.board-message { position: absolute; inset: 0; display: grid; place-content: center; gap: 6px; border: 0; background: rgba(5, 3, 13, 0.55); color: var(--text); font: inherit; cursor: pointer; backdrop-filter: blur(2px); }
+.board-message strong { font-size: clamp(18px, 3vw, 24px); }
+.board-message span { color: var(--muted); }
+
+.game-controls { justify-content: center; margin-top: 12px; }
+.locked { text-align: center; }
+.locked strong { font-size: 18px; }
+.small { font-size: 14px; }

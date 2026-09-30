@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { api, clearConnection, loadConnection, saveConnection, testConnection } from "@/lib/api";
 import { Banner, Busy, Header, Icon, useToast } from "../ui";
+import { BuilderSettings } from "./builder";
 import { ConnectionCheck } from "./check";
 
 /**
@@ -250,6 +251,13 @@ export default function Settings() {
         </div>
 
         {connected ? <ConnectionCheck key={checkVersion} /> : null}
+
+        {connected ? (
+          <>
+            <div className="section-title">How the builder works</div>
+            <BuilderSettings />
+          </>
+        ) : null}
 
         <div className="card">
           <h2>New here?</h2>

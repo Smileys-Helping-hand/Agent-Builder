@@ -220,6 +220,46 @@ const BUILT_IN_ITEMS: TemplateDefinition[] = [
     ],
     techStack: ["React", "TypeScript", "Vite"],
     keywords: ["blog", "content", "news", "magazine", "articles", "newsletter"]
+  },
+  {
+    id: "game",
+    name: "Arcade Promo Game",
+    kind: "app",
+    category: "Games",
+    description: "A branded browser game that brings people back: a neon brick-breaker with levels, touch and keyboard controls, high scores, and a prize form that turns players into leads.",
+    price: 6500,
+    currency: "ZAR",
+    timeframe: "1-2 weeks",
+    icon: "🎮",
+    features: [
+      "Playable on phones, tablets and desktops",
+      "Levels, lives and a saved high score",
+      "Your name, colours and prize",
+      "Prize claim form that captures leads",
+      "Opens from a single file: host it anywhere"
+    ],
+    techStack: ["React", "TypeScript", "Canvas", "Vite"],
+    keywords: ["game", "arcade", "promo", "competition", "gamification", "fun", "play"]
+  },
+  {
+    id: "event",
+    name: "Event & Invitation",
+    kind: "template",
+    category: "Events",
+    description: "An invitation site for a wedding, launch or party: a live countdown, the day's schedule, a venue map with directions, RSVP, add-to-calendar and FAQ.",
+    price: 2500,
+    currency: "ZAR",
+    timeframe: "3-5 days",
+    icon: "💌",
+    features: [
+      "Live countdown to the day",
+      "RSVP form with dietary needs",
+      "Schedule, venue map and directions",
+      "Add to calendar in one tap",
+      "Dress code, gifts and FAQ"
+    ],
+    techStack: ["React", "TypeScript", "Vite"],
+    keywords: ["wedding", "invitation", "invite", "event", "rsvp", "party", "launch", "birthday"]
   }
 ];
 

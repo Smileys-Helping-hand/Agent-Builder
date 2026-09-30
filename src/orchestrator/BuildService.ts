@@ -126,13 +126,45 @@ export interface LiveWriting {
   at: string;
 }
 
+/**
+ * Where a new build starts. "web" is a working React + TypeScript + Vite +
+ * Vitest app (templates/starters/web) whose setup the build may not rewrite,
+ * so the model writes the app rather than inventing a toolchain; "none" is an
+ * empty folder; "auto" picks "web" unless the request is plainly not a web app.
+ */
+export type StarterChoice = "auto" | "web" | "none";
+
 export interface StartBuildOptions extends Partial<AutonomousConfig> {
   projectName: string;
   description: string;
   startedBy?: string;
   orderId?: string | null;
   continuedFrom?: string | null;
+  starter?: StarterChoice;
 }
+
+const STARTERS_DIR = path.resolve(process.env.STARTERS_DIR ?? "templates/starters");
+
+/** Requests that are not a browser app, so they start from an empty folder instead. */
+const NOT_A_WEB_APP =
+  /\b(python|django|flask|fastapi|cli|command[- ]line|terminal (app|tool)|discord bot|telegram bot|whatsapp bot|api server|rest api|backend only|express server|node(\.js)? script|powershell|bash script|roblox|luau?|unity|c#|\.net|java|kotlin|swift|rust|golang|arduino)\b/i;
+
+/** Copy the web starter into a new build folder, or null when the build should start from nothing. */
+const prepareStarter = (projectName: string, description: string, choice: StarterChoice = "auto"): string | null => {
+  if (choice === "none" || (choice === "auto" && NOT_A_WEB_APP.test(`${projectName} ${description}`))) return null;
+  const starter = path.join(STARTERS_DIR, "web");
+  if (!fs.existsSync(path.join(starter, "package.json"))) return null;
+
+  const slug = projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "app";
+  const dir = path.resolve("builds", `new_${slug}_${Date.now()}`);
+  fs.cpSync(starter, dir, { recursive: true, filter: (source) => !/[\\/](node_modules|dist)([\\/]|$)/.test(source) });
+  const html = projectName.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  for (const [file, value] of [["index.html", html], ["src/App.tsx", html], ["README.md", projectName]] as const) {
+    const target = path.join(dir, file);
+    if (fs.existsSync(target)) fs.writeFileSync(target, fs.readFileSync(target, "utf8").split("__NAME__").join(value));
+  }
+  return dir;
+};
 
 const HISTORY_LIMIT = 150;
 const EVENT_LIMIT = 250;
@@ -348,6 +380,13 @@ export const BuildService = {
       if (clash) throw new Error(`${clash.projectName} is already building in that folder. Stop it or wait for it first.`);
     }
 
+    // A fresh web build starts from a working app instead of an empty folder.
+    const workingDir =
+      options.workingDir ??
+      ((options.targetPlatforms ?? ["web"]).includes("web")
+        ? prepareStarter(options.projectName, options.description, options.starter) ?? undefined
+        : undefined);
+
     const config: AutonomousConfig = {
       projectName: options.projectName,
       description: options.description,
@@ -360,7 +399,7 @@ export const BuildService = {
       profile,
       maxRepairAttempts: options.maxRepairAttempts,
       patience: options.patience,
-      workingDir: options.workingDir
+      workingDir
     };
 
     const orchestrator = new AutonomousOrchestrator(config);
