@@ -52,6 +52,9 @@ export default defineConfig({
     rollupOptions: { output: { inlineDynamicImports: true } }
   },
   test: {
-    environment: "node"
+    // A browser-like document, and describe/it/test/expect without importing
+    // them: generated tests are usually written that way.
+    environment: "jsdom",
+    globals: true
   }
 });

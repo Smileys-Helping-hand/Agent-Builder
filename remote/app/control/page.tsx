@@ -6,6 +6,7 @@ import { useState } from "react";
 import { api, type Problem, type ServiceReport, type CleanupReport } from "@/lib/api";
 import { STAGE_LABEL } from "../build/parts";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
+import { PowerTools } from "./power";
 
 /**
  * The machine room & PC command center.
@@ -897,6 +898,10 @@ export default function Control() {
           )}
         </div>
 
+        {/* ---------- power tools ---------- */}
+        <div className="section-title">Power tools</div>
+        <PowerTools />
+
         {/* ---------- quick navigation ---------- */}
         <div className="section-title">Elsewhere</div>
         <div className="card">
@@ -906,7 +911,7 @@ export default function Control() {
             <Link href="/research">{Icon.flask} Continuous Research</Link>
             <Link href="/feed">{Icon.list} Activity Feed</Link>
             <Link href="/orders">{Icon.list} Customer Orders</Link>
-            <Link href="/settings">{Icon.gear} Connection &amp; Keys</Link>
+            <Link href="/settings">{Icon.gear} Settings &amp; builder options</Link>
           </div>
         </div>
 

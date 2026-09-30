@@ -922,6 +922,13 @@ export const api = {
   pauseTopic: (id: string) => request<unknown>(`/api/research/topics/${id}/pause`, { method: "POST" }),
   resumeTopic: (id: string) => request<unknown>(`/api/research/topics/${id}/resume`, { method: "POST" }),
 
+  warmModel: () => request<{ success: boolean; model: string; seconds: number; message: string }>("/api/power/warm-model", { method: "POST" }, 200000),
+  restartBuilder: (force = false) =>
+    request<{ success: boolean; message: string }>("/api/power/restart", { method: "POST", body: JSON.stringify({ force }) }, 30000),
+  builderLog: (lines = 200, level?: "warn" | "error") =>
+    request<{ lines: Array<{ at: string | null; level: string; message: string }>; file: string }>(
+      `/api/power/log?lines=${lines}${level ? `&level=${level}` : ""}`
+    ),
   builderSettings: () =>
     request<{ settings: BuilderSetting[]; models: string[]; ollama: string }>("/api/settings/builder", {}, 20000),
   saveBuilderSettings: (values: Record<string, string>) =>
