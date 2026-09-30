@@ -28,6 +28,7 @@ import { ResearchEngine } from "../research/ResearchEngine.js";
 import { ResearchStore } from "../research/ResearchStore.js";
 import { SystemResourceService, type SystemMetrics } from "../utils/SystemResourceService.js";
 import { readPublicUrl } from "../utils/PublicUrl.js";
+import { ollamaOptions } from "../tools/ModelRouter.js";
 
 const run = promisify(execFile);
 
@@ -190,7 +191,9 @@ const collectStatus = async () => {
             ? `Not reachable: ${jarvis.last.detail.slice(0, 60)}`
             : "Configured (local & remote webhooks ready)"
         : "Not set up (set JARVIS_HOST and JARVIS_API_KEY)",
-      canStart: jarvis.configured
+      canStart: jarvis.configured,
+      // Handoffs queue until Jarvis is back, so builds carry on without it.
+      optional: true
     }
   ];
 
@@ -636,7 +639,9 @@ export const registerServiceRoutes = (app: Express) => {
           body: JSON.stringify({
             model: process.env.OLLAMA_MODEL ?? "qwen2.5-coder:7b",
             prompt: `You are the Agent Builder AI assistant. Answer in 1-2 brief sentences: ${prompt}`,
-            stream: false
+            stream: false,
+            // The builds' window, so a voice question does not make Ollama reload the model.
+            options: ollamaOptions()
           }),
           signal: AbortSignal.timeout(8000)
         });

@@ -63,6 +63,15 @@ const SETTINGS: Setting[] = [
     fallback: "30m"
   },
   {
+    name: "OLLAMA_NUM_CTX",
+    group: "Models",
+    label: "How much the model can read at once (tokens)",
+    help: "Build prompts run to about 10 000 tokens; anything past this limit is cut from the start, instructions first. Bigger needs more GPU memory.",
+    kind: "choice",
+    choices: ["8192", "16384", "32768"],
+    fallback: "16384"
+  },
+  {
     name: "ORDER_AUTO_START",
     group: "Orders",
     label: "Start accepted orders by themselves",
