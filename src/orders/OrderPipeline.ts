@@ -27,6 +27,7 @@ import { Logger } from "../utils/Logger.js";
 import { copyForBuild } from "../ecosystem/ProjectBuilds.js";
 import { Catalog } from "./Catalog.js";
 import { OrderStore, type Order } from "./OrderStore.js";
+import { OrderReceipts } from "./OrderReceipts.js";
 import { SiteClient, type SiteOrder } from "./SiteClient.js";
 import { readPublicUrl } from "../utils/PublicUrl.js";
 
@@ -375,6 +376,8 @@ export const OrderPipeline = {
       status: order.autoImprove ? "maintained" : "delivered",
       deliverableUrl: deliverableUrl ?? order.deliverableUrl
     });
+    const receipt = OrderReceipts.issueDelivery(updated ?? order, by);
+    OrderStore.note(orderId, "receipt", `Delivery receipt ${receipt.number} issued.`);
 
     if (order.externalId) {
       void SiteClient.reportProgress(order.externalId, {

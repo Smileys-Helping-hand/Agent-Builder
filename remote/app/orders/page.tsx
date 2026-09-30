@@ -7,6 +7,7 @@ import { api, type Order, type OrderStatus } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
 import { BuildProgress, STAGE_LABEL } from "../build/parts";
 import { TemplateStudio } from "./templates";
+import { OrdersLog } from "./log";
 import { PreviewPane } from "../preview";
 
 /**
@@ -421,6 +422,8 @@ export default function Orders() {
             No orders yet. They arrive from your site on their own, or you can add one above.
           </div>
         ) : null}
+
+        <OrdersLog />
       </div>
     </>
   );
