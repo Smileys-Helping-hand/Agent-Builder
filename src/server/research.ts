@@ -78,8 +78,7 @@ export const registerResearchRoutes = (app: Express) => {
 
   app.delete(
     "/api/research/topics/:id",
-    authenticate,
-    authorizeRoles(["developer", "admin", "owner"]),
+    authenticateAgent("execute"),
     (req: Request, res: Response) => {
       if (!engine.remove(req.params.id)) return res.status(404).json({ error: "Research topic not found." });
       return res.json({ ok: true });
@@ -88,8 +87,7 @@ export const registerResearchRoutes = (app: Express) => {
 
   app.post(
     "/api/research/topics/:id/documents/regenerate",
-    authenticate,
-    authorizeRoles(["developer", "admin", "owner"]),
+    authenticateAgent("execute"),
     async (req: Request, res: Response) => {
       try {
         const documents = await engine.regenerateDocuments(req.params.id);
@@ -101,10 +99,79 @@ export const registerResearchRoutes = (app: Express) => {
     }
   );
 
-  app.get("/api/research/topics/:id/documents/:documentId", authenticate, (req: Request, res: Response) => {
+  app.get("/api/research/topics/:id/documents/:documentId", authenticateAgent("read"), (req: Request, res: Response) => {
     const document = ResearchStore.getDocument(req.params.id, Number(req.params.documentId));
     if (!document) return res.status(404).json({ error: "Document not found." });
     return res.json({ document });
+  });
+
+  // --- editing a topic while it runs -------------------------------------
+
+  /** PATCH { title?, question? } — rename it or sharpen the question it works from. */
+  app.patch("/api/research/topics/:id", authenticateAgent("write"), (req: Request, res: Response) => {
+    const { title, question } = (req.body ?? {}) as { title?: unknown; question?: unknown };
+    const cleanTitle = typeof title === "string" ? title.trim() : undefined;
+    const cleanQuestion = typeof question === "string" ? question.trim() : undefined;
+    if (cleanTitle !== undefined && (cleanTitle.length < 3 || cleanTitle.length > 160)) {
+      return res.status(400).json({ error: "Give the topic a title between 3 and 160 characters." });
+    }
+    if (cleanQuestion !== undefined && (cleanQuestion.length < 3 || cleanQuestion.length > 1000)) {
+      return res.status(400).json({ error: "The research question must be between 3 and 1000 characters." });
+    }
+    const topic = ResearchStore.updateTopic(req.params.id, { title: cleanTitle, question: cleanQuestion });
+    if (!topic) return res.status(404).json({ error: "Research topic not found." });
+    ResearchStore.logActivity(topic.id, topic.cycles, "status", "Topic edited by you");
+    return res.json({ topic: ResearchStore.getTopicSummary(topic.id) });
+  });
+
+  /** POST — run a cycle now rather than at the next scheduled time. */
+  app.post("/api/research/topics/:id/run", authenticateAgent("write"), (req: Request, res: Response) => {
+    if (!engine.runNow(req.params.id)) {
+      return res.status(409).json({ error: "Only a running topic can start a cycle. Resume it first." });
+    }
+    return res.json({ ok: true });
+  });
+
+  /** POST { text } — steer it: a question of yours goes to the top of the frontier. */
+  app.post("/api/research/topics/:id/questions", authenticateAgent("write"), (req: Request, res: Response) => {
+    const topic = ResearchStore.getTopic(req.params.id);
+    if (!topic) return res.status(404).json({ error: "Research topic not found." });
+    const text = typeof req.body?.text === "string" ? req.body.text : "";
+    if (!ResearchStore.addPriorityQuestion(topic.id, text, topic.cycles)) {
+      return res.status(400).json({ error: "Ask something between 10 and 300 characters that it is not already asking." });
+    }
+    ResearchStore.logActivity(topic.id, topic.cycles, "question", `You asked: ${text.trim()}`);
+    return res.status(201).json({ ok: true });
+  });
+
+  app.delete("/api/research/topics/:id/questions/:questionId", authenticateAgent("write"), (req: Request, res: Response) => {
+    if (!ResearchStore.deleteQuestion(req.params.id, Number(req.params.questionId))) {
+      return res.status(404).json({ error: "Question not found." });
+    }
+    return res.json({ ok: true });
+  });
+
+  app.post(
+    "/api/research/topics/:id/questions/:questionId/prioritise",
+    authenticateAgent("write"),
+    (req: Request, res: Response) => {
+      if (!ResearchStore.prioritiseQuestion(req.params.id, Number(req.params.questionId))) {
+        return res.status(404).json({ error: "Question not found." });
+      }
+      return res.json({ ok: true });
+    }
+  );
+
+  /** POST { verdict: "confirm" | "reject" } — your call on a finding. */
+  app.post("/api/research/topics/:id/findings/:findingId", authenticateAgent("write"), (req: Request, res: Response) => {
+    const verdict = req.body?.verdict;
+    if (verdict !== "confirm" && verdict !== "reject") return res.status(400).json({ error: 'verdict must be "confirm" or "reject".' });
+    if (!ResearchStore.judgeFinding(req.params.id, Number(req.params.findingId), verdict)) {
+      return res.status(404).json({ error: "Finding not found." });
+    }
+    const topic = ResearchStore.getTopic(req.params.id);
+    if (topic) ResearchStore.logActivity(topic.id, topic.cycles, "finding", `You ${verdict === "confirm" ? "confirmed" : "rejected"} a finding`);
+    return res.json({ ok: true });
   });
 
   app.get("/api/research/search", authenticateAgent("read"), (req: Request, res: Response) => {

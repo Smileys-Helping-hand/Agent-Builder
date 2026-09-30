@@ -143,6 +143,14 @@ export class ResearchEngine {
     return this.changeStatus(id, "stopped", "Research stopped");
   }
 
+  /** Start a cycle now instead of waiting for the next scheduled one. */
+  runNow(id: string): boolean {
+    const topic = ResearchStore.getTopic(id);
+    if (!topic || topic.status !== "running") return false;
+    if (!this.isCycleRunning(id)) this.schedule(id, 0);
+    return true;
+  }
+
   remove(id: string): boolean {
     this.clearTimer(id);
     const removed = ResearchStore.deleteTopic(id);

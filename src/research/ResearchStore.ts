@@ -370,6 +370,18 @@ export const ResearchStore = {
     return removed;
   },
 
+  /** Rename a topic or sharpen its question; the next cycle works from the new wording. */
+  updateTopic(id: string, patch: { title?: string; question?: string }): ResearchTopic | null {
+    const topic = ResearchStore.getTopic(id);
+    if (!topic) return null;
+    const title = patch.title?.replace(/\s+/g, " ").trim() || topic.title;
+    const question = patch.question?.replace(/\s+/g, " ").trim() || topic.question;
+    getKnowledgeDb()
+      .prepare("UPDATE research_topics SET title = ?, question = ?, updated_at = ? WHERE id = ?")
+      .run(title.slice(0, 160), question.slice(0, 1000), nowIso(), id);
+    return ResearchStore.getTopic(id);
+  },
+
   // --- question frontier -------------------------------------------------
 
   nextQuestions(topicId: string, limit: number): ResearchQuestion[] {
@@ -417,6 +429,27 @@ export const ResearchStore = {
       )
       .run(topicId, clean, toKey(clean), Math.max(0.05, Math.min(1, priority)), cycle, nowIso());
     return result.changes > 0;
+  },
+
+  /** A person's steer: goes straight to the top of the frontier. */
+  addPriorityQuestion(topicId: string, text: string, cycle: number): boolean {
+    return ResearchStore.addQuestion(topicId, text, 1, cycle);
+  },
+
+  /** Drop a question from the frontier (only within its own topic). */
+  deleteQuestion(topicId: string, questionId: number): boolean {
+    return (
+      getKnowledgeDb().prepare("DELETE FROM research_questions WHERE id = ? AND topic_id = ?").run(questionId, topicId).changes > 0
+    );
+  },
+
+  /** Put a question back on the frontier at the top. */
+  prioritiseQuestion(topicId: string, questionId: number): boolean {
+    return (
+      getKnowledgeDb()
+        .prepare("UPDATE research_questions SET status = 'open', priority = 1 WHERE id = ? AND topic_id = ?")
+        .run(questionId, topicId).changes > 0
+    );
   },
 
   markQuestionExplored(questionId: number): void {
@@ -547,6 +580,19 @@ export const ResearchStore = {
     indexKnowledge("finding", id, topicId, topic?.title ?? "", input.claim);
     const row = db.prepare(`${FINDING_SELECT} WHERE f.id = ?`).get(id) as FindingRow;
     return { finding: mapFinding(row), isNew: true };
+  },
+
+  /**
+   * A person's verdict on a finding. "confirm" treats it as corroborated at
+   * full confidence; "reject" marks it contested at the floor, so documents
+   * and the builder stop leaning on it. Only within its own topic.
+   */
+  judgeFinding(topicId: string, findingId: number, verdict: "confirm" | "reject"): boolean {
+    const sql =
+      verdict === "confirm"
+        ? "UPDATE research_findings SET status = 'corroborated', confidence = 1, updated_at = ? WHERE id = ? AND topic_id = ?"
+        : "UPDATE research_findings SET status = 'contested', confidence = 0.05, updated_at = ? WHERE id = ? AND topic_id = ?";
+    return getKnowledgeDb().prepare(sql).run(nowIso(), findingId, topicId).changes > 0;
   },
 
   markContested(findingId: number): void {
