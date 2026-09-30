@@ -744,9 +744,9 @@ const jsonFetcher = async <T>(path: string, init: RequestInit = {}, auth = false
 
 export const fetchTasks = () => jsonFetcher<Task[]>("/api/agent/tasks");
 
-export const fetchPlugins = () => jsonFetcher<{ plugins: PluginMetadata[] }>("/api/plugins");
+export const fetchPlugins = () => jsonFetcher<{ plugins: PluginMetadata[] }>("/api/plugins", {}, true);
 
-export const fetchRecentMemory = () => jsonFetcher<{ records: VectorRecord[] }>("/api/memory/recent");
+export const fetchRecentMemory = () => jsonFetcher<{ records: VectorRecord[] }>("/api/memory/recent", {}, true);
 
 export const searchMemory = (query: string, limit = 10) =>
   jsonFetcher<{ records: VectorRecord[] }>(
