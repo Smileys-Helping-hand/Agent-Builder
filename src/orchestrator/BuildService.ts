@@ -28,6 +28,7 @@ import {
   type BuildThought
 } from "./AutonomousOrchestrator.js";
 import { Logger } from "../utils/Logger.js";
+import { buildActivity, buildScope, type BuildScope } from "../utils/BuildContext.js";
 
 export type BuildState = "running" | "paused" | "completed" | "stopped" | "error" | "interrupted";
 
@@ -109,7 +110,29 @@ export interface BuildRecord {
 /** A build as the API and the UI see it: the record plus whether it is live in memory. */
 export interface BuildView extends BuildRecord {
   live: boolean;
+  /** The model's answer as it is being written. Live builds only; never saved. */
+  writing?: LiveWriting | null;
 }
+
+/** What the model is writing right now, as ModelRouter streams it. */
+export interface LiveWriting {
+  phase: string;
+  model: string;
+  /** The last part of the answer so far. */
+  tail: string;
+  chars: number;
+  tokensPerSecond: number;
+  done: boolean;
+  at: string;
+}
+
+/**
+ * Where a new build starts. "web" is a working React + TypeScript + Vite +
+ * Vitest app (templates/starters/web) whose setup the build may not rewrite,
+ * so the model writes the app rather than inventing a toolchain; "none" is an
+ * empty folder; "auto" picks "web" unless the request is plainly not a web app.
+ */
+export type StarterChoice = "auto" | "web" | "none";
 
 export interface StartBuildOptions extends Partial<AutonomousConfig> {
   projectName: string;
@@ -117,7 +140,31 @@ export interface StartBuildOptions extends Partial<AutonomousConfig> {
   startedBy?: string;
   orderId?: string | null;
   continuedFrom?: string | null;
+  starter?: StarterChoice;
 }
+
+const STARTERS_DIR = path.resolve(process.env.STARTERS_DIR ?? "templates/starters");
+
+/** Requests that are not a browser app, so they start from an empty folder instead. */
+const NOT_A_WEB_APP =
+  /\b(python|django|flask|fastapi|cli|command[- ]line|terminal (app|tool)|discord bot|telegram bot|whatsapp bot|api server|rest api|backend only|express server|node(\.js)? script|powershell|bash script|roblox|luau?|unity|c#|\.net|java|kotlin|swift|rust|golang|arduino)\b/i;
+
+/** Copy the web starter into a new build folder, or null when the build should start from nothing. */
+const prepareStarter = (projectName: string, description: string, choice: StarterChoice = "auto"): string | null => {
+  if (choice === "none" || (choice === "auto" && NOT_A_WEB_APP.test(`${projectName} ${description}`))) return null;
+  const starter = path.join(STARTERS_DIR, "web");
+  if (!fs.existsSync(path.join(starter, "package.json"))) return null;
+
+  const slug = projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "app";
+  const dir = path.resolve("builds", `new_${slug}_${Date.now()}`);
+  fs.cpSync(starter, dir, { recursive: true, filter: (source) => !/[\\/](node_modules|dist)([\\/]|$)/.test(source) });
+  const html = projectName.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  for (const [file, value] of [["index.html", html], ["src/App.tsx", html], ["README.md", projectName]] as const) {
+    const target = path.join(dir, file);
+    if (fs.existsSync(target)) fs.writeFileSync(target, fs.readFileSync(target, "utf8").split("__NAME__").join(value));
+  }
+  return dir;
+};
 
 const HISTORY_LIMIT = 150;
 const EVENT_LIMIT = 250;
@@ -129,6 +176,13 @@ const STORE_PATH = path.resolve(process.env.BUILDS_DB_PATH ?? "./data/builds.jso
 
 const orchestrators = new Map<string, AutonomousOrchestrator>();
 const history = new Map<string, BuildRecord>();
+
+// The model's answer as it streams, per running build. Only the latest is
+// kept, in memory: it changes several times a second and is worthless later.
+const writing = new Map<string, LiveWriting>();
+buildActivity.on("thinking", ({ buildId, ...live }: LiveWriting & { buildId: string }) => {
+  if (orchestrators.has(buildId)) writing.set(buildId, live);
+});
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const now = (): string => new Date().toISOString();
@@ -326,6 +380,13 @@ export const BuildService = {
       if (clash) throw new Error(`${clash.projectName} is already building in that folder. Stop it or wait for it first.`);
     }
 
+    // A fresh web build starts from a working app instead of an empty folder.
+    const workingDir =
+      options.workingDir ??
+      ((options.targetPlatforms ?? ["web"]).includes("web")
+        ? prepareStarter(options.projectName, options.description, options.starter) ?? undefined
+        : undefined);
+
     const config: AutonomousConfig = {
       projectName: options.projectName,
       description: options.description,
@@ -338,12 +399,15 @@ export const BuildService = {
       profile,
       maxRepairAttempts: options.maxRepairAttempts,
       patience: options.patience,
-      workingDir: options.workingDir
+      workingDir
     };
 
     const orchestrator = new AutonomousOrchestrator(config);
     const status = orchestrator.getStatus();
     const buildId = status.buildId as string;
+    // Carried through every await of this build, so the model router can say
+    // which build its streaming answer belongs to; phase follows the stage.
+    const scope: BuildScope = { buildId, phase: "Getting ready" };
 
     orchestrators.set(buildId, orchestrator);
     const record: BuildRecord = {
@@ -385,6 +449,7 @@ export const BuildService = {
     const current = (): BuildRecord => history.get(buildId) ?? record;
 
     const settle = (state: BuildState, extra: Partial<BuildRecord> = {}): BuildRecord => {
+      writing.delete(buildId);
       const base = current();
       const best = bestPass(base);
       const updated: BuildRecord = {
@@ -411,11 +476,13 @@ export const BuildService = {
     });
 
     orchestrator.on("iteration-started", ({ iteration }: { iteration: number }) => {
+      scope.phase = `${STAGE_WORDS.running} (pass ${iteration})`;
       patch(buildId, { iterations: iteration, stage: "running", repairAttempt: null, stageSince: now(), passSince: now() });
       log(buildId, "pass", `Pass ${iteration} started`);
     });
 
     orchestrator.on("iteration-status", ({ iteration, status: stage, attempt }: { iteration: number; status: string; attempt?: number }) => {
+      scope.phase = `${STAGE_WORDS[stage] ?? stage} (pass ${iteration}${stage === "repairing" && attempt ? `, attempt ${attempt}` : ""})`;
       patch(buildId, { stage, repairAttempt: attempt ?? null, stageSince: now() });
       if (stage === "repairing") {
         log(buildId, "repair", `Pass ${iteration}: repair attempt ${attempt ?? 1}`);
@@ -518,7 +585,9 @@ export const BuildService = {
     // Deliberately not awaited: a build runs for minutes to hours. start()
     // emits "error" before it rejects, and that handler has already recorded
     // the failure; this only covers a rejection that happens without one.
-    orchestrator.start().catch((error: unknown) => {
+    // Inside the build's scope, so the model router can say which build its
+    // streaming answer belongs to (see LiveWriting).
+    buildScope.run(scope, () => orchestrator.start()).catch((error: unknown) => {
       if (current().state === "error") return;
       Logger.error("Build failed to run", { buildId, error: errorMessage(error) });
       buildEvents.emit("failed", settle("error", { error: errorMessage(error), outcome: `Failed: ${errorMessage(error)}` }));
@@ -580,7 +649,8 @@ export const BuildService = {
       ...record,
       live: running,
       state: running ? (status.isPaused ? "paused" : "running") : record.state,
-      guidance: status.guidance ?? record.guidance
+      guidance: status.guidance ?? record.guidance,
+      writing: running ? writing.get(buildId) ?? null : null
     };
   },
 
@@ -594,6 +664,8 @@ export const BuildService = {
       ...build,
       thoughts: [],
       thoughtCount: build.thoughts.length,
+      // How fast it is writing, for a list; the text itself only on its own page.
+      writing: build.writing ? { ...build.writing, tail: "" } : null,
       events: build.events.slice(-3),
       iterationDetail: build.iterationDetail.map((pass) => ({
         ...pass,

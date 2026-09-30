@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api, type BuildProfile } from "@/lib/api";
+import { api, type BuildProfile, type StarterChoice } from "@/lib/api";
 import { isLive, useActivity } from "../activity";
 import { Banner, Busy, Freshness, Header, Icon, NotConnected, Skeleton, useConnected, usePersistentState, useToast } from "../ui";
 import { BuildDetail } from "./detail";
@@ -17,7 +17,19 @@ const PROFILES: Array<{ id: BuildProfile; label: string; hint: string }> = [
 const EXAMPLES = [
   { name: "Café landing page", description: "A one-page site for a coffee shop: hero, menu, opening hours, map and a contact form." },
   { name: "Invoice tracker", description: "A small web app to record invoices, mark them paid, and show what is overdue." },
-  { name: "Booking form", description: "A booking page that takes a name, date and service, and emails the owner." }
+  { name: "Booking form", description: "A booking page that takes a name, date and service, and emails the owner." },
+  {
+    name: "Browser game",
+    description:
+      "A browser Snake game drawn on a canvas: arrow keys and on-screen buttons for phones, the snake grows when it eats and speeds up every 5 points, a best score saved in localStorage, pause with Space, and a game-over screen with restart. Keep the game rules in a separate module with tests."
+  }
+];
+
+/** Where a new build starts: see StarterChoice on the builder. */
+const STARTERS: Array<{ id: StarterChoice; label: string; hint: string }> = [
+  { id: "auto", label: "Auto", hint: "A working React app for anything that runs in a browser; an empty folder for Python, bots, servers and the like." },
+  { id: "web", label: "Starter app", hint: "Always start from the working React + TypeScript app. Fastest route to something that builds and passes its checks." },
+  { id: "none", label: "Empty folder", hint: "Let the model choose everything, from the language up. Slower, and more likely to need repairs." }
 ];
 
 type Filter = "all" | "live" | "works" | "look";
@@ -55,6 +67,7 @@ export default function BuildPage() {
   const [filter, setFilter] = usePersistentState<Filter>("build-filter", "all");
   const [search, setSearch] = useState("");
   const [advanced, setAdvanced] = useState(false);
+  const [starter, setStarter] = usePersistentState<StarterChoice>("build-starter", "auto");
   const [maxPasses, setMaxPasses] = useState("");
   const [target, setTarget] = useState("");
   const [busy, setBusy] = useState(false);
@@ -100,7 +113,8 @@ export default function BuildPage() {
         description: draft.description.trim(),
         profile: draft.profile,
         maxIterations: maxPasses && Number.isFinite(passes) ? passes : undefined,
-        qualityThreshold: target && Number.isFinite(quality) ? quality : undefined
+        qualityThreshold: target && Number.isFinite(quality) ? quality : undefined,
+        starter
       });
       setDraft({ name: "", description: "", profile: draft.profile });
       toast("Building. You can close this — it keeps going on the PC.", "ok");
@@ -190,6 +204,17 @@ export default function BuildPage() {
               </button>
               {advanced ? (
                 <div className="fade-in" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+                  <div className="field" style={{ gridColumn: "1 / -1" }}>
+                    <span>Start from</span>
+                    <div className="segmented">
+                      {STARTERS.map((option) => (
+                        <button key={option.id} className={starter === option.id ? "on" : ""} onClick={() => setStarter(option.id)}>
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                    <small className="muted" style={{ display: "block", marginTop: 7 }}>{STARTERS.find((option) => option.id === starter)?.hint}</small>
+                  </div>
                   <label className="field">
                     <span>Most passes</span>
                     <input inputMode="numeric" value={maxPasses} onChange={(event) => setMaxPasses(event.target.value.replace(/\D/g, ""))} placeholder="profile default" />

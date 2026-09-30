@@ -301,6 +301,36 @@ export interface BuildThought {
 export type BuildState = "running" | "paused" | "completed" | "stopped" | "error" | "interrupted";
 export type BuildProfile = "fast" | "balanced" | "deep";
 
+/** One of the builder's settings, as Settings → How the builder works shows it. */
+export interface BuilderSetting {
+  name: string;
+  group: "Models" | "Orders" | "Projects" | "Site";
+  label: string;
+  help: string;
+  kind: "model" | "bool" | "number" | "text" | "choice";
+  value: string;
+  fallback: string;
+  isDefault: boolean;
+  choices?: string[];
+  min?: number;
+  max?: number;
+  restart?: boolean;
+}
+
+/** Where a new build starts: a working React app, an empty folder, or whichever fits. */
+export type StarterChoice = "auto" | "web" | "none";
+
+/** What the model is writing right now, streamed from the builder. */
+export interface LiveWriting {
+  phase: string;
+  model: string;
+  tail: string;
+  chars: number;
+  tokensPerSecond: number;
+  done: boolean;
+  at: string;
+}
+
 export interface Build {
   buildId: string;
   projectName: string;
@@ -338,6 +368,8 @@ export interface Build {
   /** The live feed of what it is thinking. Only on a single build; lists carry thoughtCount. */
   thoughts?: BuildThought[];
   thoughtCount?: number;
+  /** The model's answer as it is being written (live builds; lists get it without the text). */
+  writing?: LiveWriting | null;
 }
 
 export type OrderStatus =
@@ -748,6 +780,7 @@ export const api = {
     profile?: BuildProfile;
     qualityThreshold?: number;
     maxIterations?: number;
+    starter?: StarterChoice;
   }) => request<{ buildId: string }>("/api/autonomous/start", { method: "POST", body: JSON.stringify(config) }, 60000),
   /** Add an instruction to a build that is already running. */
   guideBuild: (id: string, text: string) =>
@@ -888,6 +921,21 @@ export const api = {
     request<{ topic: Topic }>("/api/research/topics", { method: "POST", body: JSON.stringify({ title, question }) }),
   pauseTopic: (id: string) => request<unknown>(`/api/research/topics/${id}/pause`, { method: "POST" }),
   resumeTopic: (id: string) => request<unknown>(`/api/research/topics/${id}/resume`, { method: "POST" }),
+
+  warmModel: () => request<{ success: boolean; model: string; seconds: number; message: string }>("/api/power/warm-model", { method: "POST" }, 200000),
+  restartBuilder: (force = false) =>
+    request<{ success: boolean; message: string }>("/api/power/restart", { method: "POST", body: JSON.stringify({ force }) }, 30000),
+  builderLog: (lines = 200, level?: "warn" | "error") =>
+    request<{ lines: Array<{ at: string | null; level: string; message: string }>; file: string }>(
+      `/api/power/log?lines=${lines}${level ? `&level=${level}` : ""}`
+    ),
+  builderSettings: () =>
+    request<{ settings: BuilderSetting[]; models: string[]; ollama: string }>("/api/settings/builder", {}, 20000),
+  saveBuilderSettings: (values: Record<string, string>) =>
+    request<{ success: boolean; changed: string[]; message: string }>("/api/settings/builder", {
+      method: "PUT",
+      body: JSON.stringify({ values })
+    }),
 
   testProjectBuild: (buildId: string) =>
     request<{ test: BuildTest }>(`/api/ecosystem/project-builds/${encodeURIComponent(buildId)}/test`, { method: "POST" }),

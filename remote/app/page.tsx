@@ -6,6 +6,7 @@ import { useState } from "react";
 import { api, type Problem } from "@/lib/api";
 import { isLive, useActivity } from "./activity";
 import { StateBadge, STAGE_LABEL } from "./build/parts";
+import { HubStrip, JumpIn } from "./jump-in";
 import { Banner, Busy, Freshness, Header, Icon, Meter, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "./ui";
 
 type Step = { service: string; action: string; ok: boolean };
@@ -210,6 +211,9 @@ export default function Home() {
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: -4 }}>
           <Freshness updatedAt={status.updatedAt} fresh={status.fresh} error={status.error} />
         </div>
+
+        <HubStrip />
+        <JumpIn />
 
         {recentBuilds.length > 0 ? (
           <>

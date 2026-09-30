@@ -152,6 +152,7 @@ export const registerAutonomousRoutes = (app: Express) => {
         maxIterations: clampNumber(body.maxIterations, 1, 200),
         patience: clampNumber(body.patience, 1, 50),
         autoPackaging: body.autoPackaging === false ? false : undefined,
+        starter: body.starter === "web" || body.starter === "none" ? body.starter : "auto",
         startedBy: (req as AgentRequest).actor ?? "unknown"
       });
 

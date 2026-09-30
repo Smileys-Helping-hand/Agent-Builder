@@ -75,6 +75,10 @@ export const PROFILE_DEFAULTS: Record<BuildProfile, { maxIterations: number; pat
 /** Passes that fail outright (the model server dropped, a timeout) are retried this many times in a row. */
 const MAX_CONSECUTIVE_PASS_FAILURES = 3;
 
+
+/** Packages that need compiling (or a server) and have no place in a browser app. */
+const NATIVE_PACKAGES = new Set(["canvas", "node-canvas", "sqlite3", "better-sqlite3", "bcrypt", "node-sass", "robotjs", "serialport", "node-gyp", "puppeteer", "playwright"]);
+
 export interface AutonomousConfig {
   projectName: string;
   description: string;
@@ -987,13 +991,23 @@ ${lines}
       return null;
     }
     let added = 0;
+    const refused: string[] = [];
     for (const field of ["dependencies", "devDependencies"] as const) {
       for (const [name, version] of Object.entries((wanted[field] ?? {}) as Record<string, string>)) {
         const present = current.dependencies?.[name] ?? current.devDependencies?.[name];
         if (present || typeof version !== "string") continue;
+        // Compiled, server-side packages: they rarely install on Windows and a
+        // browser app cannot use them anyway (the canvas element needs no package).
+        if (NATIVE_PACKAGES.has(name)) {
+          refused.push(name);
+          continue;
+        }
         current[field] = { ...(current[field] ?? {}), [name]: version };
         added += 1;
       }
+    }
+    if (refused.length) {
+      this.think(this.currentIteration, "decision", `Left out ${refused.join(", ")}`, "Native server packages do not install on this PC and a browser app cannot use them; use the browser's own APIs instead.");
     }
     if (added === 0) return null;
     this.think(this.currentIteration, "decision", `Added ${added} dependenc${added === 1 ? "y" : "ies"} to the template's package.json`, "");

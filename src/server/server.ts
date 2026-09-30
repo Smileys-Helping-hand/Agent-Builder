@@ -54,6 +54,8 @@ import { registerServiceRoutes } from "./services.js";
 import { registerJarvisRoutes } from "./jarvis.js";
 import { registerOrderRoutes } from "./orders.js";
 import { registerPreviewRoutes } from "./previews.js";
+import { registerBuilderSettingsRoutes } from "./builderSettings.js";
+import { registerPowerToolRoutes } from "./powerTools.js";
 import { registerHubSsoRoutes } from "./hubSso.js";
 
 const warnIfNoAccountsExist = () => {
@@ -245,6 +247,8 @@ registerServiceRoutes(app);
 registerJarvisRoutes(app);
 registerOrderRoutes(app);
 registerPreviewRoutes(app);
+registerBuilderSettingsRoutes(app);
+registerPowerToolRoutes(app);
 registerHubSsoRoutes(app);
 app.use("/api/env", authenticate, authorizeRoles(["admin", "owner"]), envRouter);
 const healthMonitor = new HealthMonitor();
