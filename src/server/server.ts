@@ -254,11 +254,12 @@ app.use("/api/env", authenticate, authorizeRoles(["admin", "owner"]), envRouter)
 const healthMonitor = new HealthMonitor();
 registerHealthRoute(app, healthMonitor);
 
-app.get("/api/plugins", (_req: Request, res: Response) => {
+// Signed in only: this server is reachable from the internet through the tunnel.
+app.get("/api/plugins", authenticate, authorizeRoles(["viewer", "editor", "admin", "owner"]), (_req: Request, res: Response) => {
   res.json({ plugins: PluginRegistry.getMetadata() });
 });
 
-app.get("/api/memory/recent", async (_req: Request, res: Response) => {
+app.get("/api/memory/recent", authenticate, authorizeRoles(["viewer", "editor", "admin", "owner"]), async (_req: Request, res: Response) => {
   const records = await VectorMemory.listRecent(25);
   res.json({ records });
 });
