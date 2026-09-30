@@ -63,7 +63,20 @@ export class Verifier {
    */
   static async scaffoldTests(workspace: Workspace): Promise<void> {
     const pkgPath = path.join(workspace.root, "package.json");
-    const pkg = (await readJson(pkgPath)) ?? { name: "generated-app", version: "0.0.1" };
+    const existing = await readJson(pkgPath);
+
+    // A package.json that exists but does not parse is a bug for the repair
+    // loop to fix, not an empty slate. Replacing it with a stub threw away the
+    // project's dependencies and build script, and every later check failed on
+    // a project that could no longer build (a customer order ended at 31/100).
+    if (!existing && (await exists(pkgPath))) return;
+
+    // A project that already runs its own tests needs nothing added: rewriting
+    // its package.json and dropping in a second test config only fights it.
+    const ownTestScript = existing?.scripts?.test as string | undefined;
+    if (ownTestScript && !/^echo\b/.test(ownTestScript) && !/no test specified/i.test(ownTestScript)) return;
+
+    const pkg = existing ?? { name: "generated-app", version: "0.0.1" };
 
     pkg.devDependencies = pkg.devDependencies ?? {};
     if (!pkg.devDependencies.vitest && !pkg.dependencies?.vitest) {
