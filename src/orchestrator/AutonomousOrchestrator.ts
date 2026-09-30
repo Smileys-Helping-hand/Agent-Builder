@@ -877,11 +877,24 @@ followed immediately by a fenced code block on the next line — no other format
    */
   private existingProjectPrompt(context: any): string {
     const previous = this.iterations[this.iterations.length - 1];
-    return `You are a senior engineer continuing work on an existing project. Change it
+    // A fresh build from the starter is a new app, not a change to one: left to
+    // the "change only what is needed" framing, small models write a logic
+    // module and tests and never replace the placeholder screen.
+    const opening = this.starterStillPlaceholder()
+      ? `You are building a new web app on a ready-made starter (React + TypeScript + Vite
++ Vitest; the setup already works and must not be changed). src/App.tsx is only a
+placeholder showing "Getting ready…": you MUST replace it with the complete app.
+Answer with, in this order: FILE: src/App.tsx (the whole screen: layout, controls,
+state and wiring, importing your modules); then each module it imports (put the
+logic — rules, calculations — in .ts files); then a test file for that logic whose
+expectations match exactly what your code does; then FILE: src/styles.css.
+`
+      : `You are a senior engineer continuing work on an existing project. Change it
 to do what is asked. Keep its structure, language, framework, libraries and code
 style; do not rewrite, rename or reorganise what does not need to change, and do
 not start it over.
-
+`;
+    return `${opening}
 Project: ${this.config.projectName}
 
 What to do:
@@ -931,6 +944,16 @@ ${lines}
 
   listGuidance(): BuildGuidance[] {
     return [...this.guidance];
+  }
+
+  /** A starter build whose App.tsx is still the starter's placeholder: nothing has been built yet. */
+  private starterStillPlaceholder(): boolean {
+    if (!this.isStarter()) return false;
+    try {
+      return fs.readFileSync(path.join(this.workspace.root, "src", "App.tsx"), "utf8").includes("Getting ready…");
+    } catch {
+      return true;
+    }
   }
 
   /** Whether this build started from the web starter (templates/starters/web) rather than a real project or template. */
