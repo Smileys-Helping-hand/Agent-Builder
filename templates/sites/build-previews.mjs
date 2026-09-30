@@ -12,6 +12,7 @@
  * with relative asset paths and hash routes, so a subfolder needs no config.
  *
  *   node templates/sites/build-previews.mjs
+ *   node templates/sites/capture-covers.mjs      # cover.webp per preview, for the shop's gallery
  *   npx vercel deploy templates/sites/_previews/dist --prod
  */
 import { execSync } from "node:child_process";
