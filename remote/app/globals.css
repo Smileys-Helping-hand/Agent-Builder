@@ -1027,3 +1027,87 @@ button.link { background: none; border: none; color: var(--accent); font: inheri
 .log-line span { overflow-wrap: anywhere; }
 .log-line.lvl-warn span { color: var(--warn); }
 .log-line.lvl-error span { color: var(--bad); }
+
+/* ---------------- motion & polish ----------------
+   One layer on top of everything above: a slowly drifting light behind every
+   screen, cards and heroes that rise in with a slight stagger, lift on hover
+   (mouse only), and a light sweep across primary buttons. Transform and
+   opacity only, so it stays smooth on phones; the reduced-motion rule above
+   turns all of it off. */
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: -20vmax;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(38vmax 30vmax at 22% 18%, rgba(76, 196, 255, 0.12), transparent 70%),
+    radial-gradient(34vmax 28vmax at 78% 26%, rgba(139, 125, 255, 0.12), transparent 70%);
+  animation: aurora-drift 22s ease-in-out infinite alternate;
+  will-change: transform;
+}
+@keyframes aurora-drift {
+  from { transform: translate3d(-3vmax, -2vmax, 0) rotate(0deg); }
+  to { transform: translate3d(3vmax, 2vmax, 0) rotate(8deg); }
+}
+
+.hero,
+.card {
+  animation: rise 0.5s var(--ease) both;
+}
+.wrap > .card:nth-of-type(2), .wrap > div > .card:nth-of-type(2) { animation-delay: 0.05s; }
+.wrap > .card:nth-of-type(3), .wrap > div > .card:nth-of-type(3) { animation-delay: 0.1s; }
+.wrap > .card:nth-of-type(4), .wrap > div > .card:nth-of-type(4) { animation-delay: 0.15s; }
+.wrap > .card:nth-of-type(n + 5), .wrap > div > .card:nth-of-type(n + 5) { animation-delay: 0.2s; }
+
+.card {
+  transition: transform 0.25s var(--ease), border-color 0.25s var(--ease), box-shadow 0.25s var(--ease);
+}
+@media (hover: hover) and (pointer: fine) {
+  .card:hover {
+    transform: translateY(-2px);
+    border-color: var(--line-strong);
+    box-shadow: var(--shadow), 0 18px 40px rgba(4, 12, 28, 0.45);
+  }
+}
+
+/* Primary actions: a soft sheen passes over on hover. */
+.power,
+.btn.primary,
+.btn.accent {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.power::after,
+.btn.primary::after,
+.btn.accent::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(110deg, transparent 30%, rgba(255, 255, 255, 0.45) 50%, transparent 70%);
+  transform: translateX(-120%);
+  transition: transform 0.7s var(--ease);
+}
+.power:hover:not(:disabled)::after,
+.btn.primary:hover:not(:disabled)::after,
+.btn.accent:hover:not(:disabled)::after {
+  transform: translateX(120%);
+}
+.power:hover:not(:disabled) { box-shadow: 0 18px 38px rgba(27, 142, 242, 0.46); }
+
+/* The tab you just moved to gives a small nod. */
+.nav a.active svg { animation: nav-pop 0.38s var(--ease); }
+@keyframes nav-pop {
+  0% { transform: scale(0.82); }
+  60% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+
+/* Things that are up say so quietly. */
+.pill.up { animation: pulse 2.6s var(--ease) infinite; }
+
+.chip { transition: background 0.2s var(--ease), border-color 0.2s var(--ease), color 0.2s var(--ease); }
+.quick button, .quick a { transition: transform 0.14s var(--ease), background 0.2s var(--ease), border-color 0.2s var(--ease); }
