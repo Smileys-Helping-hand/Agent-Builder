@@ -12,7 +12,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 
-import { api, onMachine, type PreviewInfo } from "@/lib/api";
+import { api, onMachine, type PreviewInfo, type PreviewReport } from "@/lib/api";
 import { Busy, Icon } from "./ui";
 
 const DEVICES = [
@@ -27,7 +27,9 @@ export const PreviewPane = ({
   id,
   refreshKey,
   height = 560,
-  title
+  title,
+  onReports,
+  frameRef
 }: {
   kind: "template" | "build";
   id: string;
@@ -35,6 +37,10 @@ export const PreviewPane = ({
   refreshKey?: string | number;
   height?: number;
   title?: string;
+  /** Errors the previewed page reported (script errors, failed loads, console.error), newest last. */
+  onReports?: (reports: PreviewReport[]) => void;
+  /** The frame itself, for a live editor that talks to the page. */
+  frameRef?: React.MutableRefObject<HTMLIFrameElement | null>;
 }) => {
   const [info, setInfo] = useState<PreviewInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -42,6 +48,9 @@ export const PreviewPane = ({
   const [reloads, setReloads] = useState(0);
   const [width, setWidth] = useState(600);
   const frameBox = useRef<HTMLDivElement>(null);
+  const frame = useRef<HTMLIFrameElement | null>(null);
+  const [reports, setReports] = useState<PreviewReport[]>([]);
+  const [showReports, setShowReports] = useState(false);
 
   // Ask where the preview is; keep asking while it is being prepared.
   useEffect(() => {
@@ -75,7 +84,35 @@ export const PreviewPane = ({
     return () => observer.disconnect();
   }, [info?.ready]);
 
+  // What the page reports while you click through it. Only messages from this
+  // pane's own frame count; the frame has no origin of its own (it is sandboxed),
+  // so the source is what identifies it.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (!frame.current || event.source !== frame.current.contentWindow) return;
+      const data = event.data as PreviewReport & { type?: string };
+      if (data?.type !== "ab-preview-report" || typeof data.message !== "string") return;
+      if (data.kind === "loaded") return;
+      setReports((current) => {
+        if (current.some((entry) => entry.message === data.message)) return current;
+        const next = [...current, { kind: data.kind, message: data.message, page: data.page }].slice(-40);
+        onReports?.(next);
+        return next;
+      });
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [onReports]);
+
   const target = DEVICES.find((option) => option.id === device)!;
+  const src0 = info?.url ? `${info.url}|${info.version ?? ""}|${reloads}` : null;
+  // A new page (a reload, a new pass) starts with a clean slate. Not on the
+  // frame's load event: errors while loading arrive before it and would be lost.
+  useEffect(() => {
+    setReports([]);
+    onReports?.([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src0]);
   const scale = Math.min(1, width / target.width);
   const src = info?.url ? `${onMachine(info.url)}?v=${info.version ?? ""}-${reloads}` : null;
 
@@ -118,6 +155,10 @@ export const PreviewPane = ({
         {src ? (
           <iframe
             key={src}
+            ref={(element) => {
+              frame.current = element;
+              if (frameRef) frameRef.current = element;
+            }}
             title={title ?? "Preview"}
             src={src}
             sandbox="allow-scripts allow-forms allow-popups allow-modals"
@@ -153,7 +194,24 @@ export const PreviewPane = ({
           </div>
         )}
       </div>
-      {src && scale < 1 ? <small className="muted preview-note">Shown at {Math.round(scale * 100)}% of real size.</small> : null}
+      {src ? (
+        <div className={`preview-console ${reports.length ? "has" : ""}`}>
+          <button className="link" onClick={() => setShowReports((value) => !value)} disabled={!reports.length}>
+            {reports.length ? `⚠ ${reports.length} problem${reports.length === 1 ? "" : "s"} on this page` : "✓ No errors on this page"}
+          </button>
+          {scale < 1 ? <small className="muted">Shown at {Math.round(scale * 100)}% of real size.</small> : null}
+          {showReports && reports.length ? (
+            <ul>
+              {reports.map((report, index) => (
+                <li key={index}>
+                  <b>{report.kind}</b> {report.message}
+                  {report.page ? <span className="muted"> · {report.page}</span> : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 };

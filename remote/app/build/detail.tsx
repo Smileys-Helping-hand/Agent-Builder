@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
-import { api, type Build, type BuildEvent, type BuildProfile, type BuildThought } from "@/lib/api";
+import { api, type Build, type BuildAudit, type BuildEvent, type BuildProfile, type BuildThought, type PreviewReport } from "@/lib/api";
 import { isLive, useActivity } from "../activity";
 import { Banner, Busy, CopyButton, Freshness, Header, Icon, Meter, Skeleton, ago, duration, useRemote, useToast } from "../ui";
 import { QUICK_STEERS, WritingPane } from "./writing";
@@ -63,6 +63,137 @@ const Thought = ({ thought }: { thought: BuildThought }) => {
   );
 };
 
+/** Everything the audit and the preview found, as an instruction for the next pass. */
+const fixInstruction = (audit: BuildAudit | null, runtime: PreviewReport[]): string => {
+  const lines: string[] = [];
+  if (audit?.blocker) lines.push(`Make the ${audit.blocker.name} check pass. It fails with:\n${audit.blocker.output.slice(-900)}`);
+  const errors = [...(audit?.runtime ?? []), ...runtime].filter(
+    (entry, index, all) => all.findIndex((other) => other.message === entry.message) === index
+  );
+  if (errors.length) lines.push(`Fix these errors the page shows in the browser:\n${errors.slice(0, 12).map((entry) => `- ${entry.message}${entry.page ? ` (on ${entry.page})` : ""}`).join("\n")}`);
+  const findings = (audit?.findings ?? []).filter((finding) => finding.severity !== "info");
+  if (findings.length) lines.push(`Fix these problems found on the site:\n${findings.slice(0, 15).map((finding) => `- ${finding.message}${finding.file ? ` [${finding.file}]` : ""}`).join("\n")}`);
+  return lines.join("\n\n") || "Check the whole app works end to end and fix anything that does not.";
+};
+
+const SEVERITY_TONE = { error: "bad", warning: "warn", info: "" } as const;
+
+/**
+ * Test & audit: run its checks again and read the built site for what a
+ * visitor would trip over, add what the preview reported while you clicked
+ * through it, and hand all of it to a fix pass in one tap.
+ */
+const AuditCard = ({
+  build,
+  runtime,
+  onFix,
+  onAudited
+}: {
+  build: Build;
+  runtime: PreviewReport[];
+  onFix: (instruction: string) => Promise<void>;
+  onAudited: () => Promise<void>;
+}) => {
+  const toast = useToast();
+  const [running, setRunning] = useState(false);
+  const [fixing, setFixing] = useState(false);
+  const [audit, setAudit] = useState<BuildAudit | null>(null);
+  const shown = audit ?? build.audit ?? null;
+  const live = isLive(build);
+  const problems = (shown?.findings ?? []).filter((finding) => finding.severity !== "info").length + (shown?.runtime.length ?? 0) + runtime.length;
+
+  return (
+    <div className="card">
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <h2 style={{ margin: 0 }}>Test &amp; audit</h2>
+        <div className="btn-row">
+          <button
+            className="btn small"
+            disabled={running || live}
+            title={live ? "Every pass runs the checks already; pause or stop it to audit now" : undefined}
+            onClick={async () => {
+              setRunning(true);
+              try {
+                const result = await api.auditBuild(build.buildId, runtime);
+                setAudit(result.audit);
+                await onAudited();
+                toast(result.audit.passed ? "Audited — every check passes" : "Audited — see what fails below", result.audit.passed ? "ok" : "info");
+              } catch (error) {
+                toast(error instanceof Error ? error.message : String(error), "error");
+              } finally {
+                setRunning(false);
+              }
+            }}
+          >
+            {running ? <Busy label="Testing" /> : <>{Icon.stethoscope} {shown ? "Run again" : "Run tests & audit"}</>}
+          </button>
+          {shown || runtime.length ? (
+            <button
+              className="btn small primary"
+              disabled={fixing || live || (shown?.passed && problems === 0)}
+              onClick={async () => {
+                setFixing(true);
+                try {
+                  await onFix(fixInstruction(shown, runtime));
+                } finally {
+                  setFixing(false);
+                }
+              }}
+            >
+              {fixing ? <Busy label="Starting" /> : <>{Icon.wrench} Fix these in a new pass</>}
+            </button>
+          ) : null}
+        </div>
+      </div>
+      <p className="hint" style={{ marginTop: 6 }}>
+        {live
+          ? "Click through the preview while it builds; errors it shows are collected here. Audit once it finishes."
+          : "Runs install, typecheck, build, tests and lint again, then reads the site for broken links, missing files, phone layout, labels and weight. Click through the preview first to catch errors too."}
+      </p>
+
+      {shown ? (
+        <>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <span className={`badge ${shown.passed ? "good" : "bad"}`}>{shown.passed ? "Checks pass" : `${shown.blocker?.name ?? "A check"} fails`}</span>
+            <Checks checks={shown.checks} compact />
+            <small className="muted">
+              {shown.site ? `${shown.pages} page(s) read` : "No built site to read yet"} · {ago(shown.at)}
+            </small>
+          </div>
+          {shown.blocker ? <pre className="log small">{shown.blocker.output.slice(-1200)}</pre> : null}
+        </>
+      ) : null}
+
+      {problems > 0 ? (
+        <ul className="audit-list">
+          {[...runtime, ...(shown?.runtime ?? [])]
+            .filter((entry, index, all) => all.findIndex((other) => other.message === entry.message) === index)
+            .map((entry, index) => (
+              <li key={`r${index}`}>
+                <span className="tag bad">{entry.kind}</span>
+                <div>
+                  {entry.message}
+                  {entry.page ? <small>seen on {entry.page}</small> : null}
+                </div>
+              </li>
+            ))}
+          {(shown?.findings ?? []).map((finding, index) => (
+            <li key={`f${index}`}>
+              <span className={`tag ${SEVERITY_TONE[finding.severity]}`}>{finding.check}</span>
+              <div>
+                {finding.message}
+                {finding.file ? <small>{finding.file}</small> : null}
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : shown ? (
+        <p className="small" style={{ color: "var(--good)", marginTop: 10 }}>Nothing to fix on the site.</p>
+      ) : null}
+    </div>
+  );
+};
+
 const PROFILES: Array<{ id: BuildProfile; label: string }> = [
   { id: "fast", label: "Fast" },
   { id: "balanced", label: "Balanced" },
@@ -87,6 +218,9 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
   const [files, setFiles] = useState<{ list: string[]; total: number; exists: boolean } | null>(null);
   const [viewing, setViewing] = useState<{ path: string; content: string; truncated: boolean } | null>(null);
   const [confirmStop, setConfirmStop] = useState(false);
+  // What the preview reported while you clicked through it.
+  const [runtime, setRuntime] = useState<PreviewReport[]>([]);
+  const onReports = useCallback((reports: PreviewReport[]) => setRuntime(reports), []);
 
   const events = useMemo(() => (build?.events ?? []).slice().reverse(), [build?.events]);
   const thoughts = useMemo(() => (build?.thoughts ?? []).slice().reverse(), [build?.thoughts]);
@@ -231,8 +365,30 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
           {/* ---------- what it has made, live ---------- */}
           <div className="section-title">{live ? "Live preview — updates after every pass" : "Preview"}</div>
           <div className="card">
-            <PreviewPane kind="build" id={build.buildId} refreshKey={`${build.iterations}-${build.state}-${build.qualityScore}`} title={`${build.projectName} preview`} />
+            <PreviewPane
+              kind="build"
+              id={build.buildId}
+              refreshKey={`${build.iterations}-${build.state}-${build.qualityScore}`}
+              title={`${build.projectName} preview`}
+              onReports={onReports}
+            />
           </div>
+          <AuditCard
+            build={build}
+            runtime={runtime}
+            onAudited={async () => {
+              await detail.refresh();
+            }}
+            onFix={async (fix) => {
+              try {
+                const result = await api.continueBuild(build.buildId, { instruction: fix });
+                toast("Fixing it in a new pass. Follow it here.", "ok");
+                onOpen(result.buildId);
+              } catch (error) {
+                toast(error instanceof Error ? error.message : String(error), "error");
+              }
+            }}
+          />
         </aside>
         <div className="detail-main">
 

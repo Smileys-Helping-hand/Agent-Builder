@@ -28,6 +28,7 @@ import {
   type BuildThought
 } from "./AutonomousOrchestrator.js";
 import { Logger } from "../utils/Logger.js";
+import type { AuditFinding } from "./SiteAudit.js";
 import { buildActivity, buildScope, type BuildScope } from "../utils/BuildContext.js";
 
 export type BuildState = "running" | "paused" | "completed" | "stopped" | "error" | "interrupted";
@@ -60,6 +61,23 @@ export interface BuildEventEntry {
   at: string;
   kind: "start" | "pass" | "stage" | "repair" | "score" | "guidance" | "lesson" | "package" | "control" | "warn" | "error" | "done";
   message: string;
+}
+
+/** The last "Test & audit" run on a build: its checks, what the site audit found, and what the preview reported. */
+export interface BuildAudit {
+  at: string;
+  passed: boolean;
+  score: number;
+  checks: CheckSummary[];
+  blocker: { name: string; output: string } | null;
+  findings: AuditFinding[];
+  /** Errors the preview reported while someone clicked through it. */
+  runtime: Array<{ kind: string; message: string; page?: string }>;
+  pages: number;
+  /** Whether it had a built site to audit, or only the project checks ran. */
+  site: boolean;
+  /** Whether the site was rendered in a real browser (Chrome/Edge), not only read. */
+  rendered?: boolean;
 }
 
 /** A thought, as kept: when it happened, on top of what the orchestrator said. */
@@ -105,6 +123,8 @@ export interface BuildRecord {
   events: BuildEventEntry[];
   /** The live "what it is thinking" feed: plans, check results, repairs, decisions. */
   thoughts: BuildThoughtEntry[];
+  /** The last "Test & audit" of what it made. */
+  audit: BuildAudit | null;
 }
 
 /** A build as the API and the UI see it: the record plus whether it is live in memory. */
@@ -270,6 +290,7 @@ const normalise = (raw: Partial<BuildRecord> & { buildId: string }): BuildRecord
   iterationDetail: [],
   events: [],
   thoughts: [],
+  audit: null,
   ...raw
 });
 
@@ -436,6 +457,7 @@ export const BuildService = {
       guidance: [],
       iterationDetail: [],
       thoughts: [],
+      audit: null,
       events: [
         {
           at: now(),
@@ -664,6 +686,8 @@ export const BuildService = {
       ...build,
       thoughts: [],
       thoughtCount: build.thoughts.length,
+      // The audit's detail is for the build's own page.
+      audit: null,
       // How fast it is writing, for a list; the text itself only on its own page.
       writing: build.writing ? { ...build.writing, tail: "" } : null,
       events: build.events.slice(-3),
@@ -715,6 +739,18 @@ export const BuildService = {
     orchestrator[action]();
     if (action === "stop") orchestrators.delete(buildId);
     return true;
+  },
+
+  /** Keep the result of a "Test & audit" run with the build. */
+  recordAudit(buildId: string, audit: BuildAudit): BuildRecord | null {
+    const updated = patch(buildId, { audit });
+    const problems = audit.findings.filter((finding) => finding.severity !== "info").length + audit.runtime.length;
+    log(
+      buildId,
+      audit.passed && problems === 0 ? "done" : "warn",
+      `Tested and audited: ${audit.passed ? "every check passes" : `${audit.blocker?.name ?? "a check"} fails`}; ${problems} problem(s) on the site`
+    );
+    return updated;
   },
 
   /** Drop a finished build from the list. Its files stay where they are. */
