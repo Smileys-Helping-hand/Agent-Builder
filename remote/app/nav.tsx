@@ -11,6 +11,7 @@ import { Icon } from "./ui";
 const items = [
   { href: "/", label: "Home", icon: Icon.power },
   { href: "/build", label: "Build", icon: Icon.sparkle },
+  { href: "/prompt", label: "Prompt", icon: Icon.code },
   { href: "/orders", label: "Orders", icon: Icon.list },
   { href: "/projects", label: "Projects", icon: Icon.folder },
   { href: "/research", label: "Research", icon: Icon.flask },

@@ -526,8 +526,72 @@ export interface Topic {
   findingCount: number;
   sourceCount: number;
   corroboratedCount: number;
+  contestedCount?: number;
   documentCount: number;
   openQuestionCount: number;
+  cycles?: number;
+  lastCycleAt?: string | null;
+  nextCycleAt?: string | null;
+  lastError?: string | null;
+  cycleRunning?: boolean;
+  generatingDocuments?: boolean;
+}
+
+export interface TopicFinding {
+  id: number;
+  cycle: number;
+  claim: string;
+  sourceUrl: string | null;
+  sourceTitle: string | null;
+  confidence: number;
+  supportCount: number;
+  status: "open" | "corroborated" | "contested";
+  createdAt: string;
+}
+
+export interface TopicQuestion {
+  id: number;
+  text: string;
+  status: "open" | "explored";
+  priority: number;
+  timesExplored: number;
+}
+
+export interface TopicSource {
+  id: number;
+  url: string;
+  title: string;
+  provider: string;
+  excerpt: string | null;
+  cycle: number;
+  fetchedAt: string;
+}
+
+export interface TopicDocumentMeta {
+  id: number;
+  kind: "summary" | "study_guide" | "report";
+  version: number;
+  title: string;
+  findingCount: number;
+  createdAt: string;
+}
+
+export interface TopicActivity {
+  id: number;
+  cycle: number;
+  kind: string;
+  message: string;
+  createdAt: string;
+}
+
+export interface TopicDetail {
+  topic: Topic;
+  findings: TopicFinding[];
+  openQuestions: TopicQuestion[];
+  exploredQuestions: TopicQuestion[];
+  sources: TopicSource[];
+  documents: TopicDocumentMeta[];
+  activity: TopicActivity[];
 }
 
 /** The app's own address when a builder is serving it (http://127.0.0.1:4000, a tunnel, a tailnet). */
@@ -949,6 +1013,24 @@ export const api = {
     request<{ topic: Topic }>("/api/research/topics", { method: "POST", body: JSON.stringify({ title, question }) }),
   pauseTopic: (id: string) => request<unknown>(`/api/research/topics/${id}/pause`, { method: "POST" }),
   resumeTopic: (id: string) => request<unknown>(`/api/research/topics/${id}/resume`, { method: "POST" }),
+  stopTopic: (id: string) => request<unknown>(`/api/research/topics/${id}/stop`, { method: "POST" }),
+  topic: (id: string) => request<TopicDetail>(`/api/research/topics/${id}`),
+  editTopic: (id: string, patch: { title?: string; question?: string }) =>
+    request<{ topic: Topic }>(`/api/research/topics/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  runTopicNow: (id: string) => request<unknown>(`/api/research/topics/${id}/run`, { method: "POST" }),
+  deleteTopic: (id: string) => request<unknown>(`/api/research/topics/${id}`, { method: "DELETE" }),
+  askTopic: (id: string, text: string) =>
+    request<unknown>(`/api/research/topics/${id}/questions`, { method: "POST", body: JSON.stringify({ text }) }),
+  dropQuestion: (id: string, questionId: number) =>
+    request<unknown>(`/api/research/topics/${id}/questions/${questionId}`, { method: "DELETE" }),
+  prioritiseQuestion: (id: string, questionId: number) =>
+    request<unknown>(`/api/research/topics/${id}/questions/${questionId}/prioritise`, { method: "POST" }),
+  judgeFinding: (id: string, findingId: number, verdict: "confirm" | "reject") =>
+    request<unknown>(`/api/research/topics/${id}/findings/${findingId}`, { method: "POST", body: JSON.stringify({ verdict }) }),
+  regenerateDocuments: (id: string) =>
+    request<unknown>(`/api/research/topics/${id}/documents/regenerate`, { method: "POST" }, 180000),
+  topicDocument: (id: string, documentId: number) =>
+    request<{ document: TopicDocumentMeta & { markdown: string } }>(`/api/research/topics/${id}/documents/${documentId}`),
 
   warmModel: () => request<{ success: boolean; model: string; seconds: number; message: string }>("/api/power/warm-model", { method: "POST" }, 200000),
   restartBuilder: (force = false) =>

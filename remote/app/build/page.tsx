@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api, type BuildProfile, type StarterChoice } from "@/lib/api";
@@ -172,6 +173,9 @@ export default function BuildPage() {
                   placeholder="Who is it for, what should be on it, and what should happen when someone uses it."
                 />
               </label>
+              <Link href="/prompt/" className="pb-link">
+                {Icon.code} Not sure what to write? Use the prompt builder →
+              </Link>
 
               <div className="chips" style={{ marginBottom: 12 }}>
                 {EXAMPLES.map((example) => (
