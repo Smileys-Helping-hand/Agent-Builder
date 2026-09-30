@@ -18,7 +18,10 @@ const TRUSTED = [
   /^https:\/\/(www\.)?arpcloudsolutions\.co\.za$/,
   /^https:\/\/[a-z0-9-]+\.arpcloudsolutions\.co\.za$/,
   /^http:\/\/localhost(:\d+)?$/,
-  /^http:\/\/127\.0\.0\.1(:\d+)?$/
+  /^http:\/\/127\.0\.0\.1(:\d+)?$/,
+  // The builder's own app, reached through the tunnel or over Tailscale.
+  /^https:\/\/([a-z0-9-]+\.)?savestate\.co\.za$/,
+  /^http:\/\/100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}(:\d+)?$/
 ];
 
 /** The fields a customer may change, and nothing else. */

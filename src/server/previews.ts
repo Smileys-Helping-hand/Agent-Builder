@@ -100,6 +100,35 @@ const withReporter = (html: string): string =>
 
 /* ---------------- building a template's preview on demand ---------------- */
 
+/** Newest change to a template's source, so a build older than it is rebuilt. */
+const newestSource = (folder: string): number => {
+  let newest = 0;
+  const visit = (target: string) => {
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(target);
+    } catch {
+      return;
+    }
+    if (stat.isDirectory()) {
+      for (const entry of fs.readdirSync(target)) {
+        if (entry !== "node_modules" && entry !== "dist") visit(path.join(target, entry));
+      }
+    } else {
+      newest = Math.max(newest, stat.mtimeMs);
+    }
+  };
+  for (const entry of ["src", "index.html", "package.json", "vite.config.ts", "template.json"]) visit(path.join(folder, entry));
+  return newest;
+};
+
+/** A template whose site was built before its code last changed (an update, an applied edit). */
+const isStale = (folder: string): boolean => {
+  const built = path.join(folder, "dist", "index.html");
+  if (!fs.existsSync(built)) return false;
+  return newestSource(folder) > fs.statSync(built).mtimeMs + 1000;
+};
+
 const building = new Map<string, Promise<void>>();
 const buildErrors = new Map<string, string>();
 
@@ -144,6 +173,14 @@ export const registerPreviewRoutes = (app: Express) => {
       const template = Catalog.all().find((item) => item.id === id);
       if (!template) return res.status(404).json({ error: "Unknown template." });
       return res.json(describe("template", id, null, "This template has no code yet, so there is nothing to preview.", { hosted: template.previewUrl ?? null }));
+    }
+    // Built before its code last changed: rebuild, so the preview is what a
+    // customer would get (and has the latest live editing), not yesterday's.
+    if (fs.existsSync(path.join(folder, "package.json")) && (building.has(id) || (isStale(folder) && !buildErrors.has(id)))) {
+      buildTemplate(id, folder);
+      return res.json(
+        describe("template", id, null, "Its code changed since the preview was built — rebuilding it, about a minute.", { preparing: true, failed: false })
+      );
     }
     const { root, reason } = servable(folder);
     if (!root && fs.existsSync(path.join(folder, "package.json"))) {

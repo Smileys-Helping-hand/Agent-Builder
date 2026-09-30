@@ -905,6 +905,29 @@ button.link { background: none; border: none; color: var(--accent); font: inheri
 .audit-list li .tag { flex: none; }
 .audit-list li small { display: block; color: var(--faint); }
 
+/* live template editor */
+.studio-stage { display: grid; gap: 14px; }
+@media (min-width: 900px) { .studio-stage.editing { grid-template-columns: minmax(0, 1fr) 300px; align-items: start; } }
+.editor { display: grid; gap: 12px; padding: 12px; border-radius: 14px; border: 1px solid var(--line-strong); background: rgba(6, 11, 21, 0.55); max-height: 720px; overflow-y: auto; }
+.editor-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.editor fieldset { border: 1px solid var(--line); border-radius: 12px; padding: 10px 11px 11px; margin: 0; min-width: 0; }
+.editor legend { font-size: 11.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); padding: 0 5px; }
+.editor .field.compact { margin: 8px 0 0; }
+.editor .field.compact input, .editor .field.compact textarea { padding: 9px 10px; font-size: 14px; }
+.swatches { display: grid; gap: 7px; }
+.swatch { display: grid; grid-template-columns: 34px 1fr 86px; align-items: center; gap: 8px; font-size: 13px; }
+.swatch input[type="color"] { width: 34px; height: 30px; padding: 0; border-radius: 8px; border: 1px solid var(--line-strong); background: none; cursor: pointer; }
+.swatch .hex { padding: 6px 8px; font-size: 12.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; border-radius: 8px; }
+.blocks { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 5px; }
+.blocks li { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.03); font-size: 13.2px; cursor: grab; }
+.blocks li.dragging { opacity: 0.5; border-style: dashed; }
+.blocks li.hidden .block-title { text-decoration: line-through; color: var(--faint); }
+.blocks .grip { color: var(--faint); letter-spacing: -2px; }
+.blocks .block-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.icon-btn { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--text); cursor: pointer; font: inherit; font-size: 13px; }
+.icon-btn:disabled { opacity: 0.35; cursor: default; }
+.icon-btn svg { width: 15px; height: 15px; }
+
 /* home: live builds */
 .live-build { display: flex; gap: 12px; align-items: center; padding: 11px 0; border-top: 1px solid var(--line); color: inherit; }
 .live-build:first-of-type { border-top: none; }

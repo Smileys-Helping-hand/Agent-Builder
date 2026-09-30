@@ -6,10 +6,11 @@
  * have a source folder with its actual code, and then a customer's build starts
  * from that code instead of from nothing.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { api, type Template, type TemplateKind } from "@/lib/api";
 import { PreviewPane } from "../preview";
+import { LiveEditor } from "./customise";
 import { ProjectBuildList } from "../projects/carry-on";
 import { Banner, Busy, Icon, Skeleton, usePersistentState, useRemote, useToast } from "../ui";
 
@@ -120,6 +121,8 @@ export function TemplateStudio({ publishedNote }: { publishedNote?: string | nul
   const [busy, setBusy] = useState<string | null>(null);
   // Which template the preview shows. Clicking a card picks it; kept across refreshes.
   const [selectedId, setSelectedId] = usePersistentState<string | null>("template-selected", null);
+  const [editing, setEditing] = usePersistentState<boolean>("template-editing", false);
+  const previewFrame = useRef<HTMLIFrameElement | null>(null);
 
   const all = templates.data?.all ?? [];
   const selected = all.find((t) => t.id === selectedId) ?? all.find((t) => !t.hidden && t.sourcePath) ?? all[0] ?? null;
@@ -201,11 +204,26 @@ export function TemplateStudio({ publishedNote }: { publishedNote?: string | nul
                   {selected.techStack?.length ? ` · ${selected.techStack.join(", ")}` : ""}
                 </p>
               </div>
-              <button className="btn small primary" onClick={() => setPanel({ kind: "customer", template: selected, customerName: "", brief: "" })}>
-                {Icon.sparkle} Build for a customer
-              </button>
+              <div className="btn-row">
+                <button className={`btn small ${editing ? "accent" : ""}`} onClick={() => setEditing(!editing)} aria-pressed={editing}>
+                  {Icon.wrench} {editing ? "Close editor" : "Customise live"}
+                </button>
+                <button className="btn small primary" onClick={() => setPanel({ kind: "customer", template: selected, customerName: "", brief: "" })}>
+                  {Icon.sparkle} Build for a customer
+                </button>
+              </div>
             </div>
-            <PreviewPane kind="template" id={selected.id} height={520} title={`${selected.name} preview`} />
+            <div className={editing ? "studio-stage editing" : "studio-stage"}>
+              <PreviewPane kind="template" id={selected.id} height={editing ? 640 : 520} title={`${selected.name} preview`} frameRef={previewFrame} />
+              {editing ? (
+                <LiveEditor
+                  key={selected.id}
+                  templateId={selected.id}
+                  frameRef={previewFrame}
+                  onUseForCustomer={(brief) => setPanel({ kind: "customer", template: selected, customerName: "", brief })}
+                />
+              ) : null}
+            </div>
             {selected.features.length ? (
               <div className="chips" style={{ marginTop: 10 }}>
                 {selected.features.slice(0, 8).map((feature) => (
