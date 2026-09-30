@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import App from "./App";
 import { site } from "./content";
+import { enableLiveCustomizing } from "./lib/customize";
 import { businessSchema } from "./lib/site";
 import "./styles/base.css";
 import "./styles/template.css";
@@ -39,8 +40,19 @@ if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches && "Intersect
   watch();
 }
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>
-);
+const root = createRoot(document.getElementById("root")!);
+const draw = () =>
+  root.render(
+    <StrictMode>
+      <App />
+    </StrictMode>
+  );
+draw();
+
+// Shown inside the shop's "Customise" panel, the site restyles itself as the
+// customer picks colours, words and sections (see lib/customize.ts). The page
+// reads its content fresh on every draw, so drawing again is all it takes.
+enableLiveCustomizing(site as unknown as Record<string, unknown>, () => {
+  document.title = site.business.name;
+  draw();
+});

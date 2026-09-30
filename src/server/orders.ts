@@ -16,6 +16,7 @@ import { BuildService, buildEvents, type BuildRecord } from "../orchestrator/Bui
 import { ProjectBuilds } from "../ecosystem/ProjectBuilds.js";
 import { Catalog } from "../orders/Catalog.js";
 import { OrderPipeline } from "../orders/OrderPipeline.js";
+import { OrderReceipts } from "../orders/OrderReceipts.js";
 import { OrderStore, ORDER_STATUSES, type OrderStatus } from "../orders/OrderStore.js";
 import { Packager } from "../orders/Packager.js";
 import { SiteClient } from "../orders/SiteClient.js";
@@ -42,6 +43,7 @@ const expand = (orderId: string) => {
   return {
     order,
     notes: OrderStore.notes(orderId, 30),
+    receipts: OrderReceipts.forOrder(orderId).map((receipt) => ({ ...receipt, verified: OrderReceipts.verify(receipt) })),
     build: order.buildId ? summarise(order.buildId) : null
   };
 };
@@ -229,6 +231,19 @@ export const registerOrderRoutes = (app: Express) => {
   app.post("/api/orders/hub/test", authenticateAgent("execute"), async (_req: Request, res: Response) => {
     const testResult = await SiteClient.testConnection();
     res.json(testResult);
+  });
+
+  /** What happened to every order, newest first. GET /api/orders/activity?limit=&kind= */
+  app.get("/api/orders/activity", authenticateAgent("read"), (req: Request, res: Response) => {
+    const limit = Number(req.query.limit) || 100;
+    const kind = typeof req.query.kind === "string" && /^[a-z_-]{1,40}$/.test(req.query.kind) ? req.query.kind : undefined;
+    res.json({ activity: OrderStore.activity({ limit, kind }) });
+  });
+
+  /** Every hand-over on record, each checked against its digest. GET /api/orders/receipts */
+  app.get("/api/orders/receipts", authenticateAgent("read"), (req: Request, res: Response) => {
+    const receipts = OrderReceipts.list(Number(req.query.limit) || 100);
+    res.json({ receipts: receipts.map((receipt) => ({ ...receipt, verified: OrderReceipts.verify(receipt) })) });
   });
 
   app.get("/api/orders", authenticateAgent("read"), (req: Request, res: Response) => {

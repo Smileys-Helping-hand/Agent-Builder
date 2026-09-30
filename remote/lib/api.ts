@@ -473,6 +473,32 @@ export interface OrderNote {
   createdAt: string;
 }
 
+/** A note from any order, with the order it belongs to. */
+export interface OrderActivity extends OrderNote {
+  orderId: string;
+  title: string;
+  customerName: string;
+}
+
+/** The record of one hand-over. `verified` is false if it was edited afterwards. */
+export interface OrderReceipt {
+  id: string;
+  number: string;
+  kind: "delivery";
+  orderId: string;
+  title: string;
+  customerName: string;
+  customerEmail: string | null;
+  buildId: string | null;
+  qualityScore: number;
+  attempts: number;
+  deliverableUrl: string | null;
+  by: string;
+  createdAt: string;
+  digest: string;
+  verified: boolean;
+}
+
 export interface PipelineStatus {
   running: boolean;
   site: { configured: boolean; site: string | null };
@@ -836,6 +862,8 @@ export const api = {
     ),
   order: (id: string) => request<{ order: Order; notes: OrderNote[]; build: Build | null }>(`/api/orders/${id}`),
   pipeline: () => request<PipelineStatus>("/api/orders/status"),
+  orderActivity: (limit = 100) => request<{ activity: OrderActivity[] }>(`/api/orders/activity?limit=${limit}`),
+  orderReceipts: (limit = 100) => request<{ receipts: OrderReceipt[] }>(`/api/orders/receipts?limit=${limit}`),
   addOrder: (order: {
     customerName: string;
     customerEmail?: string;

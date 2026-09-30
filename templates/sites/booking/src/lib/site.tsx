@@ -242,6 +242,10 @@ export function businessSchema(business: Business, type = "LocalBusiness"): stri
   return JSON.stringify(data).replace(/</g, "\\u003c");
 }
 
+/** "What customers say" -> "what-customers-say", for ids. */
+export const slugify = (text: string): string =>
+  text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "section";
+
 export function Section({
   id,
   eyebrow,
@@ -258,7 +262,9 @@ export function Section({
   tone?: "plain" | "tinted";
 }) {
   return (
-    <section id={id} className={`section reveal ${tone === "tinted" ? "section-tinted" : ""}`}>
+    // Every section gets an id — from its title if none is given — so it can be
+    // linked to, and moved or hidden by the live customiser.
+    <section id={id ?? slugify(title)} className={`section reveal ${tone === "tinted" ? "section-tinted" : ""}`}>
       <div className="container">
         <div className="section-head">
           {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}

@@ -88,6 +88,12 @@ export interface OrderNote {
   createdAt: string;
 }
 
+/** A note with the order it belongs to, for the log across every order. */
+export interface OrderActivity extends OrderNote {
+  title: string;
+  customerName: string;
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS orders (
   id TEXT PRIMARY KEY,
@@ -353,6 +359,38 @@ export const OrderStore = {
       kind: row.kind,
       message: row.message,
       createdAt: row.created_at
+    }));
+  },
+
+  /** Every order's notes, newest first: the log of what happened to all of them. */
+  activity(options: { limit?: number; kind?: string } = {}): OrderActivity[] {
+    const limit = Math.min(Math.max(1, options.limit ?? 100), 500);
+    const where = options.kind ? "WHERE n.kind = ?" : "";
+    const params: unknown[] = options.kind ? [options.kind, limit] : [limit];
+    const rows = db()
+      .prepare(
+        `SELECT n.id, n.order_id, n.kind, n.message, n.created_at, o.title, o.customer_name
+           FROM order_notes n JOIN orders o ON o.id = n.order_id
+           ${where}
+           ORDER BY n.id DESC LIMIT ?`
+      )
+      .all(...params) as Array<{
+      id: number;
+      order_id: string;
+      kind: string;
+      message: string;
+      created_at: string;
+      title: string;
+      customer_name: string;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      orderId: row.order_id,
+      kind: row.kind,
+      message: row.message,
+      createdAt: row.created_at,
+      title: row.title,
+      customerName: row.customer_name
     }));
   },
 
