@@ -339,9 +339,10 @@ export class AutonomousOrchestrator extends EventEmitter {
       iteration.artifacts.push(...generatedCode.artifacts);
 
       let currentFiles = this.guardFiles(generatedCode.files);
-      if (!this.config.workingDir && Object.keys(currentFiles).length === 0) {
-        // Nothing to write means nothing to verify; scoring an empty folder only
-        // burns a pass. Failing it lets the loop retry, and stop if it persists.
+      if ((!this.config.workingDir || this.isStarter()) && Object.keys(currentFiles).length === 0) {
+        // Nothing to write means nothing to verify; scoring an empty folder (or
+        // an untouched starter, which passes its checks as it is) only burns a
+        // pass. Failing it lets the loop retry, and stop if it persists.
         throw new Error(
           "The model answered without any files in the FILE: format. Check that the model is running and able to write code (OLLAMA_MODEL)."
         );
@@ -930,6 +931,16 @@ ${lines}
 
   listGuidance(): BuildGuidance[] {
     return [...this.guidance];
+  }
+
+  /** Whether this build started from the web starter (templates/starters/web) rather than a real project or template. */
+  private isStarter(): boolean {
+    try {
+      const meta = JSON.parse(fs.readFileSync(path.join(this.workspace.root, "template.json"), "utf8")) as { starter?: boolean };
+      return meta.starter === true;
+    } catch {
+      return false;
+    }
   }
 
   /**
