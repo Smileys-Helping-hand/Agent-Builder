@@ -298,6 +298,41 @@ export interface BuildThought {
   files?: string[];
 }
 
+export interface PreviewReport {
+  kind: "error" | "resource" | "console" | "loaded" | string;
+  message: string;
+  page?: string;
+}
+
+export interface BuildAudit {
+  at: string;
+  passed: boolean;
+  score: number;
+  checks: BuildCheck[];
+  blocker: { name: string; output: string } | null;
+  findings: Array<{ severity: "error" | "warning" | "info"; check: string; message: string; file?: string }>;
+  runtime: PreviewReport[];
+  pages: number;
+  site: boolean;
+}
+
+/** Something the builder learned, from a fix that worked or from research. */
+export interface Lesson {
+  id: number;
+  scope: "build" | "research";
+  signature: string;
+  lesson: string;
+  example: string | null;
+  timesApplied: number;
+  timesHelped: number;
+  timesFailed: number;
+  /** How often it helped, smoothed: (helped + 1) / (applied + 2). */
+  utility: number;
+  createdAt: string;
+  updatedAt: string;
+  lastAppliedAt: string | null;
+}
+
 export type BuildState = "running" | "paused" | "completed" | "stopped" | "error" | "interrupted";
 export type BuildProfile = "fast" | "balanced" | "deep";
 
@@ -368,6 +403,8 @@ export interface Build {
   /** The live feed of what it is thinking. Only on a single build; lists carry thoughtCount. */
   thoughts?: BuildThought[];
   thoughtCount?: number;
+  /** The last "Test & audit" of what it made. */
+  audit?: BuildAudit | null;
   /** The model's answer as it is being written (live builds; lists get it without the text). */
   writing?: LiveWriting | null;
 }
@@ -508,6 +545,9 @@ export interface PipelineStatus {
   lastIntakeAt: string | null;
   lastIntakeCount: number;
   counts: Record<OrderStatus, number>;
+  /** "launching-soon" while the business is not taking orders yet. */
+  ordersMode?: "open" | "launching-soon";
+  launchMessage?: string | null;
 }
 
 export interface JarvisStatus {
@@ -883,6 +923,15 @@ export const api = {
       `/api/autonomous/${encodeURIComponent(id)}/continue`,
       { method: "POST", body: JSON.stringify(options) },
       60000
+    ),
+  lessons: (scope?: "build" | "research") =>
+    request<{ lessons: Lesson[] }>(`/api/learning/lessons${scope ? `?scope=${scope}` : ""}`),
+  retireLesson: (id: number) => request<{ ok: boolean }>(`/api/learning/lessons/${id}`, { method: "DELETE" }),
+  auditBuild: (id: string, runtime: PreviewReport[]) =>
+    request<{ audit: BuildAudit }>(
+      `/api/autonomous/${encodeURIComponent(id)}/audit`,
+      { method: "POST", body: JSON.stringify({ runtime }) },
+      10 * 60_000
     ),
   forgetBuild: (id: string) => request<{ success: boolean }>(`/api/autonomous/${encodeURIComponent(id)}`, { method: "DELETE" }),
   buildFiles: (id: string) =>

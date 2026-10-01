@@ -17,6 +17,7 @@ import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
 import { setEnvValues } from "../utils/EnvFile.js";
 import { checkOllama } from "../utils/Ollama.js";
 import { Logger } from "../utils/Logger.js";
+import { OrderPipeline } from "../orders/OrderPipeline.js";
 
 type Kind = "model" | "bool" | "number" | "text" | "choice";
 
@@ -70,6 +71,23 @@ const SETTINGS: Setting[] = [
     kind: "choice",
     choices: ["8192", "16384", "32768"],
     fallback: "16384"
+  },
+  {
+    name: "ORDERS_MODE",
+    group: "Orders",
+    label: "Taking orders",
+    help: "Launching soon: the Consolidated Hub is told orders are not open yet (it shows your message instead of checkout), and no customer build starts by itself. You can still build any order by hand to test.",
+    kind: "choice",
+    choices: ["open", "launching-soon"],
+    fallback: "open"
+  },
+  {
+    name: "ORDERS_LAUNCH_MESSAGE",
+    group: "Orders",
+    label: "Launching-soon message",
+    help: "What the Hub shows customers while orders are not open. Leave empty for its own wording.",
+    kind: "text",
+    fallback: ""
   },
   {
     name: "ORDER_AUTO_START",
@@ -200,6 +218,9 @@ export const registerBuilderSettingsRoutes = (app: Express) => {
       return res.status(500).json({ error: `Could not save .env: ${error instanceof Error ? error.message : String(error)}` });
     }
     Logger.log("Builder settings changed", { by: (req as AgentRequest).actor ?? "app", changed: Object.keys(values) });
+    // The Hub shows "launching soon" from the check-in, so tell it now rather
+    // than at the next one, minutes away.
+    if ("ORDERS_MODE" in values || "ORDERS_LAUNCH_MESSAGE" in values) void OrderPipeline.publish().catch(() => undefined);
     const needsRestart = Object.keys(values).filter((name) => BY_NAME.get(name)?.restart);
     res.json({
       success: true,

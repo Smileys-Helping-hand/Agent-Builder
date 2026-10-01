@@ -6,6 +6,7 @@ import { useState } from "react";
 import { api, type Order, type OrderStatus } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
 import { BuildProgress, STAGE_LABEL } from "../build/parts";
+import { OrdersModeSwitch } from "./mode";
 import { TemplateStudio } from "./templates";
 import { OrdersLog } from "./log";
 import { PreviewPane } from "../preview";
@@ -109,6 +110,8 @@ export default function Orders() {
 
       <div className="wrap">
         {orders.error ? <Banner kind="error">{orders.error}</Banner> : null}
+
+        <OrdersModeSwitch mode={pipeline.data?.ordersMode} message={pipeline.data?.launchMessage} onChanged={() => pipeline.refresh()} />
 
         {/* Consolidated Hub & PayFast Integration Banner */}
         <section

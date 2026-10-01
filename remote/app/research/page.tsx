@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { api } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, usePersistentState, useRemote, useToast } from "../ui";
+import { LearningPanel } from "./learning";
 import { TopicWorkspace } from "./workspace";
 
 const SUGGESTIONS = [
@@ -187,6 +188,9 @@ export default function Research() {
         })}
 
         {term && shown.length === 0 ? <div className="empty">No topic matches “{search}”.</div> : null}
+
+        <div className="section-title">What the builder has learned</div>
+        <LearningPanel />
       </div>
     </>
   );

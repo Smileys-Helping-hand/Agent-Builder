@@ -26,7 +26,10 @@ import { promisify } from "util";
 
 import express, { type Express, type Request, type Response } from "express";
 
-import { BuildService } from "../orchestrator/BuildService.js";
+import { BuildService, type BuildAudit } from "../orchestrator/BuildService.js";
+import { auditSite, findBrowser, renderPage } from "../orchestrator/SiteAudit.js";
+import { Verifier } from "../orchestrator/Verifier.js";
+import { Workspace } from "../orchestrator/Workspace.js";
 import { Catalog } from "../orders/Catalog.js";
 import { Logger } from "../utils/Logger.js";
 import { authenticateAgent } from "./agentAuth.js";
@@ -84,7 +87,47 @@ const templateFolder = (id: string): string | null => {
   return template?.sourcePath && fs.existsSync(template.sourcePath) ? template.sourcePath : null;
 };
 
+/**
+ * Added to every previewed page: reports script errors, failed loads and
+ * console.error to the pane showing it, so what breaks while you click through
+ * shows up in the app (and can be handed to a fix pass). It only ever sends
+ * error text, to the parent frame, and changes nothing on the page.
+ */
+const REPORTER = `<script data-agent-builder-preview>(function(){if(window.parent===window)return;var n=0;function send(kind,message){if(++n>50)return;try{parent.postMessage({type:"ab-preview-report",kind:kind,message:String(message).slice(0,400),page:location.hash||location.pathname.split("/").pop()||"/"},"*")}catch(e){}}window.addEventListener("error",function(e){var t=e.target;if(t&&t!==window&&(t.src||t.href)){send("resource","Could not load "+(t.src||t.href))}else{send("error",(e.message||"Script error")+(e.filename?" ("+(e.filename.split("?")[0].split("/").pop()||"page")+":"+e.lineno+")":""))}},true);window.addEventListener("unhandledrejection",function(e){var r=e.reason;send("error","Unhandled rejection: "+(r&&r.message?r.message:r))});var ce=console.error;console.error=function(){try{send("console",Array.prototype.map.call(arguments,function(a){return a&&a.message?a.message:String(a)}).join(" "))}catch(e){}return ce.apply(console,arguments)};window.addEventListener("load",function(){send("loaded",document.title||"")})})();</script>`;
+
+const withReporter = (html: string): string =>
+  /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (head) => `${head}${REPORTER}`) : `${REPORTER}${html}`;
+
 /* ---------------- building a template's preview on demand ---------------- */
+
+/** Newest change to a template's source, so a build older than it is rebuilt. */
+const newestSource = (folder: string): number => {
+  let newest = 0;
+  const visit = (target: string) => {
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(target);
+    } catch {
+      return;
+    }
+    if (stat.isDirectory()) {
+      for (const entry of fs.readdirSync(target)) {
+        if (entry !== "node_modules" && entry !== "dist") visit(path.join(target, entry));
+      }
+    } else {
+      newest = Math.max(newest, stat.mtimeMs);
+    }
+  };
+  for (const entry of ["src", "index.html", "package.json", "vite.config.ts", "template.json"]) visit(path.join(folder, entry));
+  return newest;
+};
+
+/** A template whose site was built before its code last changed (an update, an applied edit). */
+const isStale = (folder: string): boolean => {
+  const built = path.join(folder, "dist", "index.html");
+  if (!fs.existsSync(built)) return false;
+  return newestSource(folder) > fs.statSync(built).mtimeMs + 1000;
+};
 
 const building = new Map<string, Promise<void>>();
 const buildErrors = new Map<string, string>();
@@ -130,6 +173,14 @@ export const registerPreviewRoutes = (app: Express) => {
       const template = Catalog.all().find((item) => item.id === id);
       if (!template) return res.status(404).json({ error: "Unknown template." });
       return res.json(describe("template", id, null, "This template has no code yet, so there is nothing to preview.", { hosted: template.previewUrl ?? null }));
+    }
+    // Built before its code last changed: rebuild, so the preview is what a
+    // customer would get (and has the latest live editing), not yesterday's.
+    if (fs.existsSync(path.join(folder, "package.json")) && (building.has(id) || (isStale(folder) && !buildErrors.has(id)))) {
+      buildTemplate(id, folder);
+      return res.json(
+        describe("template", id, null, "Its code changed since the preview was built — rebuilding it, about a minute.", { preparing: true, failed: false })
+      );
     }
     const { root, reason } = servable(folder);
     if (!root && fs.existsSync(path.join(folder, "package.json"))) {
@@ -187,7 +238,84 @@ export const registerPreviewRoutes = (app: Express) => {
     res.removeHeader("Access-Control-Allow-Credentials");
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Robots-Tag", "noindex");
+    // Pages get the error reporter; everything else is served as it is.
+    const requested = decodeURIComponent(req.path);
+    if (requested.endsWith("/") || requested.endsWith(".html")) {
+      const file = path.resolve(root, `.${requested.endsWith("/") ? `${requested}index.html` : requested}`);
+      const inside = file === root || file.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
+      if (inside && fs.existsSync(file) && fs.statSync(file).isFile()) {
+        return res.type("html").send(withReporter(fs.readFileSync(file, "utf8")));
+      }
+    }
     express.static(root, { index: "index.html", dotfiles: "deny", fallthrough: false })(req, res, next);
+  });
+
+  /**
+   * Test & audit what a build made: its own checks again (install, typecheck,
+   * build, tests, lint — never scaffolding anything into it), then the built
+   * site read for what a visitor would trip over, plus whatever the preview
+   * reported while someone clicked through it. Kept with the build.
+   * POST /api/autonomous/:buildId/audit  Body: { runtime?: [{ kind, message, page }] }
+   */
+  const auditing = new Set<string>();
+  app.post("/api/autonomous/:buildId/audit", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const build = BuildService.view(req.params.buildId);
+    if (!build) return res.status(404).json({ error: "Unknown build." });
+    if (BuildService.isRunning(build.buildId)) {
+      return res.status(409).json({ error: "It is still building, and every pass already runs these checks. Pause or stop it to audit it now." });
+    }
+    if (!build.outputDir || !fs.existsSync(build.outputDir)) return res.status(404).json({ error: "Its folder is not there any more." });
+    if (auditing.has(build.buildId)) return res.status(409).json({ error: "An audit of this build is already running." });
+
+    const runtime = (Array.isArray(req.body?.runtime) ? req.body.runtime : [])
+      .slice(0, 30)
+      .filter((entry: unknown) => entry && typeof (entry as { message?: unknown }).message === "string")
+      .map((entry: { kind?: unknown; message: string; page?: unknown }) => ({
+        kind: typeof entry.kind === "string" ? entry.kind.slice(0, 20) : "error",
+        message: entry.message.slice(0, 400),
+        page: typeof entry.page === "string" ? entry.page.slice(0, 120) : undefined
+      }));
+
+    auditing.add(build.buildId);
+    try {
+      const report = await Verifier.verify(new Workspace(build.outputDir), { scaffoldTests: false });
+      // After the checks, since the build check is what produces dist/.
+      const { root } = servable(build.outputDir);
+      // Render the start page in a real browser when there is one: an app built
+      // with React is an empty shell in its markup, and only a browser shows what
+      // it draws and which errors it throws while loading.
+      const rendered = new Map<string, string>();
+      const loadErrors: Array<{ kind: string; message: string; page?: string }> = [];
+      const browser = root ? findBrowser() : null;
+      if (root && browser) {
+        const port = Number(process.env.PORT) || 4000;
+        const url = `http://127.0.0.1:${port}/preview/build/${encodeURIComponent(build.buildId)}/${tokenFor("build", build.buildId)}/`;
+        const page = await renderPage(browser, url);
+        if (page?.dom) {
+          rendered.set(path.join(root, "index.html"), page.dom);
+          for (const message of page.errors) loadErrors.push({ kind: "error", message, page: "load" });
+        }
+      }
+      const site = root ? auditSite(root, rendered) : { findings: [], pages: 0, files: 0 };
+      const audit: BuildAudit = {
+        at: new Date().toISOString(),
+        passed: report.passed,
+        score: report.score,
+        checks: report.checks.map((check) => ({ name: check.name, applicable: check.applicable, passed: check.passed, durationMs: check.durationMs })),
+        blocker: report.blockingCheck ? { name: report.blockingCheck.name, output: report.blockingCheck.output.slice(-2500) } : null,
+        findings: site.findings.slice(0, 60),
+        runtime: [...loadErrors, ...runtime].slice(0, 40),
+        pages: site.pages,
+        site: Boolean(root),
+        rendered: rendered.size > 0
+      };
+      BuildService.recordAudit(build.buildId, audit);
+      res.json({ audit });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      auditing.delete(build.buildId);
+    }
   });
 
   Logger.log("Preview routes registered");
