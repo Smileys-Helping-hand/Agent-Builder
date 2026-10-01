@@ -927,6 +927,19 @@ button.link { background: none; border: none; color: var(--accent); font: inheri
 .icon-btn { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--text); cursor: pointer; font: inherit; font-size: 13px; }
 .icon-btn:disabled { opacity: 0.35; cursor: default; }
 .icon-btn svg { width: 15px; height: 15px; }
+.editor-modes { grid-template-columns: repeat(3, 1fr); }
+.editor-modes button { font-size: 12.5px; padding: 7px 6px; }
+.editor-tip { margin: -4px 0 0; }
+.picked { display: grid; gap: 7px; padding: 10px; border-radius: 12px; border: 1px solid rgba(255, 159, 28, 0.5); background: rgba(255, 159, 28, 0.06); }
+.picked textarea { padding: 9px 10px; font-size: 14px; border-radius: 10px; }
+.font-pickers { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.font-pickers select { width: 100%; padding: 8px; border-radius: 9px; font-size: 13px; }
+.range { display: grid; gap: 4px; margin-top: 10px; font-size: 13px; }
+.range input[type="range"] { width: 100%; accent-color: var(--accent); }
+.change-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 5px; }
+.change-list li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--line); font-size: 13px; }
+.change-list li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.editor-side { display: grid; gap: 12px; align-content: start; }
 
 /* what the builder has learned */
 .lessons { display: grid; margin-top: 12px; }

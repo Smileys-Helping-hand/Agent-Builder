@@ -10,7 +10,7 @@ import { useRef, useState } from "react";
 
 import { api, type Template, type TemplateKind } from "@/lib/api";
 import { PreviewPane } from "../preview";
-import { LiveEditor } from "./customise";
+import { LiveEditor } from "../live-editor";
 import { ProjectBuildList } from "../projects/carry-on";
 import { Banner, Busy, Icon, Skeleton, usePersistentState, useRemote, useToast } from "../ui";
 
@@ -218,9 +218,9 @@ export function TemplateStudio({ publishedNote }: { publishedNote?: string | nul
               {editing ? (
                 <LiveEditor
                   key={selected.id}
-                  templateId={selected.id}
+                  storageKey={`template:${selected.id}`}
                   frameRef={previewFrame}
-                  onUseForCustomer={(brief) => setPanel({ kind: "customer", template: selected, customerName: "", brief })}
+                  actions={[{ label: "Use for a customer", primary: true, run: (brief) => setPanel({ kind: "customer", template: selected, customerName: "", brief }) }]}
                 />
               ) : null}
             </div>

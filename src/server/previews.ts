@@ -33,6 +33,7 @@ import { Workspace } from "../orchestrator/Workspace.js";
 import { Catalog } from "../orders/Catalog.js";
 import { Logger } from "../utils/Logger.js";
 import { authenticateAgent } from "./agentAuth.js";
+import { EDITOR_SCRIPT } from "./previewEditor.js";
 
 const run = promisify(execFile);
 const SECRET_PATH = path.resolve("./data/preview-secret");
@@ -95,8 +96,11 @@ const templateFolder = (id: string): string | null => {
  */
 const REPORTER = `<script data-agent-builder-preview>(function(){if(window.parent===window)return;var n=0;function send(kind,message){if(++n>50)return;try{parent.postMessage({type:"ab-preview-report",kind:kind,message:String(message).slice(0,400),page:location.hash||location.pathname.split("/").pop()||"/"},"*")}catch(e){}}window.addEventListener("error",function(e){var t=e.target;if(t&&t!==window&&(t.src||t.href)){send("resource","Could not load "+(t.src||t.href))}else{send("error",(e.message||"Script error")+(e.filename?" ("+(e.filename.split("?")[0].split("/").pop()||"page")+":"+e.lineno+")":""))}},true);window.addEventListener("unhandledrejection",function(e){var r=e.reason;send("error","Unhandled rejection: "+(r&&r.message?r.message:r))});var ce=console.error;console.error=function(){try{send("console",Array.prototype.map.call(arguments,function(a){return a&&a.message?a.message:String(a)}).join(" "))}catch(e){}return ce.apply(console,arguments)};window.addEventListener("load",function(){send("loaded",document.title||"")})})();</script>`;
 
-const withReporter = (html: string): string =>
-  /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (head) => `${head}${REPORTER}`) : `${REPORTER}${html}`;
+/** The error reporter goes first in <head>; the live editor's hands at the end of <body>. */
+const withReporter = (html: string): string => {
+  const reported = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (head) => `${head}${REPORTER}`) : `${REPORTER}${html}`;
+  return /<\/body>/i.test(reported) ? reported.replace(/<\/body>(?![\s\S]*<\/body>)/i, `${EDITOR_SCRIPT}</body>`) : `${reported}${EDITOR_SCRIPT}`;
+};
 
 /* ---------------- building a template's preview on demand ---------------- */
 
