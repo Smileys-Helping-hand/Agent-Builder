@@ -49,6 +49,12 @@ export interface CheckIn {
    * "Open Agent Builder" can send an admin straight here, signed in.
    */
   address?: string | null;
+  /**
+   * Whether the site should take orders. "launching-soon": show the message
+   * (or the site's own wording) instead of checkout, and take no payments.
+   */
+  ordersMode?: "open" | "launching-soon";
+  launchMessage?: string | null;
 }
 
 const TIMEOUT_MS = 20_000;

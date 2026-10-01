@@ -545,6 +545,9 @@ export interface PipelineStatus {
   lastIntakeAt: string | null;
   lastIntakeCount: number;
   counts: Record<OrderStatus, number>;
+  /** "launching-soon" while the business is not taking orders yet. */
+  ordersMode?: "open" | "launching-soon";
+  launchMessage?: string | null;
 }
 
 export interface JarvisStatus {

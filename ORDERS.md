@@ -156,6 +156,8 @@ everything with `ORDER_AUTO_IMPROVE=false`.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
+| `ORDERS_MODE` | `open` | `launching-soon` until you are ready: the site is told (see below), and no customer build starts or improves by itself; you can still build any order by hand |
+| `ORDERS_LAUNCH_MESSAGE` | empty | What the site shows customers while orders are not open |
 | `ORDER_AUTO_START` | `true` | Accepted orders start building on their own |
 | `ORDER_AUTO_IMPROVE` | `true` | Delivered products keep being improved |
 | `ORDER_MAX_CONCURRENT_BUILDS` | `1` | One GPU, one build — raise only if you have room |
@@ -189,6 +191,21 @@ And on the site, for the builder only (master key, `Authorization: Bearer`):
 ```
 GET    /api/builder/orders          the queue (queued jobs, plus paid ones not yet acknowledged)
 PATCH  /api/builder/orders/:id      { status, message, qualityScore, previewUrl }
-POST   /api/builder/catalog         { items, version, machine, queueLength, building }
+POST   /api/builder/catalog         { items, version, machine, queueLength, building, address, ordersMode, launchMessage }
 GET    /api/catalog                 the published catalogue (public, no key)
 ```
+
+### Launching soon
+
+Orders → **Taking orders** switches between *Open* and *Launching soon* (also
+under Settings → How the builder works). The builder tells the site at once, in
+its catalogue check-in:
+
+- `ordersMode`: `"open"` or `"launching-soon"`
+- `launchMessage`: the text to show, or `null` for the site's own wording
+
+While it is `"launching-soon"` the site should show the message (and perhaps a
+"tell me when you open" sign-up) instead of checkout, and take no payments. The
+catalogue keeps being published, so customers can still browse and preview the
+templates. Orders that do arrive are recorded and wait for you.
+

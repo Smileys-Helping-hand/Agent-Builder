@@ -51,6 +51,9 @@ const maxConcurrent = (): number => numberEnv("ORDER_MAX_CONCURRENT_BUILDS", 1);
 
 /** Orders are only started automatically if this is on. */
 const autoStart = (): boolean => (process.env.ORDER_AUTO_START ?? "true").toLowerCase() !== "false";
+/** "launching-soon" until the business is ready: the site is told, and nothing builds by itself. */
+export const ordersMode = (): "open" | "launching-soon" =>
+  (process.env.ORDERS_MODE ?? "open").toLowerCase() === "launching-soon" ? "launching-soon" : "open";
 
 /** Whether the improve loop runs at all. */
 const autoImprove = (): boolean => (process.env.ORDER_AUTO_IMPROVE ?? "true").toLowerCase() !== "false";
@@ -258,7 +261,9 @@ export const OrderPipeline = {
       building: counts.building,
       // Only an https address is any use to the site: its admin opens the app
       // from an https page, and a browser will not call plain http from there.
-      address: publicHttpsUrl()
+      address: publicHttpsUrl(),
+      ordersMode: ordersMode(),
+      launchMessage: process.env.ORDERS_LAUNCH_MESSAGE?.trim() || null
     });
     lastPublish = { at: new Date().toISOString(), ok: result.ok, message: result.message, count: items.length };
     if (!result.ok) Logger.log("Catalogue not published to the site", { detail: result.message });
@@ -409,7 +414,8 @@ export const OrderPipeline = {
    * Oldest accepted order first — a queue people can predict.
    */
   async work(): Promise<{ started: string[] }> {
-    if (!autoStart()) return { started: [] };
+    // Not open yet: orders that come in (tests, early customers) wait for you.
+    if (!autoStart() || ordersMode() === "launching-soon") return { started: [] };
 
     const busy = BuildService.active().filter((build) => build.orderId !== null).length;
     const room = Math.max(0, maxConcurrent() - busy);
@@ -433,7 +439,7 @@ export const OrderPipeline = {
    * there" half: what was shipped keeps being worked on.
    */
   async improve(): Promise<{ started: string[] }> {
-    if (!autoImprove()) return { started: [] };
+    if (!autoImprove() || ordersMode() === "launching-soon") return { started: [] };
 
     const busy = BuildService.active().length;
     if (busy >= maxConcurrent()) return { started: [] };
@@ -464,6 +470,8 @@ export const OrderPipeline = {
       autoImprove: autoImprove(),
       maxConcurrent: maxConcurrent(),
       autoAcceptPaid: autoAcceptPaid(),
+      ordersMode: ordersMode(),
+      launchMessage: process.env.ORDERS_LAUNCH_MESSAGE?.trim() || null,
       lastIntakeAt,
       lastIntakeCount,
       catalog: lastPublish,

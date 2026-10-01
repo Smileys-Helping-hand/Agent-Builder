@@ -941,6 +941,16 @@ button.link { background: none; border: none; color: var(--accent); font: inheri
 .lesson-text small { display: block; color: var(--faint); font-size: 12px; margin-top: 3px; }
 .lesson-body { padding: 0 0 12px 60px; }
 
+/* taking orders / launching soon */
+.orders-mode { margin-top: 16px; }
+.orders-mode.soon { border-color: rgba(255, 194, 71, 0.5); background: linear-gradient(135deg, rgba(255, 194, 71, 0.1), rgba(20, 30, 51, 0.8)); }
+.orders-mode-head { display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; }
+.orders-mode-state { font-size: 19px; }
+.orders-mode.soon .orders-mode-state { color: var(--warn); }
+.orders-mode.open .orders-mode-state { color: var(--good); }
+.orders-mode-message { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.orders-mode-message input { flex: 1; min-width: 220px; padding: 10px 12px; font-size: 14px; }
+
 /* home: live builds */
 .live-build { display: flex; gap: 12px; align-items: center; padding: 11px 0; border-top: 1px solid var(--line); color: inherit; }
 .live-build:first-of-type { border-top: none; }

@@ -119,6 +119,34 @@ scripts cannot touch the app. Open the built site from a server like this, not
 by double-clicking `index.html`: browsers refuse to run a module script from a
 file on disk, which is why that shows a blank page.
 
+### Test, audit and fix
+
+Click through a build's preview: any script error, failed load or
+`console.error` on the page shows under it ("⚠ 2 problems on this page").
+**Test & audit** (beside the preview) runs the build's checks again and reads
+the built site for what a visitor would trip over — no phone layout, images
+without alt text, empty buttons, unlabelled fields, dead links, files the page
+loads that are not there, heavy scripts. With Chrome or Edge on the PC (or
+`CHROME_PATH` set) it renders the page first, so a React app is judged by what
+it draws and errors on load are caught. **Fix these in a new pass** carries on
+in the same folder with every finding as the instruction.
+
+### Editing a template live
+
+Orders → Templates → pick one → **Customise live**: words, every colour, the
+font, and the sections (drag or arrows to reorder, the eye to hide). The site in
+the preview changes as you go. Choices are kept per template on the device;
+**Use for a customer** starts a customer order with them as exact instructions,
+which the build writes into the site.
+
+### What it learns
+
+Research → **What the builder has learned**: every lesson its repairs taught it,
+how often each was used and how often it helped; retire one that misleads. A
+build also looks up research findings that match what it was asked for (ones
+you confirmed, or backed by several sources — never ones you rejected) and says
+so in its thinking.
+
 **Settings → Connection check** says which builder this device is talking to,
 whether the address makes sense from here (an `127.0.0.1` address on a phone, or an
 `http://` address from the https app, never works), and whether the model server
