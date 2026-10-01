@@ -32,6 +32,13 @@ import { SiteClient, type SiteOrder } from "./SiteClient.js";
 import { readPublicUrl } from "../utils/PublicUrl.js";
 
 const INTAKE_EVERY_MS = 5 * 60 * 1000;
+/**
+ * The site calls the PC offline after 15 minutes without a word, so check in
+ * well inside that, on its own timer: a slow or failing order intake must
+ * never be what makes the shop say the PC is off.
+ */
+const CHECK_IN_EVERY_MS = 2 * 60 * 1000;
+const CHECK_IN_RETRY_MS = 20 * 1000;
 const WORK_EVERY_MS = 60 * 1000;
 const IMPROVE_EVERY_MS = 6 * 60 * 60 * 1000;
 
@@ -83,7 +90,10 @@ const timers: NodeJS.Timeout[] = [];
 let started = false;
 let lastIntakeAt: string | null = null;
 let lastIntakeCount = 0;
-let lastPublish: { at: string; ok: boolean; message: string; count: number } | null = null;
+let lastPublish: { at: string; ok: boolean; message: string; count: number; lastOkAt: string | null; failures: number } | null = null;
+/** When the site last accepted a check-in, and how many have failed since. */
+let lastPublishOk: string | null = null;
+let publishFailures = 0;
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -215,40 +225,50 @@ export const OrderPipeline = {
     const raw = await SiteClient.pendingOrders();
     let created = 0;
     for (const candidate of raw) {
-      const normalized = normalize(candidate);
-      if (!normalized) {
-        Logger.log("Order skipped: not enough detail", { externalId: candidate.id });
-        continue;
-      }
-      const { order, created: isNew } = this.record(normalized);
-      if (isNew) created += 1;
-      if (!candidate.paid) continue;
-
-      // Paid for on the site. Often we already had it — the quote was accepted
-      // before the customer paid — and the site sends it again to say so.
-      if (order.status === "received" && autoAcceptPaid()) {
-        this.accept(order.id, `payment on the site${candidate.orderRef ? ` (${candidate.orderRef})` : ""}`);
-      }
-      // Tell the site we know, or it keeps sending it. (A new order's own
-      // "received" report, from record(), already said so.)
-      if (!isNew && order.externalId && (order.status === "received" || order.status === "accepted")) {
-        OrderStore.note(order.id, "paid", "Paid for on the site.");
-        const queued = OrderStore.get(order.id)?.status === "accepted";
-        void SiteClient.reportProgress(order.externalId, {
-          status: "received",
-          message: queued ? "Payment seen; it is in the build queue." : "Payment seen; waiting to be accepted on the PC."
-        });
+      // One order the site sends in a shape we cannot take must not stop the
+      // others, or every intake after it.
+      try {
+        created += this.takeIn(candidate) ? 1 : 0;
+      } catch (error) {
+        Logger.error("Order intake: could not take an order in", { externalId: candidate?.id, error: errorMessage(error) });
       }
     }
-
     lastIntakeAt = new Date().toISOString();
-    lastIntakeCount = raw.length;
+    lastIntakeCount = created;
     return { found: raw.length, created };
   },
 
+  /** One order from the site: record it, and act on its payment. True when it is new. */
+  takeIn(candidate: SiteOrder): boolean {
+    const normalized = normalize(candidate);
+    if (!normalized) {
+      Logger.log("Order skipped: not enough detail", { externalId: candidate.id });
+      return false;
+    }
+    const { order, created: isNew } = this.record(normalized);
+    if (!candidate.paid) return isNew;
+
+    // Paid for on the site. Often we already had it — the quote was accepted
+    // before the customer paid — and the site sends it again to say so.
+    if (order.status === "received" && autoAcceptPaid()) {
+      this.accept(order.id, `payment on the site${candidate.orderRef ? ` (${candidate.orderRef})` : ""}`);
+    }
+    // Tell the site we know, or it keeps sending it. (A new order's own
+    // "received" report, from record(), already said so.)
+    if (!isNew && order.externalId && (order.status === "received" || order.status === "accepted")) {
+      OrderStore.note(order.id, "paid", "Paid for on the site.");
+      const queued = OrderStore.get(order.id)?.status === "accepted";
+      void SiteClient.reportProgress(order.externalId, {
+        status: "received",
+        message: queued ? "Payment seen; it is in the build queue." : "Payment seen; waiting to be accepted on the PC."
+      });
+    }
+    return isNew;
+  },
+
   /**
-   * Tell the site what we can build and how busy we are. Runs with every
-   * intake, so the site's "PC online" light and its catalogue stay current.
+   * Tell the site what we can build and how busy we are. Runs every two
+   * minutes on its own, so the site's "PC online" light and its catalogue stay current.
    */
   async publish(): Promise<{ ok: boolean; message: string; count: number }> {
     const items = Catalog.forSite();
@@ -265,8 +285,15 @@ export const OrderPipeline = {
       ordersMode: ordersMode(),
       launchMessage: process.env.ORDERS_LAUNCH_MESSAGE?.trim() || null
     });
-    lastPublish = { at: new Date().toISOString(), ok: result.ok, message: result.message, count: items.length };
-    if (!result.ok) Logger.log("Catalogue not published to the site", { detail: result.message });
+    const at = new Date().toISOString();
+    if (result.ok) {
+      lastPublishOk = at;
+      publishFailures = 0;
+    } else {
+      publishFailures += 1;
+      Logger.warn("Check-in to the site failed", { detail: result.message, failuresInARow: publishFailures, lastOk: lastPublishOk });
+    }
+    lastPublish = { at, ok: result.ok, message: result.message, count: items.length, lastOkAt: lastPublishOk, failures: publishFailures };
     return { ok: result.ok, message: result.message, count: items.length };
   },
 
@@ -611,16 +638,33 @@ export const OrderPipeline = {
       timers.push(timer);
     };
 
-    const intakeAndCheckIn = async () => {
+    // The check-in is what keeps the shop's "PC online" light on. It runs on
+    // its own timer, and one that fails is tried again shortly, so neither an
+    // order intake that throws nor one slow answer from the site makes the PC
+    // look offline.
+    const checkIn = async () => {
+      if (!SiteClient.isConfigured()) return;
+      const result = await this.publish();
+      if (!result.ok) {
+        const retry = setTimeout(() => {
+          this.publish().catch((error) => Logger.error("Check-in retry failed", { error: errorMessage(error) }));
+        }, CHECK_IN_RETRY_MS);
+        retry.unref?.();
+      }
+    };
+    const intake = async () => {
       if (!SiteClient.isConfigured()) return;
       await this.intake();
-      await this.publish();
     };
-    run("intake", intakeAndCheckIn, INTAKE_EVERY_MS);
+    run("check-in", checkIn, CHECK_IN_EVERY_MS);
+    run("intake", intake, INTAKE_EVERY_MS);
     // Once shortly after start too, so a restart shows up on the site in
-    // seconds rather than five minutes.
+    // seconds rather than minutes.
     const first = setTimeout(() => {
-      intakeAndCheckIn().catch((error) => Logger.error("Order pipeline first check-in failed", { error: errorMessage(error) }));
+      void (async () => {
+        await checkIn().catch((error) => Logger.error("Order pipeline first check-in failed", { error: errorMessage(error) }));
+        await intake().catch((error) => Logger.error("Order pipeline first intake failed", { error: errorMessage(error) }));
+      })();
     }, 10_000);
     first.unref?.();
     timers.push(first);

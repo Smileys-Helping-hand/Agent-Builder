@@ -48,8 +48,10 @@ export function HubStrip() {
           {!data.configured
             ? "Not connected — set SITE_URL and SITE_API_KEY on the PC"
             : data.catalog?.ok
-              ? `${data.catalog.count} templates on sale · published ${ago(data.catalog.at)}`
-              : `Not reaching the site${data.catalog?.message ? `: ${data.catalog.message}` : ""}`}
+              ? `${data.catalog.count} templates on sale · checked in ${ago(data.catalog.at)}`
+              : `Not reaching the site${data.catalog?.failures ? ` (${data.catalog.failures} tries in a row` : ""}${
+                  data.catalog?.failures ? (data.catalog.lastOkAt ? `; last got through ${ago(data.catalog.lastOkAt)})` : ")") : ""
+                }${data.catalog?.message ? `: ${data.catalog.message}` : ""}`}
         </small>
       </span>
       <span className="hub-strip-counts">

@@ -333,6 +333,31 @@ export interface Lesson {
   lastAppliedAt: string | null;
 }
 
+export interface BuilderVersion {
+  available: boolean;
+  reason: string | null;
+  commit: string | null;
+  subject: string | null;
+  date: string | null;
+  branch: string | null;
+  upstream: string | null;
+  dirty: number;
+  behind: number;
+  ahead: number;
+  incoming: Array<{ commit: string; subject: string; date: string }>;
+  checkedAt: string | null;
+  fetchError: string | null;
+}
+
+export interface UpdateJob {
+  state: "running" | "done" | "failed";
+  startedAt: string;
+  finishedAt: string | null;
+  steps: Array<{ at: string; text: string; ok: boolean }>;
+  restarting: boolean;
+  message: string | null;
+}
+
 export type BuildState = "running" | "paused" | "completed" | "stopped" | "error" | "interrupted";
 export type BuildProfile = "fast" | "balanced" | "deep";
 
@@ -924,6 +949,10 @@ export const api = {
       { method: "POST", body: JSON.stringify(options) },
       60000
     ),
+  builderVersion: (refresh = false) => request<BuilderVersion>(`/api/power/version${refresh ? "?refresh=1" : ""}`, {}, 120000),
+  updateStatus: () => request<{ job: UpdateJob | null }>("/api/power/update", {}, 10000),
+  updateBuilder: (force = false) =>
+    request<{ job: UpdateJob | null; message?: string }>("/api/power/update", { method: "POST", body: JSON.stringify({ force }) }, 120000),
   lessons: (scope?: "build" | "research") =>
     request<{ lessons: Lesson[] }>(`/api/learning/lessons${scope ? `?scope=${scope}` : ""}`),
   retireLesson: (id: number) => request<{ ok: boolean }>(`/api/learning/lessons/${id}`, { method: "DELETE" }),
@@ -1004,7 +1033,7 @@ export const api = {
       configured: boolean;
       payfast: { configured: boolean; merchantId: string; mode: string };
       intake: { lastIntakeAt: string | null; lastIntakeCount: number };
-      catalog: { at: string; ok: boolean; message: string; count: number } | null;
+      catalog: { at: string; ok: boolean; message: string; count: number; lastOkAt?: string | null; failures?: number } | null;
       counts: Record<string, number>;
     }>("/api/orders/hub/status"),
   testHub: () => request<{ ok: boolean; status: number; message: string }>("/api/orders/hub/test", { method: "POST" }),

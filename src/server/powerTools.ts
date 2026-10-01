@@ -65,7 +65,7 @@ function readLog(limit: number, level?: string): LogLine[] {
 }
 
 /** Whether the launcher (scripts/launcher/start.ps1) is running, and so will bring the builder back. */
-async function launcherRunning(): Promise<boolean> {
+export async function launcherRunning(): Promise<boolean> {
   if (process.platform !== "win32") return false;
   try {
     const { stdout } = await run(
