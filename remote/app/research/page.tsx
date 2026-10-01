@@ -5,6 +5,7 @@ import { useState } from "react";
 import { api } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, usePersistentState, useRemote, useToast } from "../ui";
 import { LearningPanel } from "./learning";
+import { LearningReportCard } from "./report";
 import { TopicWorkspace } from "./workspace";
 
 const SUGGESTIONS = [
@@ -118,6 +119,8 @@ export default function Research() {
             </button>
           </div>
         )}
+
+        <LearningReportCard />
 
         {topics.loading && list.length === 0 ? <Skeleton rows={3} /> : null}
 

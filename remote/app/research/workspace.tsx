@@ -442,7 +442,7 @@ function Settings({ data, busy, act, onDeleted }: { data: TopicDetail; busy: boo
 }
 
 /** Just enough Markdown for the research documents: headings, lists, bold, links, paragraphs. */
-function Markdown({ text }: { text: string }) {
+export function Markdown({ text }: { text: string }) {
   const blocks = text.replace(/\r\n/g, "\n").split(/\n{2,}/);
   return (
     <>
@@ -454,24 +454,34 @@ function Markdown({ text }: { text: string }) {
           const content = inline(heading[2]);
           return level <= 1 ? <h2 key={index}>{content}</h2> : level === 2 ? <h3 key={index}>{content}</h3> : <h4 key={index}>{content}</h4>;
         }
-        if (lines.every((line) => /^\s*([-*]|\d+\.)\s+/.test(line))) {
-          return (
-            <ul key={index}>
-              {lines.map((line, i) => (
-                <li key={i}>{inline(line.replace(/^\s*([-*]|\d+\.)\s+/, ""))}</li>
-              ))}
-            </ul>
-          );
+        // Text and list lines can share a block ("Still open:" then its items): keep each run as what it is.
+        const runs: Array<{ list: boolean; lines: string[] }> = [];
+        for (const line of lines) {
+          const list = /^\s*([-*]|\d+\.)\s+/.test(line);
+          if (runs.length && runs[runs.length - 1].list === list) runs[runs.length - 1].lines.push(line);
+          else runs.push({ list, lines: [line] });
         }
         return (
-          <p key={index}>
-            {lines.map((line, i) => (
-              <span key={i}>
-                {i > 0 ? <br /> : null}
-                {inline(line.replace(/^#{1,4}\s+/, ""))}
-              </span>
-            ))}
-          </p>
+          <div key={index} className="md-block">
+            {runs.map((run, r) =>
+              run.list ? (
+                <ul key={r}>
+                  {run.lines.map((line, i) => (
+                    <li key={i}>{inline(line.replace(/^\s*([-*]|\d+\.)\s+/, ""))}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p key={r}>
+                  {run.lines.map((line, i) => (
+                    <span key={i}>
+                      {i > 0 ? <br /> : null}
+                      {inline(line.replace(/^#{1,4}\s+/, ""))}
+                    </span>
+                  ))}
+                </p>
+              )
+            )}
+          </div>
         );
       })}
     </>
@@ -480,12 +490,14 @@ function Markdown({ text }: { text: string }) {
 
 const inline = (text: string): React.ReactNode[] => {
   const parts: React.ReactNode[] = [];
-  const pattern = /\*\*([^*]+)\*\*|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+  const pattern = /\*\*([^*]+)\*\*|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|`([^`]+)`|(?<![\w])_([^_\n]+)_(?![\w])/g;
   let last = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text))) {
     if (match.index > last) parts.push(text.slice(last, match.index));
     if (match[1]) parts.push(<strong key={match.index}>{match[1]}</strong>);
+    else if (match[4]) parts.push(<code key={match.index}>{match[4]}</code>);
+    else if (match[5]) parts.push(<em key={match.index}>{match[5]}</em>);
     else
       parts.push(
         <a key={match.index} href={match[3]} target="_blank" rel="noreferrer">

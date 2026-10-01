@@ -677,6 +677,29 @@ export const servedByBuilder = async (): Promise<string | null> => {
 /** Where a live preview is served, from the builder. `url` is a path on the builder. */
 export type PreviewKind = "template" | "build" | "project";
 
+/** What it has learned, written to teach — and to hand on. */
+export interface LearningReport {
+  id: string;
+  createdAt: string;
+  title: string;
+  markdown: string;
+  rules: string[];
+  stats: { topics: number; findings: number; confirmed: number; contested: number; lessons: number };
+  writtenBy: "model" | "plain";
+  taughtAt: string | null;
+  taughtCount: number;
+  sentToJarvisAt: string | null;
+  sentResult: string | null;
+}
+
+export interface LearningReportJob {
+  state: "running" | "done" | "failed";
+  startedAt: string;
+  step: string;
+  reportId: string | null;
+  error: string | null;
+}
+
 export interface PreviewInfo {
   kind: PreviewKind;
   id: string;
@@ -962,6 +985,20 @@ export const api = {
   updateStatus: () => request<{ job: UpdateJob | null }>("/api/power/update", {}, 10000),
   updateBuilder: (force = false) =>
     request<{ job: UpdateJob | null; message?: string }>("/api/power/update", { method: "POST", body: JSON.stringify({ force }) }, 120000),
+  learningReports: () => request<{ reports: LearningReport[]; job: LearningReportJob | null }>("/api/learning/reports"),
+  writeLearningReport: () => request<{ job: LearningReportJob }>("/api/learning/reports", { method: "POST" }),
+  teachBuilder: (id: string, rules: string[]) =>
+    request<{ report: LearningReport; taught: number }>(`/api/learning/reports/${encodeURIComponent(id)}/teach`, {
+      method: "POST",
+      body: JSON.stringify({ rules })
+    }),
+  sendReportToJarvis: (id: string) =>
+    request<{ report: LearningReport; knowledge: string; webhook: string; ok: boolean }>(
+      `/api/learning/reports/${encodeURIComponent(id)}/jarvis`,
+      { method: "POST" },
+      60000
+    ),
+  deleteLearningReport: (id: string) => request<{ ok: boolean }>(`/api/learning/reports/${encodeURIComponent(id)}`, { method: "DELETE" }),
   lessons: (scope?: "build" | "research") =>
     request<{ lessons: Lesson[] }>(`/api/learning/lessons${scope ? `?scope=${scope}` : ""}`),
   retireLesson: (id: number) => request<{ ok: boolean }>(`/api/learning/lessons/${id}`, { method: "DELETE" }),
