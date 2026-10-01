@@ -33,7 +33,8 @@ export function ProjectLivePreview({
   const toast = useToast();
   const builds = useRemote(() => api.projectBuilds(project.id), 8000);
   const list = builds.data?.builds ?? [];
-  const [compare, setCompare] = useState<string | null>(focusBuild ?? null);
+  // undefined: not chosen yet (the newest unapplied build is picked); null: "only the project".
+  const [compare, setCompare] = useState<string | null | undefined>(focusBuild ?? undefined);
   const [view, setView] = useState<View>(focusBuild ? "side" : "now");
   const [editing, setEditing] = useState<"now" | "changes" | null>(null);
   const [applying, setApplying] = useState(false);
@@ -49,7 +50,7 @@ export function ProjectLivePreview({
 
   // Without a choice, compare with the newest build not yet applied.
   useEffect(() => {
-    if (compare || !list.length) return;
+    if (compare !== undefined || !list.length) return;
     const pending = list.find((build) => !build.appliedAt);
     if (pending) setCompare(pending.buildId);
   }, [compare, list]);

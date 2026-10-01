@@ -216,6 +216,28 @@ export const LessonMemory = {
   },
 
   /**
+   * A rule taught from research rather than learned from a fix: it starts with
+   * no track record (utility 0.5) and earns one only from the builds it is
+   * given to. Teaching the same rule again changes nothing.
+   */
+  recordTaught(scope: LessonScope, signature: string, lesson: string, example: string | null): { lesson: Lesson; created: boolean } {
+    const db = getKnowledgeDb();
+    const key = toKey(signature);
+    const existing = db.prepare("SELECT * FROM lessons WHERE scope = ? AND signature_key = ?").get(scope, key) as LessonRow | undefined;
+    if (existing) return { lesson: mapLesson(existing), created: false };
+    const now = nowIso();
+    const result = db
+      .prepare(
+        `INSERT INTO lessons (scope, signature, signature_key, lesson, example, times_applied, times_helped, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)`
+      )
+      .run(scope, signature, key, lesson, example, now, now);
+    const id = Number(result.lastInsertRowid);
+    indexKnowledge("lesson", id, null, signature, `${signature}\n${lesson}`);
+    return { lesson: mapLesson(db.prepare("SELECT * FROM lessons WHERE id = ?").get(id) as LessonRow), created: true };
+  },
+
+  /**
    * Lessons relevant to a failure or task description, best match first. BM25
    * ranks; a precision gate then requires a real match — a specific word shared
    * with the lesson's signature, or two shared with its advice — so a lesson is

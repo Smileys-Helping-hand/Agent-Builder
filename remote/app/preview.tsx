@@ -223,7 +223,7 @@ export const PreviewPane = ({
           {info.job?.state === "running"
             ? `Building a fresh copy: ${info.job.step}…`
             : info.job?.state === "failed"
-              ? "The fresh build failed — showing the last one that worked."
+              ? `The fresh build failed — showing ${info.from === "preview" ? "the last fresh preview that built" : "the project's own build"}.`
               : `${info.from === "preview" ? "Fresh preview" : "The project's own build"}${info.builtAt ? `, built ${ago(info.builtAt)}` : ""}.`}{" "}
           {info.from === "project" && info.canBuild ? "It may be older than the code — Rebuild to see the code as it is now." : ""}
         </p>

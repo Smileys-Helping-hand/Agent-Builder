@@ -197,6 +197,7 @@ interface ProjectPreviewJob {
 const projectJobs = new Map<string, ProjectPreviewJob>();
 
 const previewCopy = (id: string): string => path.join(PROJECT_PREVIEWS, id.replace(/[^a-zA-Z0-9_-]/g, "_"));
+const lastGood = (id: string): string => `${previewCopy(id)}.last`;
 
 /**
  * What to show for a project: whichever is newer of its own build output and
@@ -207,8 +208,11 @@ const projectRoot = (id: string): { root: string | null; reason: string | null; 
   if (!project) return { root: null, reason: "Unknown project.", from: null };
   const own = servable(project.path);
   const copy = fs.existsSync(previewCopy(id)) ? servable(previewCopy(id)) : { root: null, reason: null };
+  // The previous fresh preview, kept aside while a rebuild runs and after one fails.
+  const kept = fs.existsSync(lastGood(id)) ? servable(lastGood(id)) : { root: null, reason: null };
   const mtime = (root: string | null) => (root ? fs.statSync(path.join(root, "index.html")).mtimeMs : 0);
   if (copy.root && mtime(copy.root) >= mtime(own.root)) return { root: copy.root, reason: null, from: "preview" };
+  if (kept.root && mtime(kept.root) >= mtime(own.root)) return { root: kept.root, reason: null, from: "preview" };
   if (own.root) return { root: own.root, reason: null, from: "project" };
   const buildable = fs.existsSync(path.join(project.path, "package.json"));
   return {
@@ -231,6 +235,15 @@ const buildProjectPreview = (id: string, projectPath: string): void => {
   void (async () => {
     // Keep node_modules from last time (the slow part); everything else is fresh.
     fs.mkdirSync(target, { recursive: true });
+    // The preview that last built goes aside first, so it is still shown while
+    // this one builds, and after it if this one fails.
+    const previous = servable(target).root;
+    // (A plain static site is served from the copy itself; nothing to move aside.)
+    if (previous && previous !== target) {
+      fs.rmSync(lastGood(id), { recursive: true, force: true });
+      fs.mkdirSync(lastGood(id), { recursive: true });
+      fs.renameSync(previous, path.join(lastGood(id), path.basename(previous)));
+    }
     for (const entry of fs.readdirSync(target)) {
       if (entry !== "node_modules") fs.rmSync(path.join(target, entry), { recursive: true, force: true });
     }
@@ -262,6 +275,7 @@ const buildProjectPreview = (id: string, projectPath: string): void => {
       throw new Error("It has no build script, and it is not a Vite project.");
     }
     if (!servable(target).root) throw new Error("It built, but made no index.html in dist/, out/ or build/ to show.");
+    fs.rmSync(lastGood(id), { recursive: true, force: true });
     job.state = "done";
     job.step = "Ready";
     Logger.log("Project preview ready", { id });

@@ -128,6 +128,8 @@ export const LiveEditor = ({
   const [busy, setBusy] = useState<string | null>(null);
   const changesRef = useRef(changes);
   changesRef.current = { ...EMPTY, ...changes };
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
 
   const post = (message: Record<string, unknown>) => frameRef.current?.contentWindow?.postMessage(message, "*");
   const apply = (next: EditorChanges) => {
@@ -146,7 +148,12 @@ export const LiveEditor = ({
     const onMessage = (event: MessageEvent) => {
       if (!frameRef.current || event.source !== frameRef.current.contentWindow) return;
       const data = event.data as Record<string, any>;
-      if (data?.type === "ab-edit-ready") {
+      if (data?.type === "ab-edit-alive") {
+        // The same frame loaded a new page: connect to it again.
+        answered = false;
+        post({ type: "ab-edit-hello" });
+        post({ type: "arp-customize-hello" });
+      } else if (data?.type === "ab-edit-ready") {
         answered = true;
         setReady(true);
         setVars(data.vars ?? []);
@@ -154,6 +161,7 @@ export const LiveEditor = ({
         setFonts(data.fonts ?? []);
         setSlots(data.slots ?? {});
         apply(changesRef.current);
+        post({ type: "ab-edit-mode", text: modeRef.current === "text", pick: modeRef.current === "pick" });
       } else if (data?.type === "arp-customize-ready") {
         setFields((data.fields ?? []).filter((field: TemplateField) => field.kind === "text" || field.kind === "textarea"));
       } else if (data?.type === "ab-edit-text" && typeof data.path === "string") {

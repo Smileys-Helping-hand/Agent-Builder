@@ -45,9 +45,12 @@ export const LearningReportCard = () => {
     } else if (job && lastJob.current === null) lastJob.current = job.reportId ?? "";
   }, [job]);
 
+  // Every rule ticked when a report opens — not again on each refresh, which would undo your choices.
+  const ruleKey = `${report?.id}:${(report?.rules ?? []).join("\n")}`;
   useEffect(() => {
     setRules(Object.fromEntries((report?.rules ?? []).map((rule) => [rule, true])));
-  }, [report?.id, report?.rules]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ruleKey]);
 
   const chosen = (report?.rules ?? []).filter((rule) => rules[rule]);
 
@@ -161,8 +164,8 @@ export const LearningReportCard = () => {
             <div>
               <strong>Teach the builder</strong>
               <p className="muted small" style={{ margin: "2px 0 8px" }}>
-                Each rule becomes a build lesson. Builds whose task it fits get it in their instructions, and it is scored on whether the build then
-                passed — rules that do not help fade out on their own.
+                Each rule becomes a build lesson with no track record yet. Builds whose task it fits get it in their instructions, and it is scored on
+                whether the build then passed — rules that help rise, rules that do not fade out on their own.
               </p>
               {report.rules.length ? (
                 <ul className="rule-list">
@@ -185,7 +188,13 @@ export const LearningReportCard = () => {
                   onClick={() =>
                     act("teach", async () => {
                       const res = await api.teachBuilder(report.id, chosen);
-                      toast(`The builder learned ${res.taught} rule${res.taught === 1 ? "" : "s"}. They show under "What the builder has learned".`, "ok");
+                      const fresh = res.fresh ?? res.taught;
+                      toast(
+                        fresh
+                          ? `The builder learned ${fresh} new rule${fresh === 1 ? "" : "s"}${res.taught > fresh ? ` (${res.taught - fresh} it already had)` : ""}. They start unproven and earn their place in builds — see "What the builder has learned".`
+                          : "The builder already had all of these rules.",
+                        "ok"
+                      );
                     })
                   }
                 >

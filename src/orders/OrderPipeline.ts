@@ -246,7 +246,7 @@ export const OrderPipeline = {
       }
     }
     lastIntakeAt = new Date().toISOString();
-    lastIntakeCount = created;
+    lastIntakeCount = raw.length;
     return { found: raw.length, created };
   },
 
@@ -552,13 +552,26 @@ export const OrderPipeline = {
     // each pass, not only when a pass ends — so the Hub's bar and log keep up
     // with the app's rather than sitting on one flat "Building" for an hour.
     const reported = new Map<string, { at: number; percent: number; line: string }>();
+    const trailing = new Map<string, NodeJS.Timeout>();
     const reportBuild = (record: BuildRecord, passDone: boolean) => {
       if (!record.orderId || record.state !== "running") return;
       const order = OrderStore.get(record.orderId);
       if (!order?.externalId) return;
       const last = reported.get(record.buildId);
       // Stages can be seconds apart; one report every 30s is plenty, but a finished pass always goes.
-      if (!passDone && last && Date.now() - last.at < STAGE_REPORT_EVERY_MS) return;
+      // A stage held back is sent when the 30s are up, so a long stage that began inside them is not lost.
+      if (!passDone && last && Date.now() - last.at < STAGE_REPORT_EVERY_MS) {
+        if (!trailing.has(record.buildId)) {
+          const timer = setTimeout(() => {
+            trailing.delete(record.buildId);
+            const now = BuildService.view(record.buildId);
+            if (now) reportBuild(now, false);
+          }, last.at + STAGE_REPORT_EVERY_MS - Date.now() + 50);
+          timer.unref?.();
+          trailing.set(record.buildId, timer);
+        }
+        return;
+      }
       // The Hub keeps building reports between 16% and 89%, and never moves it backwards.
       const percent = Math.max(last?.percent ?? 16, Math.round(16 + buildFraction(record) * 73));
       const target = record.qualityThreshold || 90;
@@ -576,7 +589,13 @@ export const OrderPipeline = {
     };
     buildEvents.on("stage", (record: BuildRecord) => reportBuild(record, false));
     buildEvents.on("iteration", (record: BuildRecord) => reportBuild(record, true));
-    for (const done of ["completed", "failed", "stopped"]) buildEvents.on(done, (record: BuildRecord) => reported.delete(record.buildId));
+    for (const done of ["completed", "failed", "stopped"]) {
+      buildEvents.on(done, (record: BuildRecord) => {
+        reported.delete(record.buildId);
+        clearTimeout(trailing.get(record.buildId));
+        trailing.delete(record.buildId);
+      });
+    }
 
     // A build finishing is what moves an order forward, so the pipeline
     // listens rather than polls for it.

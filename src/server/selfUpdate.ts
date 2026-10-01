@@ -162,7 +162,19 @@ export const runUpdate = async (actor: string): Promise<void> => {
 
   if (changed.some((file) => file === "package.json" || file === "package-lock.json")) {
     step("Installing the builder's packages…");
-    await npm(["install", "--no-audit", "--no-fund"], ROOT);
+    try {
+      await npm(["install", "--no-audit", "--no-fund"], ROOT);
+    } catch (error) {
+      // New code with the old packages may not even start, so go back to the
+      // code that matches what is installed. --keep leaves any local edits alone.
+      const detail = error instanceof Error ? error.message.split("\n").slice(-3).join(" ").slice(0, 300) : String(error);
+      step(`Installing failed (${detail}); going back to ${before.slice(0, 7)}`, false);
+      await git(["reset", "--keep", before]).catch(() => undefined);
+      await npm(["install", "--no-audit", "--no-fund"], ROOT).catch(() => undefined);
+      throw new Error(
+        `The update needs new packages and installing them failed${isWindows ? " (Windows keeps some of them locked while the builder runs)" : ""}, so the builder stayed on the code it was running. Stop the builder, run "git pull" and "npm install" in its folder, then start it again.`
+      );
+    }
     step("Packages installed");
   }
   const appChanged = changed.some((file) => file.startsWith("remote/"));

@@ -12,7 +12,7 @@
  *   parent → page  hello                → page answers ready { vars, blocks, fonts, slots }
  *   parent → page  apply { … }          → restyle and re-text the page
  *   parent → page  mode { text, pick }  → type over text / click to pick an element
- *   page → parent  text { path, before, text }, picked { path, tag, text }
+ *   page → parent  alive (a new page loaded), text { path, before, text }, picked { path, tag, text }
  */
 const source = String.raw`(function () {
   if (window.parent === window || window.__abEditor) return;
@@ -28,7 +28,8 @@ const source = String.raw`(function () {
     { label: "Mono", value: "ui-monospace, Consolas, monospace" }
   ];
   function send(message) { try { parent.postMessage(message, "*"); } catch (e) {} }
-  function isColor(v) { return /^(#[0-9a-f]{3,8}|rgba?\(|hsla?\(|oklch\(|lab\()/i.test(String(v).trim()); }
+  /** A whole, well-formed colour and nothing else: what goes into the injected stylesheet must not break out of it. */
+  function isColor(v) { return /^(#[0-9a-f]{3,8}|(rgba?|hsla?|oklch|oklab|lab|lch)\([0-9.,%\s\/+-]*(deg|turn|rad)?[0-9.,%\s\/+-]*\))$/i.test(String(v).trim()); }
   function toHex(v) {
     var c = document.createElement("canvas").getContext("2d");
     if (!c) return v;
@@ -51,6 +52,26 @@ const source = String.raw`(function () {
         }
       });
     });
+    // The frame has no origin of its own, so a linked stylesheet's rules cannot be
+    // read (what every built site uses). The computed style still lists the
+    // custom properties in effect, whichever sheet set them.
+    // Many sites set their palette inline on a wrapper (style="--primary: …"),
+    // not on :root. Look down the spine to the page's blocks, and mark where a
+    // colour is declared so the editor's value can win there too.
+    var spine = [];
+    for (var node = blockParent(); node && node.nodeType === 1; node = node.parentElement) spine.unshift(node);
+    spine.forEach(function (el) {
+      for (var j = 0; j < el.style.length; j++) if (el.style[j].indexOf("--") === 0) { el.setAttribute("data-ab-vars", ""); break; }
+    });
+    spine.forEach(function (el) {
+      var cs = getComputedStyle(el);
+      for (var i = 0; i < cs.length; i++) {
+        var name = cs[i];
+        if (name.indexOf("--") !== 0 || found[name]) continue;
+        var value = cs.getPropertyValue(name).trim();
+        if (isColor(value)) found[name] = toHex(value);
+      }
+    });
     return Object.keys(found).slice(0, 24).map(function (name) { return { name: name, value: found[name] }; });
   }
   /** The page's top-level blocks: what main (or body) is made of. */
@@ -65,7 +86,8 @@ const source = String.raw`(function () {
   function blocks() {
     var host = blockParent(); host.setAttribute("data-ab-host", "");
     return Array.prototype.slice.call(host.children).filter(function (el) {
-      return !/^(SCRIPT|STYLE|LINK|TEMPLATE)$/.test(el.tagName) && el.getBoundingClientRect().height > 8;
+      // A block the editor has hidden has no height, but must stay in the list to be shown again.
+      return !/^(SCRIPT|STYLE|LINK|TEMPLATE)$/.test(el.tagName) && (el.hasAttribute("data-ab-block") || el.getBoundingClientRect().height > 8);
     }).slice(0, 30).map(function (el, i) {
       var id = el.getAttribute("data-ab-block") || ("b" + i);
       el.setAttribute("data-ab-block", id);
@@ -97,7 +119,7 @@ const source = String.raw`(function () {
   }
   function css(a) {
     var r = [];
-    Object.keys(a.vars || {}).forEach(function (n) { if (/^--[\w-]+$/.test(n) && isColor(a.vars[n])) r.push(":root{" + n + ":" + a.vars[n] + " !important}"); });
+    Object.keys(a.vars || {}).forEach(function (n) { if (/^--[\w-]+$/.test(n) && isColor(a.vars[n])) r.push(":root,[data-ab-vars]{" + n + ":" + a.vars[n] + " !important}"); });
     var s = a.slots || {};
     if (isColor(s.background)) r.push("html,body{background:" + s.background + " !important}");
     if (isColor(s.text)) r.push("body{color:" + s.text + " !important}");
@@ -156,13 +178,23 @@ const source = String.raw`(function () {
     if (hoverEl) hoverEl.classList.remove("ab-hover");
     send({ type: "ab-edit-picked", path: pathOf(el), tag: el.tagName.toLowerCase(), text: (el.innerText || el.getAttribute("alt") || el.getAttribute("aria-label") || "").trim().slice(0, 140) });
   }
+  /** A site's own scripts draw the page after this runs: answer once there is something to edit. */
+  var answering = false;
+  function answerWhenDrawn(tries) {
+    if (answering && tries === 0) return;
+    answering = true;
+    var list = document.readyState === "complete" ? blocks() : [];
+    if (!list.length && tries < 15) { setTimeout(function () { answerWhenDrawn(tries + 1); }, 300); return; }
+    answering = false;
+    send({ type: "ab-edit-ready", vars: colorVars(), blocks: list.length ? list : blocks(), fonts: FONTS, slots: slots(), title: document.title });
+    if (lastApply) apply(lastApply);
+  }
   window.addEventListener("message", function (e) {
     if (e.source !== window.parent) return;
     var m = e.data || {};
     if (m.type === "ab-edit-hello") {
       if (!outline.parentNode) document.head.appendChild(outline);
-      send({ type: "ab-edit-ready", vars: colorVars(), blocks: blocks(), fonts: FONTS, slots: slots(), title: document.title });
-      if (lastApply) apply(lastApply);
+      answerWhenDrawn(0);
     } else if (m.type === "ab-edit-apply") {
       apply(m);
     } else if (m.type === "ab-edit-mode") {
@@ -171,6 +203,10 @@ const source = String.raw`(function () {
       if (!mode.pick && hoverEl) hoverEl.classList.remove("ab-hover");
     }
   });
+  // A new page in the same frame (a reload, a link followed): say so, so the
+  // editor connects again and puts its changes and mode back on it.
+  if (document.readyState === "complete") send({ type: "ab-edit-alive" });
+  else window.addEventListener("load", function () { send({ type: "ab-edit-alive" }); });
   document.addEventListener("input", onInput, true);
   document.addEventListener("mousemove", onMove, true);
   document.addEventListener("click", onClick, true);

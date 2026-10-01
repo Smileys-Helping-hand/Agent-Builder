@@ -88,7 +88,10 @@ const gather = (): Material => {
       contested: findings.filter((finding) => finding.status === "contested").length
     };
   });
-  const lessons = LessonMemory.list(undefined, 200).filter((lesson) => lesson.utility >= 0.4).slice(0, 15);
+  // What builds taught it — rules taught from research reports are not that, and would only echo back.
+  const lessons = LessonMemory.list(undefined, 200)
+    .filter((lesson) => !lesson.signature.startsWith("Research: ") && lesson.utility >= 0.4)
+    .slice(0, 15);
   const all = topics.flatMap((topic) => topic.findings);
   return {
     topics: topics.filter((topic) => topic.findings.length > 0),
@@ -259,17 +262,18 @@ export const LearningReports = {
    * a lesson to a build whose task shares its words, and every use is scored,
    * so a rule that does not help sinks on its own.
    */
-  teach(id: string, rules?: string[]): { report: LearningReport; taught: number } {
+  teach(id: string, rules?: string[]): { report: LearningReport; taught: number; fresh: number } {
     const report = this.get(id);
     if (!report) throw new Error("Unknown report.");
     const chosen = (rules?.length ? rules : report.rules).map((rule) => rule.trim()).filter((rule) => rule.length >= 12).slice(0, 20);
     if (!chosen.length) throw new Error("This report has no rules to teach.");
+    let fresh = 0;
     for (const rule of chosen) {
-      LessonMemory.recordFix("build", `Research: ${rule.slice(0, 200)}`, rule, `From "${report.title}"`);
+      if (LessonMemory.recordTaught("build", `Research: ${rule.slice(0, 200)}`, rule, `From "${report.title}"`).created) fresh += 1;
     }
     const updated = { ...report, taughtAt: new Date().toISOString(), taughtCount: chosen.length };
     save(updated);
-    return { report: updated, taught: chosen.length };
+    return { report: updated, taught: chosen.length, fresh };
   },
 
   /** Send to Jarvis: into Second-Brain's knowledge (what he recalls from) and onto his webhook. */

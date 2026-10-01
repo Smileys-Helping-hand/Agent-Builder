@@ -990,7 +990,7 @@ export const api = {
   learningReports: () => request<{ reports: LearningReport[]; job: LearningReportJob | null }>("/api/learning/reports"),
   writeLearningReport: () => request<{ job: LearningReportJob }>("/api/learning/reports", { method: "POST" }),
   teachBuilder: (id: string, rules: string[]) =>
-    request<{ report: LearningReport; taught: number }>(`/api/learning/reports/${encodeURIComponent(id)}/teach`, {
+    request<{ report: LearningReport; taught: number; fresh?: number }>(`/api/learning/reports/${encodeURIComponent(id)}/teach`, {
       method: "POST",
       body: JSON.stringify({ rules })
     }),
