@@ -337,6 +337,11 @@ export const OrderStore = {
     return this.get(id)?.attempts ?? 0;
   },
 
+  /** Take back an attempt that never really started (the PC's model was down, not the build at fault). */
+  undoAttempt(id: string): void {
+    db().prepare("UPDATE orders SET attempts = MAX(0, attempts - 1), updated_at = ? WHERE id = ?").run(nowIso(), id);
+  },
+
   note(orderId: string, kind: string, message: string): void {
     db()
       .prepare("INSERT INTO order_notes (order_id, kind, message, created_at) VALUES (?, ?, ?, ?)")

@@ -575,6 +575,8 @@ export interface PipelineStatus {
   /** "launching-soon" while the business is not taking orders yet. */
   ordersMode?: "open" | "launching-soon";
   launchMessage?: string | null;
+  /** Set while the PC cannot build (its model is down): orders wait instead of failing. */
+  hold?: { until: string; reason: string | null } | null;
 }
 
 export interface JarvisStatus {

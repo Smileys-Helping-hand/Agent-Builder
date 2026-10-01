@@ -22,6 +22,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { BuildService, buildEvents, type BuildRecord } from "../orchestrator/BuildService.js";
+import { buildFraction, buildProgressLine } from "../orchestrator/buildProgress.js";
 import { JarvisClient } from "../integrations/JarvisClient.js";
 import { Logger } from "../utils/Logger.js";
 import { copyForBuild } from "../ecosystem/ProjectBuilds.js";
@@ -39,6 +40,8 @@ const INTAKE_EVERY_MS = 5 * 60 * 1000;
  */
 const CHECK_IN_EVERY_MS = 2 * 60 * 1000;
 const CHECK_IN_RETRY_MS = 20 * 1000;
+/** At most one progress report a build to the site in this long, between passes. */
+const STAGE_REPORT_EVERY_MS = 30 * 1000;
 const WORK_EVERY_MS = 60 * 1000;
 const IMPROVE_EVERY_MS = 6 * 60 * 60 * 1000;
 
@@ -94,6 +97,15 @@ let lastPublish: { at: string; ok: boolean; message: string; count: number; last
 /** When the site last accepted a check-in, and how many have failed since. */
 let lastPublishOk: string | null = null;
 let publishFailures = 0;
+/** While the PC's model is down, the queue waits instead of burning attempts. */
+let holdUntil = 0;
+let holdReason: string | null = null;
+const HOLD_MS = 5 * 60 * 1000;
+
+/** A build that died before its first pass because the machine could not run it, not because of the order. */
+const isMachineProblem = (record: BuildRecord): boolean =>
+  record.iterations === 0 &&
+  /ollama is not running|could not be started|ECONNREFUSED|fetch failed|model .*not (found|available)|no model|lm studio/i.test(record.error ?? "");
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -283,7 +295,20 @@ export const OrderPipeline = {
       // from an https page, and a browser will not call plain http from there.
       address: publicHttpsUrl(),
       ordersMode: ordersMode(),
-      launchMessage: process.env.ORDERS_LAUNCH_MESSAGE?.trim() || null
+      launchMessage: process.env.ORDERS_LAUNCH_MESSAGE?.trim() || null,
+      // Every build on the PC right now and how far along it is — customer
+      // orders and the owner's own builds alike.
+      activeBuilds: BuildService.active().map((build) => ({
+        buildId: build.buildId,
+        projectName: build.projectName,
+        orderRef: build.orderId ? OrderStore.get(build.orderId)?.externalId ?? null : null,
+        state: build.state,
+        stage: build.stage,
+        progress: Math.round(buildFraction(build) * 100),
+        line: buildProgressLine(build),
+        qualityScore: Math.round(build.qualityScore),
+        startedAt: build.startedAt
+      }))
     });
     const at = new Date().toISOString();
     if (result.ok) {
@@ -444,6 +469,8 @@ export const OrderPipeline = {
     // Not open yet: orders that come in (tests, early customers) wait for you.
     if (!autoStart() || ordersMode() === "launching-soon") return { started: [] };
 
+    if (Date.now() < holdUntil) return { started: [] };
+
     const busy = BuildService.active().filter((build) => build.orderId !== null).length;
     const room = Math.max(0, maxConcurrent() - busy);
     if (room === 0) return { started: [] };
@@ -502,6 +529,7 @@ export const OrderPipeline = {
       lastIntakeAt,
       lastIntakeCount,
       catalog: lastPublish,
+      hold: Date.now() < holdUntil ? { until: new Date(holdUntil).toISOString(), reason: holdReason } : null,
       counts: OrderStore.counts()
     };
   },
@@ -520,20 +548,35 @@ export const OrderPipeline = {
       OrderStore.update(order.id, { status: "accepted", buildId: null });
     }
 
-    // Every pass of a customer's build tells the site how far along it is, so
-    // the admin sees movement rather than one flat "Building" for an hour.
-    buildEvents.on("iteration", (record: BuildRecord) => {
-      if (!record.orderId) return;
+    // A customer's build tells the site where it is as it moves — each stage of
+    // each pass, not only when a pass ends — so the Hub's bar and log keep up
+    // with the app's rather than sitting on one flat "Building" for an hour.
+    const reported = new Map<string, { at: number; percent: number; line: string }>();
+    const reportBuild = (record: BuildRecord, passDone: boolean) => {
+      if (!record.orderId || record.state !== "running") return;
       const order = OrderStore.get(record.orderId);
       if (!order?.externalId) return;
-      const target = record.qualityThreshold || 92;
+      const last = reported.get(record.buildId);
+      // Stages can be seconds apart; one report every 30s is plenty, but a finished pass always goes.
+      if (!passDone && last && Date.now() - last.at < STAGE_REPORT_EVERY_MS) return;
+      // The Hub keeps building reports between 16% and 89%, and never moves it backwards.
+      const percent = Math.max(last?.percent ?? 16, Math.round(16 + buildFraction(record) * 73));
+      const target = record.qualityThreshold || 90;
+      const line = passDone
+        ? `Pass ${record.iterations} of up to ${record.maxIterations} done: quality ${Math.round(record.qualityScore)} of a target ${target}`
+        : buildProgressLine(record);
+      if (!passDone && last?.line === line) return;
+      reported.set(record.buildId, { at: Date.now(), percent, line });
       void SiteClient.reportProgress(order.externalId, {
         status: "building",
-        message: `Pass ${record.iterations} done: quality ${Math.round(record.qualityScore)} of a target ${target}`,
-        qualityScore: record.qualityScore,
-        progress: Math.round(16 + Math.min(record.qualityScore / target, 1) * 72)
+        message: line,
+        qualityScore: record.iterations ? record.qualityScore : undefined,
+        progress: Math.min(89, percent)
       });
-    });
+    };
+    buildEvents.on("stage", (record: BuildRecord) => reportBuild(record, false));
+    buildEvents.on("iteration", (record: BuildRecord) => reportBuild(record, true));
+    for (const done of ["completed", "failed", "stopped"]) buildEvents.on(done, (record: BuildRecord) => reported.delete(record.buildId));
 
     // A build finishing is what moves an order forward, so the pipeline
     // listens rather than polls for it.
@@ -611,6 +654,29 @@ export const OrderPipeline = {
       if (!record.orderId) return;
       const order = OrderStore.get(record.orderId);
       if (!order) return;
+      // The machine could not run the build at all (the model is down): the
+      // order is not at fault. Keep its attempts, hold the queue a few
+      // minutes and say so, rather than failing a paid order in three.
+      if (isMachineProblem(record)) {
+        OrderStore.undoAttempt(order.id);
+        OrderStore.update(order.id, { status: "accepted", buildId: null });
+        OrderStore.note(order.id, "waiting", `Could not start: ${record.error}. It waits in the queue and starts again when the PC can build.`);
+        const firstTime = Date.now() >= holdUntil;
+        holdUntil = Date.now() + HOLD_MS;
+        holdReason = record.error ?? "The PC could not start a build.";
+        if (firstTime) {
+          Logger.warn("Order queue on hold: the PC cannot build right now", { error: holdReason });
+          notifyJarvis(order, "Builds are on hold", `The PC could not start a build for ${order.customerName}: ${holdReason}. Orders wait in the queue and start again on their own.`);
+          if (order.externalId) {
+            void SiteClient.reportProgress(order.externalId, {
+              status: "received",
+              message: "Waiting to start: the build machine is getting ready. The order is safe in the queue and starts on its own."
+            });
+          }
+        }
+        return;
+      }
+
       OrderStore.note(order.id, "failed", record.error ?? "The build failed without saying why.");
       // Back to accepted so the queue retries it, unless it keeps failing.
       const giveUp = order.attempts >= 3;
@@ -621,6 +687,13 @@ export const OrderPipeline = {
           `Needs a person: ${order.title}`,
           `Three builds for ${order.customerName} have failed. The last said: ${record.error ?? "nothing"}.`
         );
+        // Without this the Hub shows it "building" for ever.
+        if (order.externalId) {
+          void SiteClient.reportProgress(order.externalId, {
+            status: "failed",
+            message: "The build hit a problem it could not get past. A person is looking at it."
+          });
+        }
       }
     });
 
