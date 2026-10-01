@@ -16,7 +16,9 @@ param(
     [switch]$Daemon,
     # Open the app in the browser once everything is up (the desktop's "Open
     # Agent Builder" does this; starting at logon does not).
-    [switch]$Open
+    [switch]$Open,
+    # Start on the code as it is, without fetching updates from GitHub first.
+    [switch]$NoUpdate
 )
 
 $ErrorActionPreference = "Stop"
@@ -72,6 +74,49 @@ if (-not $Quiet) {
     Write-Host ""
     Write-Host "  Agent Builder" -ForegroundColor Cyan
     Write-Host "  ---------------------------------------------" -ForegroundColor DarkGray
+}
+
+# --- 0. bring the code up to date ---------------------------------------------
+# Every start picks up what has been merged on GitHub, so restarting is all an
+# update needs. Fast-forward only: if this PC has its own commits or edits in
+# the way, git refuses, nothing is overwritten, and it starts as it is.
+if (-not $NoUpdate -and (Test-Path (Join-Path $repo ".git")) -and (Get-Command git -ErrorAction SilentlyContinue)) {
+    # git and npm write progress to stderr; Windows PowerShell would treat that
+    # as a failure under "Stop" and end the launcher. An update must never stop a start.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $before = (& git rev-parse HEAD 2>$null)
+    $pulled = $false
+    try {
+        $env:GIT_TERMINAL_PROMPT = "0"
+        $output = (& git pull --ff-only --quiet 2>&1 | Out-String)
+        $pulled = ($LASTEXITCODE -eq 0)
+    } catch {
+        $output = $_.Exception.Message
+    }
+    $after = (& git rev-parse HEAD 2>$null)
+    if (-not $pulled) {
+        Write-Host "  Could not update from GitHub (starting as it is): $("$output".Trim().Split([Environment]::NewLine)[0])" -ForegroundColor Yellow
+        Write-LauncherLog "Update skipped: $("$output".Trim().Split([Environment]::NewLine)[0])"
+    } elseif ($before -ne $after) {
+        $changed = (& git diff --name-only $before $after 2>$null)
+        Write-Good "Updated to $($after.Substring(0, 7)) ($(@($changed).Count) file(s) changed)"
+        Write-LauncherLog "Updated $($before.Substring(0, 7)) -> $($after.Substring(0, 7))"
+        if ($changed -match '^(package\.json|package-lock\.json)$') {
+            Write-Step "Installing the builder's packages..."
+            & npm install --no-audit --no-fund 2>&1 | Out-Null
+        }
+        if (($changed -match '^remote/') -and (Test-Path (Join-Path $repo "remote\node_modules"))) {
+            Write-Step "Rebuilding the app this PC serves..."
+            Push-Location (Join-Path $repo "remote")
+            if ($changed -match '^remote/package(-lock)?\.json$') { & npm install --no-audit --no-fund 2>&1 | Out-Null }
+            & npm run build 2>&1 | Out-Null
+            Pop-Location
+        }
+    } else {
+        Write-Good "Up to date ($($after.Substring(0, 7)))"
+    }
+    $ErrorActionPreference = $previousPreference
 }
 
 # --- 1. the local model -------------------------------------------------------
