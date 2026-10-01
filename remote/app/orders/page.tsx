@@ -111,6 +111,12 @@ export default function Orders() {
       <div className="wrap">
         {orders.error ? <Banner kind="error">{orders.error}</Banner> : null}
 
+        {pipeline.data?.hold ? (
+          <Banner kind="error">
+            Builds are on hold: {pipeline.data.hold.reason ?? "the PC cannot build right now"}. Orders wait in the queue without using up their attempts,
+            and the next try is at {new Date(pipeline.data.hold.until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.
+          </Banner>
+        ) : null}
         <OrdersModeSwitch mode={pipeline.data?.ordersMode} message={pipeline.data?.launchMessage} onChanged={() => pipeline.refresh()} />
 
         {/* Consolidated Hub & PayFast Integration Banner */}

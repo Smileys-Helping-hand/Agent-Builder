@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 
 import "./globals.css";
 import { ActivityProvider } from "./activity";
+import { BuilderVersionProvider } from "./builder-version";
 import { Nav } from "./nav";
 import { ToastHost } from "./ui";
 
@@ -25,10 +26,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <ToastHost>
-          <ActivityProvider>
-            {children}
-            <Nav />
-          </ActivityProvider>
+          <BuilderVersionProvider>
+            <ActivityProvider>
+              {children}
+              <Nav />
+            </ActivityProvider>
+          </BuilderVersionProvider>
         </ToastHost>
         <script
           // Registers the offline shell. Inline and tiny so it costs nothing and

@@ -12,7 +12,8 @@
  */
 import { useEffect, useRef, useState } from "react";
 
-import { api, onMachine, type PreviewInfo, type PreviewReport } from "@/lib/api";
+import { ago } from "./ui";
+import { api, onMachine, type PreviewInfo, type PreviewKind, type PreviewReport } from "@/lib/api";
 import { Busy, Icon } from "./ui";
 
 const DEVICES = [
@@ -31,7 +32,7 @@ export const PreviewPane = ({
   onReports,
   frameRef
 }: {
-  kind: "template" | "build";
+  kind: PreviewKind;
   id: string;
   /** Anything that changes when the site should be reloaded (a build's pass count). */
   refreshKey?: string | number;
@@ -51,6 +52,18 @@ export const PreviewPane = ({
   const frame = useRef<HTMLIFrameElement | null>(null);
   const [reports, setReports] = useState<PreviewReport[]>([]);
   const [showReports, setShowReports] = useState(false);
+  const [builds, setBuilds] = useState(0);
+
+  /** A project: build it as it is now, in a copy, and show that. */
+  const buildFresh = async () => {
+    try {
+      await api.buildProjectPreview(id);
+      setInfo((current) => (current ? { ...current, job: { state: "running", startedAt: new Date().toISOString(), step: "Copying the project", error: null }, preparing: !current.ready } : current));
+      setBuilds((value) => value + 1);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  };
 
   // Ask where the preview is; keep asking while it is being prepared.
   useEffect(() => {
@@ -62,7 +75,7 @@ export const PreviewPane = ({
         if (stop) return;
         setInfo(next);
         setError(null);
-        if (!next.ready && (next.preparing || kind === "build")) timer = setTimeout(load, next.preparing ? 4000 : 8000);
+        if ((!next.ready && (next.preparing || kind === "build")) || next.job?.state === "running") timer = setTimeout(load, next.preparing ? 4000 : 8000);
       } catch (caught) {
         if (!stop) setError(caught instanceof Error ? caught.message : String(caught));
       }
@@ -72,7 +85,7 @@ export const PreviewPane = ({
       stop = true;
       if (timer) clearTimeout(timer);
     };
-  }, [kind, id, refreshKey]);
+  }, [kind, id, refreshKey, builds]);
 
   useEffect(() => {
     const box = frameBox.current;
@@ -135,6 +148,11 @@ export const PreviewPane = ({
               {Icon.external} Open
             </a>
           ) : null}
+          {kind === "project" && info?.canBuild && info.ready ? (
+            <button className="btn small ghost" disabled={info.job?.state === "running"} onClick={buildFresh} title="Build the project as it is now, in a copy">
+              {info.job?.state === "running" ? <Busy label="Building…" /> : "Rebuild"}
+            </button>
+          ) : null}
           {kind === "template" && info && !info.preparing ? (
             <button
               className="btn small ghost"
@@ -179,11 +197,17 @@ export const PreviewPane = ({
             ) : info.preparing ? (
               <>
                 <Busy label="Preparing the preview" />
-                <p>{info.reason}</p>
+                <p>{info.job?.step ? `${info.job.step}…` : info.reason}</p>
               </>
             ) : (
               <>
                 <p>{info.reason ?? "Nothing to preview yet."}</p>
+                {info.job?.state === "failed" && info.job.error ? <pre className="preview-error">{info.job.error.split("\n").slice(-8).join("\n")}</pre> : null}
+                {kind === "project" && info.canBuild ? (
+                  <button className="btn small primary" onClick={buildFresh}>
+                    {Icon.sparkle} {info.job?.state === "failed" ? "Try building it again" : "Build a fresh preview"}
+                  </button>
+                ) : null}
                 {info.hosted ? (
                   <a className="btn small" href={info.hosted} target="_blank" rel="noreferrer">
                     {Icon.external} See the published example
@@ -194,6 +218,16 @@ export const PreviewPane = ({
           </div>
         )}
       </div>
+      {kind === "project" && info?.ready ? (
+        <p className="muted small preview-source">
+          {info.job?.state === "running"
+            ? `Building a fresh copy: ${info.job.step}…`
+            : info.job?.state === "failed"
+              ? `The fresh build failed — showing ${info.from === "preview" ? "the last fresh preview that built" : "the project's own build"}.`
+              : `${info.from === "preview" ? "Fresh preview" : "The project's own build"}${info.builtAt ? `, built ${ago(info.builtAt)}` : ""}.`}{" "}
+          {info.from === "project" && info.canBuild ? "It may be older than the code — Rebuild to see the code as it is now." : ""}
+        </p>
+      ) : null}
       {src ? (
         <div className={`preview-console ${reports.length ? "has" : ""}`}>
           <button className="link" onClick={() => setShowReports((value) => !value)} disabled={!reports.length}>

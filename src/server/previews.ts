@@ -5,6 +5,8 @@
  *
  *   GET /api/previews/template/:id     where the template's preview is, and whether it is ready
  *   GET /api/previews/build/:buildId   the same for a build
+ *   GET /api/previews/project/:id      the same for a project on the PC
+ *   POST /api/previews/project/:id/build  build a fresh preview of it, in a copy
  *   GET /preview/:kind/:id/:token/…    the site itself
  *
  * An <iframe> cannot send the agent key, so the site is served under a token in
@@ -17,6 +19,11 @@
  * when it is a plain static site. A Vite project's own index.html points at
  * /src/main.tsx and would be blank, so it is never served unbuilt: a template
  * without a build is built once, in the background, while the pane says so.
+ *
+ * A project is shown from its own build output (dist/, out/ or build/) when it
+ * has one. "Build a fresh preview" copies it (the files git would see) into
+ * data/previews/projects/ and builds there, so previewing never writes a
+ * thing into the project itself.
  */
 import { execFile } from "child_process";
 import crypto from "crypto";
@@ -31,8 +38,11 @@ import { auditSite, findBrowser, renderPage } from "../orchestrator/SiteAudit.js
 import { Verifier } from "../orchestrator/Verifier.js";
 import { Workspace } from "../orchestrator/Workspace.js";
 import { Catalog } from "../orders/Catalog.js";
+import { EcosystemStore } from "../ecosystem/EcosystemStore.js";
+import { listProjectFiles } from "../ecosystem/ProjectBuilds.js";
 import { Logger } from "../utils/Logger.js";
 import { authenticateAgent } from "./agentAuth.js";
+import { EDITOR_SCRIPT } from "./previewEditor.js";
 
 const run = promisify(execFile);
 const SECRET_PATH = path.resolve("./data/preview-secret");
@@ -55,7 +65,8 @@ const secret = (() => {
   return fresh;
 })();
 
-type Kind = "template" | "build";
+type Kind = "template" | "build" | "project";
+const KINDS: Kind[] = ["template", "build", "project"];
 
 const tokenFor = (kind: Kind, id: string): string =>
   crypto.createHmac("sha256", secret).update(`${kind}:${id}`).digest("base64url").slice(0, 32);
@@ -72,8 +83,11 @@ const isSourceIndex = (html: string): boolean => /<script[^>]+src="\/?src\/[^"]+
 /** The folder to serve for a project folder, or why there is none yet. */
 const servable = (folder: string): { root: string | null; reason: string | null } => {
   if (!folder || !fs.existsSync(folder)) return { root: null, reason: "Its folder is not there." };
-  const dist = path.join(folder, "dist");
-  if (fs.existsSync(path.join(dist, "index.html"))) return { root: dist, reason: null };
+  // Vite's dist/, Next's static out/, Create React App's build/.
+  for (const output of ["dist", "out", "build"]) {
+    const built = path.join(folder, output);
+    if (fs.existsSync(path.join(built, "index.html"))) return { root: built, reason: null };
+  }
   const index = path.join(folder, "index.html");
   if (fs.existsSync(index)) {
     if (!isSourceIndex(fs.readFileSync(index, "utf8"))) return { root: folder, reason: null };
@@ -95,8 +109,24 @@ const templateFolder = (id: string): string | null => {
  */
 const REPORTER = `<script data-agent-builder-preview>(function(){if(window.parent===window)return;var n=0;function send(kind,message){if(++n>50)return;try{parent.postMessage({type:"ab-preview-report",kind:kind,message:String(message).slice(0,400),page:location.hash||location.pathname.split("/").pop()||"/"},"*")}catch(e){}}window.addEventListener("error",function(e){var t=e.target;if(t&&t!==window&&(t.src||t.href)){send("resource","Could not load "+(t.src||t.href))}else{send("error",(e.message||"Script error")+(e.filename?" ("+(e.filename.split("?")[0].split("/").pop()||"page")+":"+e.lineno+")":""))}},true);window.addEventListener("unhandledrejection",function(e){var r=e.reason;send("error","Unhandled rejection: "+(r&&r.message?r.message:r))});var ce=console.error;console.error=function(){try{send("console",Array.prototype.map.call(arguments,function(a){return a&&a.message?a.message:String(a)}).join(" "))}catch(e){}return ce.apply(console,arguments)};window.addEventListener("load",function(){send("loaded",document.title||"")})})();</script>`;
 
-const withReporter = (html: string): string =>
-  /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (head) => `${head}${REPORTER}`) : `${REPORTER}${html}`;
+/**
+ * A site built for the root of a domain asks for "/assets/app.js", which from
+ * inside /preview/…/ would ask the builder instead. Point those at the site's
+ * own files, but only the ones that are really there.
+ */
+const rebase = (html: string, root: string, requested: string): string => {
+  const depth = Math.max(0, requested.split("/").filter(Boolean).length - (requested.endsWith("/") ? 0 : 1));
+  const prefix = depth ? "../".repeat(depth) : "./";
+  return html.replace(/(\s(?:src|href)=["'])\/(?!\/)([^"'?#]*)/gi, (match, lead: string, rest: string) =>
+    rest && fs.existsSync(path.join(root, rest)) ? `${lead}${prefix}${rest}` : match
+  );
+};
+
+/** The error reporter goes first in <head>; the live editor's hands at the end of <body>. */
+const withReporter = (html: string): string => {
+  const reported = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (head) => `${head}${REPORTER}`) : `${REPORTER}${html}`;
+  return /<\/body>/i.test(reported) ? reported.replace(/<\/body>(?![\s\S]*<\/body>)/i, `${EDITOR_SCRIPT}</body>`) : `${reported}${EDITOR_SCRIPT}`;
+};
 
 /* ---------------- building a template's preview on demand ---------------- */
 
@@ -152,6 +182,109 @@ const buildTemplate = (id: string, folder: string): void => {
     })
     .finally(() => building.delete(id));
   building.set(id, job);
+};
+
+/* ---------------- a project's preview ---------------- */
+
+const PROJECT_PREVIEWS = path.resolve("./data/previews/projects");
+
+interface ProjectPreviewJob {
+  state: "running" | "done" | "failed";
+  startedAt: string;
+  step: string;
+  error: string | null;
+}
+const projectJobs = new Map<string, ProjectPreviewJob>();
+
+const previewCopy = (id: string): string => path.join(PROJECT_PREVIEWS, id.replace(/[^a-zA-Z0-9_-]/g, "_"));
+const lastGood = (id: string): string => `${previewCopy(id)}.last`;
+
+/**
+ * What to show for a project: whichever is newer of its own build output and
+ * a fresh preview built in a copy.
+ */
+const projectRoot = (id: string): { root: string | null; reason: string | null; from: "project" | "preview" | null } => {
+  const project = EcosystemStore.getProject(id);
+  if (!project) return { root: null, reason: "Unknown project.", from: null };
+  const own = servable(project.path);
+  const copy = fs.existsSync(previewCopy(id)) ? servable(previewCopy(id)) : { root: null, reason: null };
+  // The previous fresh preview, kept aside while a rebuild runs and after one fails.
+  const kept = fs.existsSync(lastGood(id)) ? servable(lastGood(id)) : { root: null, reason: null };
+  const mtime = (root: string | null) => (root ? fs.statSync(path.join(root, "index.html")).mtimeMs : 0);
+  if (copy.root && mtime(copy.root) >= mtime(own.root)) return { root: copy.root, reason: null, from: "preview" };
+  if (kept.root && mtime(kept.root) >= mtime(own.root)) return { root: kept.root, reason: null, from: "preview" };
+  if (own.root) return { root: own.root, reason: null, from: "project" };
+  const buildable = fs.existsSync(path.join(project.path, "package.json"));
+  return {
+    root: null,
+    from: null,
+    reason: buildable
+      ? "It has not been built, so there is no site to show yet. Build a fresh preview: it is made in a copy, the project is not touched."
+      : own.reason
+  };
+};
+
+const buildProjectPreview = (id: string, projectPath: string): void => {
+  if (projectJobs.get(id)?.state === "running") return;
+  const job: ProjectPreviewJob = { state: "running", startedAt: new Date().toISOString(), step: "Copying the project", error: null };
+  projectJobs.set(id, job);
+  const target = previewCopy(id);
+  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+  const npx = process.platform === "win32" ? "npx.cmd" : "npx";
+  const options = { cwd: target, timeout: 15 * 60_000, maxBuffer: 32 * 1024 * 1024, windowsHide: true, shell: process.platform === "win32" };
+  void (async () => {
+    // Keep node_modules from last time (the slow part); everything else is fresh.
+    fs.mkdirSync(target, { recursive: true });
+    // The preview that last built goes aside first, so it is still shown while
+    // this one builds, and after it if this one fails.
+    const previous = servable(target).root;
+    // (A plain static site is served from the copy itself; nothing to move aside.)
+    if (previous && previous !== target) {
+      fs.rmSync(lastGood(id), { recursive: true, force: true });
+      fs.mkdirSync(lastGood(id), { recursive: true });
+      fs.renameSync(previous, path.join(lastGood(id), path.basename(previous)));
+    }
+    for (const entry of fs.readdirSync(target)) {
+      if (entry !== "node_modules") fs.rmSync(path.join(target, entry), { recursive: true, force: true });
+    }
+    const files = await listProjectFiles(projectPath);
+    for (const file of files) {
+      const to = path.join(target, file);
+      fs.mkdirSync(path.dirname(to), { recursive: true });
+      fs.copyFileSync(path.join(projectPath, file), to);
+    }
+    const pkg = JSON.parse(fs.readFileSync(path.join(target, "package.json"), "utf8")) as {
+      scripts?: Record<string, string>;
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    if (Object.keys(deps).length) {
+      job.step = "Installing its packages (the first time takes a few minutes)";
+      const ci = fs.existsSync(path.join(target, "package-lock.json")) && !fs.existsSync(path.join(target, "node_modules"));
+      await run(npm, ci ? ["ci", "--no-audit", "--no-fund"] : ["install", "--no-audit", "--no-fund"], options);
+    }
+    job.step = "Building the site";
+    const env = { ...process.env, BASE_PATH: "./", PUBLIC_URL: ".", NODE_ENV: "production" };
+    if (deps.vite && !/next build|react-scripts/.test(pkg.scripts?.build ?? "")) {
+      // Built to be served from any folder, not only the root of a domain.
+      await run(npx, ["vite", "build", "--base", "./"], { ...options, env });
+    } else if (pkg.scripts?.build) {
+      await run(npm, ["run", "build"], { ...options, env });
+    } else {
+      throw new Error("It has no build script, and it is not a Vite project.");
+    }
+    if (!servable(target).root) throw new Error("It built, but made no index.html in dist/, out/ or build/ to show.");
+    fs.rmSync(lastGood(id), { recursive: true, force: true });
+    job.state = "done";
+    job.step = "Ready";
+    Logger.log("Project preview ready", { id });
+  })().catch((error: unknown) => {
+    const message = error instanceof Error ? (error as Error & { stderr?: string }).stderr || error.message : String(error);
+    job.state = "failed";
+    job.error = message.slice(-800);
+    Logger.warn("Project preview build failed", { id, error: job.error });
+  });
 };
 
 /* ---------------- routes ---------------- */
@@ -213,15 +346,49 @@ export const registerPreviewRoutes = (app: Express) => {
     res.json(describe("build", build.buildId, root, reason, { version, live: build.live }));
   });
 
+  app.get("/api/previews/project/:id", authenticateAgent("read"), (req: Request, res: Response) => {
+    const project = EcosystemStore.getProject(req.params.id);
+    if (!project) return res.status(404).json({ error: "Unknown project." });
+    const { root, reason, from } = projectRoot(project.id);
+    const job = projectJobs.get(project.id);
+    const canBuild = fs.existsSync(path.join(project.path, "package.json"));
+    res.json(
+      describe("project", project.id, root, job?.state === "running" ? "Building a fresh preview in a copy of the project…" : reason, {
+        version: root ? Math.round(fs.statSync(path.join(root, "index.html")).mtimeMs) : null,
+        builtAt: root ? fs.statSync(path.join(root, "index.html")).mtime.toISOString() : null,
+        from,
+        canBuild,
+        preparing: job?.state === "running",
+        failed: job?.state === "failed",
+        job: job ?? null
+      })
+    );
+  });
+
+  /** Build a fresh preview of a project in a copy of it. The project itself is not touched. */
+  app.post("/api/previews/project/:id/build", authenticateAgent("execute"), (req: Request, res: Response) => {
+    const project = EcosystemStore.getProject(req.params.id);
+    if (!project) return res.status(404).json({ error: "Unknown project." });
+    if (!fs.existsSync(path.join(project.path, "package.json"))) {
+      return res.status(400).json({ error: "This project has no package.json, so there is nothing to build — it is shown as it is." });
+    }
+    buildProjectPreview(project.id, project.path);
+    res.json({ success: true, preparing: true });
+  });
+
   // The sites themselves. Only after the token checks out does anything on disk get looked at.
   app.use("/preview/:kind/:id/:token", (req: Request, res: Response, next) => {
     const kind = req.params.kind as Kind;
     const { id, token } = req.params;
-    if ((kind !== "template" && kind !== "build") || !tokenMatches(kind, id, token)) {
+    if (!KINDS.includes(kind) || !tokenMatches(kind, id, token)) {
       return res.status(404).send("Not found");
     }
-    const folder = kind === "template" ? templateFolder(id) : BuildService.view(id)?.outputDir ?? null;
-    const { root } = folder ? servable(folder) : { root: null };
+    let root: string | null;
+    if (kind === "project") root = projectRoot(id).root;
+    else {
+      const folder = kind === "template" ? templateFolder(id) : BuildService.view(id)?.outputDir ?? null;
+      root = folder ? servable(folder).root : null;
+    }
     if (!root) {
       return res
         .status(404)
@@ -244,7 +411,7 @@ export const registerPreviewRoutes = (app: Express) => {
       const file = path.resolve(root, `.${requested.endsWith("/") ? `${requested}index.html` : requested}`);
       const inside = file === root || file.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
       if (inside && fs.existsSync(file) && fs.statSync(file).isFile()) {
-        return res.type("html").send(withReporter(fs.readFileSync(file, "utf8")));
+        return res.type("html").send(withReporter(rebase(fs.readFileSync(file, "utf8"), root, requested)));
       }
     }
     express.static(root, { index: "index.html", dotfiles: "deny", fallthrough: false })(req, res, next);

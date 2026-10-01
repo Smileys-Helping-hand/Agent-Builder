@@ -927,6 +927,21 @@ button.link { background: none; border: none; color: var(--accent); font: inheri
 .icon-btn { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--text); cursor: pointer; font: inherit; font-size: 13px; }
 .icon-btn:disabled { opacity: 0.35; cursor: default; }
 .icon-btn svg { width: 15px; height: 15px; }
+.editor-modes { grid-template-columns: repeat(3, 1fr); }
+.editor-modes button { font-size: 12.5px; padding: 7px 6px; }
+.editor-tip { margin: -4px 0 0; }
+.picked { display: grid; gap: 7px; padding: 10px; border-radius: 12px; border: 1px solid rgba(255, 159, 28, 0.5); background: rgba(255, 159, 28, 0.06); }
+.picked textarea { padding: 9px 10px; font-size: 14px; border-radius: 10px; }
+.font-pickers { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.font-pickers select { width: 100%; padding: 8px; border-radius: 9px; font-size: 13px; }
+.range { display: grid; gap: 4px; margin-top: 10px; font-size: 13px; }
+.range input[type="range"] { width: 100%; accent-color: var(--accent); }
+.change-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 5px; }
+.change-list li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--line); font-size: 13px; }
+.change-list li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.editor-side { display: grid; gap: 12px; align-content: start; }
+.preview-source { margin: 6px 2px 0; }
+.preview-error { max-width: 560px; max-height: 160px; overflow: auto; text-align: left; font-size: 11.5px; white-space: pre-wrap; padding: 8px 10px; border-radius: 10px; background: rgba(255, 107, 129, 0.08); border: 1px solid rgba(255, 107, 129, 0.3); color: var(--text); }
 
 /* what the builder has learned */
 .lessons { display: grid; margin-top: 12px; }
@@ -950,6 +965,13 @@ button.link { background: none; border: none; color: var(--accent); font: inheri
 .orders-mode.open .orders-mode-state { color: var(--good); }
 .orders-mode-message { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 .orders-mode-message input { flex: 1; min-width: 220px; padding: 10px 12px; font-size: 14px; }
+
+/* the PC's builder is behind the app */
+.update-strip { display: flex; align-items: center; gap: 10px; max-width: 1240px; margin: 0 auto; padding: 8px 16px; font-size: 12.8px; color: #1b1200; background: linear-gradient(90deg, #ffd27a, #ffc247); font-weight: 600; }
+.update-strip b { margin-left: auto; padding: 3px 10px; border-radius: 999px; background: rgba(0, 0, 0, 0.18); }
+.update-list { margin: 0 0 12px; padding-left: 18px; font-size: 13px; display: grid; gap: 3px; }
+.update-job { margin-top: 12px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: rgba(3, 6, 12, 0.6); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; display: grid; gap: 4px; }
+.update-job .bad { color: var(--bad); }
 
 /* home: live builds */
 .live-build { display: flex; gap: 12px; align-items: center; padding: 11px 0; border-top: 1px solid var(--line); color: inherit; }
@@ -1289,3 +1311,35 @@ body::before {
 @media (min-width: 980px) { .pb-float { display: none; } }
 .pb-grid { padding-bottom: 70px; }
 @media (min-width: 980px) { .pb-grid { padding-bottom: 0; } }
+
+/* a project, live: now beside the changes */
+.project-live { display: grid; gap: 12px; }
+.project-live-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; justify-content: space-between; }
+.project-live-bar select { width: 100%; padding: 9px 10px; border-radius: 10px; font-size: 13.5px; }
+.compare { display: grid; gap: 14px; }
+@media (min-width: 1100px) { .compare.two { grid-template-columns: 1fr 1fr; } }
+.compare-side { display: grid; gap: 8px; min-width: 0; }
+.compare-label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.compare-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.02); }
+
+/* the learning report */
+.report-card { display: grid; gap: 12px; margin-top: 14px; }
+.report-head { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: flex-start; }
+.report-head > div { flex: 1; min-width: 240px; }
+.report-step { margin: -4px 0 0; }
+.report-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.report-meta select { max-width: 100%; padding: 8px 10px; border-radius: 10px; font-size: 13.5px; }
+.report-body { position: relative; max-height: 320px; overflow: hidden; padding: 4px 16px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.02); line-height: 1.6; font-size: 14.5px; }
+.report-body:not(.open) { -webkit-mask-image: linear-gradient(#000 65%, transparent); mask-image: linear-gradient(#000 65%, transparent); }
+.report-body.open { max-height: none; }
+.report-body h2 { font-size: 19px; margin: 14px 0 6px; }
+.report-body h3 { font-size: 16px; margin: 16px 0 6px; color: var(--accent); }
+.report-body h4 { font-size: 14.5px; margin: 12px 0 4px; }
+.report-body li { margin: 4px 0; }
+.report-handon { display: grid; gap: 16px; padding: 12px; border-radius: 12px; border: 1px solid var(--line); }
+@media (min-width: 900px) { .report-handon { grid-template-columns: 3fr 2fr; } }
+.rule-list { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 6px; }
+.rule-list label { display: flex; gap: 9px; align-items: flex-start; font-size: 13.8px; line-height: 1.45; cursor: pointer; }
+.rule-list input { width: auto; flex: none; padding: 0; margin-top: 3px; accent-color: var(--accent); }
+.report-body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; padding: 1px 5px; border-radius: 6px; background: rgba(255, 255, 255, 0.06); }
+.md-block { display: contents; }

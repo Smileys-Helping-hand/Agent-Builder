@@ -7,6 +7,7 @@ import { api, type Problem, type ServiceReport, type CleanupReport } from "@/lib
 import { STAGE_LABEL } from "../build/parts";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
 import { PowerTools } from "./power";
+import { UpdateCard } from "./update";
 
 /**
  * The machine room & PC command center.
@@ -900,6 +901,7 @@ export default function Control() {
 
         {/* ---------- power tools ---------- */}
         <div className="section-title">Power tools</div>
+        <UpdateCard />
         <PowerTools />
 
         {/* ---------- quick navigation ---------- */}

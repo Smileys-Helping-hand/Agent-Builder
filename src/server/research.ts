@@ -4,6 +4,7 @@ import { authenticateAgent } from "./agentAuth.js";
 import { ResearchEngine } from "../research/ResearchEngine.js";
 import { ResearchStore } from "../research/ResearchStore.js";
 import { LessonMemory, type LessonScope } from "../learning/LessonMemory.js";
+import { LearningReports } from "../research/LearningReport.js";
 import { SecondBrainClient } from "../integrations/SecondBrainClient.js";
 import { Logger } from "../utils/Logger.js";
 
@@ -178,6 +179,43 @@ export const registerResearchRoutes = (app: Express) => {
     const query = typeof req.query.q === "string" ? req.query.q.trim() : "";
     if (!query) return res.status(400).json({ error: "Provide a search query with ?q=" });
     return res.json({ results: ResearchStore.search(query, 30) });
+  });
+
+  /* What it has learned, as a report to read — and to hand on to the builder and Jarvis. */
+  app.get("/api/learning/reports", authenticateAgent("read"), (_req: Request, res: Response) => {
+    res.json({ reports: LearningReports.list(), job: LearningReports.job() });
+  });
+
+  app.post("/api/learning/reports", authenticateAgent("execute"), (_req: Request, res: Response) => {
+    res.json({ job: LearningReports.start() });
+  });
+
+  app.get("/api/learning/reports/:id", authenticateAgent("read"), (req: Request, res: Response) => {
+    const report = LearningReports.get(req.params.id);
+    if (!report) return res.status(404).json({ error: "Unknown report." });
+    res.json({ report });
+  });
+
+  app.post("/api/learning/reports/:id/teach", authenticateAgent("execute"), (req: Request, res: Response) => {
+    try {
+      const rules = Array.isArray(req.body?.rules) ? (req.body.rules as unknown[]).filter((rule): rule is string => typeof rule === "string") : undefined;
+      res.json(LearningReports.teach(req.params.id, rules));
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post("/api/learning/reports/:id/jarvis", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    try {
+      res.json(await LearningReports.sendToJarvis(req.params.id));
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.delete("/api/learning/reports/:id", authenticateAgent("execute"), (req: Request, res: Response) => {
+    if (!LearningReports.remove(req.params.id)) return res.status(404).json({ error: "Unknown report." });
+    res.json({ ok: true });
   });
 
   app.get("/api/learning/lessons", authenticateAgent("read"), (req: Request, res: Response) => {

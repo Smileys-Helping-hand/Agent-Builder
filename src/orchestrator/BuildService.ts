@@ -499,13 +499,16 @@ export const BuildService = {
 
     orchestrator.on("iteration-started", ({ iteration }: { iteration: number }) => {
       scope.phase = `${STAGE_WORDS.running} (pass ${iteration})`;
-      patch(buildId, { iterations: iteration, stage: "running", repairAttempt: null, stageSince: now(), passSince: now() });
+      const begun = patch(buildId, { iterations: iteration, stage: "running", repairAttempt: null, stageSince: now(), passSince: now() });
+      if (begun) buildEvents.emit("stage", begun);
       log(buildId, "pass", `Pass ${iteration} started`);
     });
 
     orchestrator.on("iteration-status", ({ iteration, status: stage, attempt }: { iteration: number; status: string; attempt?: number }) => {
       scope.phase = `${STAGE_WORDS[stage] ?? stage} (pass ${iteration}${stage === "repairing" && attempt ? `, attempt ${attempt}` : ""})`;
-      patch(buildId, { stage, repairAttempt: attempt ?? null, stageSince: now() });
+      const staged = patch(buildId, { stage, repairAttempt: attempt ?? null, stageSince: now() });
+      // Lets anything following a build (the order pipeline, the Hub) see it move within a pass.
+      if (staged) buildEvents.emit("stage", staged);
       if (stage === "repairing") {
         log(buildId, "repair", `Pass ${iteration}: repair attempt ${attempt ?? 1}`);
       } else if (STAGE_WORDS[stage]) {

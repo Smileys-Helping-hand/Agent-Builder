@@ -333,6 +333,31 @@ export interface Lesson {
   lastAppliedAt: string | null;
 }
 
+export interface BuilderVersion {
+  available: boolean;
+  reason: string | null;
+  commit: string | null;
+  subject: string | null;
+  date: string | null;
+  branch: string | null;
+  upstream: string | null;
+  dirty: number;
+  behind: number;
+  ahead: number;
+  incoming: Array<{ commit: string; subject: string; date: string }>;
+  checkedAt: string | null;
+  fetchError: string | null;
+}
+
+export interface UpdateJob {
+  state: "running" | "done" | "failed";
+  startedAt: string;
+  finishedAt: string | null;
+  steps: Array<{ at: string; text: string; ok: boolean }>;
+  restarting: boolean;
+  message: string | null;
+}
+
 export type BuildState = "running" | "paused" | "completed" | "stopped" | "error" | "interrupted";
 export type BuildProfile = "fast" | "balanced" | "deep";
 
@@ -426,6 +451,8 @@ export interface ProjectBuild {
   projectName: string;
   projectPath: string;
   workDir: string;
+  /** The newest build in this carry-on's chain (a continuation works in the same copy). */
+  latestBuildId?: string;
   instruction: string;
   createdAt: string;
   appliedAt: string | null;
@@ -548,6 +575,8 @@ export interface PipelineStatus {
   /** "launching-soon" while the business is not taking orders yet. */
   ordersMode?: "open" | "launching-soon";
   launchMessage?: string | null;
+  /** Set while the PC cannot build (its model is down): orders wait instead of failing. */
+  hold?: { until: string; reason: string | null } | null;
 }
 
 export interface JarvisStatus {
@@ -648,8 +677,33 @@ export const servedByBuilder = async (): Promise<string | null> => {
 };
 
 /** Where a live preview is served, from the builder. `url` is a path on the builder. */
+export type PreviewKind = "template" | "build" | "project";
+
+/** What it has learned, written to teach — and to hand on. */
+export interface LearningReport {
+  id: string;
+  createdAt: string;
+  title: string;
+  markdown: string;
+  rules: string[];
+  stats: { topics: number; findings: number; confirmed: number; contested: number; lessons: number };
+  writtenBy: "model" | "plain";
+  taughtAt: string | null;
+  taughtCount: number;
+  sentToJarvisAt: string | null;
+  sentResult: string | null;
+}
+
+export interface LearningReportJob {
+  state: "running" | "done" | "failed";
+  startedAt: string;
+  step: string;
+  reportId: string | null;
+  error: string | null;
+}
+
 export interface PreviewInfo {
-  kind: "template" | "build";
+  kind: PreviewKind;
   id: string;
   ready: boolean;
   url: string | null;
@@ -660,6 +714,11 @@ export interface PreviewInfo {
   version?: number | null;
   /** A template's published example, when it has one. */
   hosted?: string | null;
+  /** Projects: when what is shown was built, and whether it is the project's own build or a fresh preview. */
+  builtAt?: string | null;
+  from?: "project" | "preview" | null;
+  canBuild?: boolean;
+  job?: { state: "running" | "done" | "failed"; startedAt: string; step: string; error: string | null } | null;
 }
 
 /** A path on the builder as a full address this device can load. */
@@ -924,6 +983,24 @@ export const api = {
       { method: "POST", body: JSON.stringify(options) },
       60000
     ),
+  builderVersion: (refresh = false) => request<BuilderVersion>(`/api/power/version${refresh ? "?refresh=1" : ""}`, {}, 120000),
+  updateStatus: () => request<{ job: UpdateJob | null }>("/api/power/update", {}, 10000),
+  updateBuilder: (force = false) =>
+    request<{ job: UpdateJob | null; message?: string }>("/api/power/update", { method: "POST", body: JSON.stringify({ force }) }, 120000),
+  learningReports: () => request<{ reports: LearningReport[]; job: LearningReportJob | null }>("/api/learning/reports"),
+  writeLearningReport: () => request<{ job: LearningReportJob }>("/api/learning/reports", { method: "POST" }),
+  teachBuilder: (id: string, rules: string[]) =>
+    request<{ report: LearningReport; taught: number; fresh?: number }>(`/api/learning/reports/${encodeURIComponent(id)}/teach`, {
+      method: "POST",
+      body: JSON.stringify({ rules })
+    }),
+  sendReportToJarvis: (id: string) =>
+    request<{ report: LearningReport; knowledge: string; webhook: string; ok: boolean }>(
+      `/api/learning/reports/${encodeURIComponent(id)}/jarvis`,
+      { method: "POST" },
+      60000
+    ),
+  deleteLearningReport: (id: string) => request<{ ok: boolean }>(`/api/learning/reports/${encodeURIComponent(id)}`, { method: "DELETE" }),
   lessons: (scope?: "build" | "research") =>
     request<{ lessons: Lesson[] }>(`/api/learning/lessons${scope ? `?scope=${scope}` : ""}`),
   retireLesson: (id: number) => request<{ ok: boolean }>(`/api/learning/lessons/${id}`, { method: "DELETE" }),
@@ -945,7 +1022,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ target })
     }),
-  preview: (kind: "template" | "build", id: string) =>
+  buildProjectPreview: (id: string) =>
+    request<{ success: boolean }>(`/api/previews/project/${encodeURIComponent(id)}/build`, { method: "POST" }),
+  preview: (kind: PreviewKind, id: string) =>
     request<PreviewInfo>(`/api/previews/${kind}/${encodeURIComponent(id)}`),
   rebuildTemplatePreview: (id: string) =>
     request<{ success: boolean }>(`/api/previews/template/${encodeURIComponent(id)}/rebuild`, { method: "POST" }),
@@ -1004,7 +1083,7 @@ export const api = {
       configured: boolean;
       payfast: { configured: boolean; merchantId: string; mode: string };
       intake: { lastIntakeAt: string | null; lastIntakeCount: number };
-      catalog: { at: string; ok: boolean; message: string; count: number } | null;
+      catalog: { at: string; ok: boolean; message: string; count: number; lastOkAt?: string | null; failures?: number } | null;
       counts: Record<string, number>;
     }>("/api/orders/hub/status"),
   testHub: () => request<{ ok: boolean; status: number; message: string }>("/api/orders/hub/test", { method: "POST" }),

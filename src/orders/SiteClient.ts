@@ -55,6 +55,18 @@ export interface CheckIn {
    */
   ordersMode?: "open" | "launching-soon";
   launchMessage?: string | null;
+  /** What is building right now, with how far along each one is (0–100). */
+  activeBuilds?: Array<{
+    buildId: string;
+    projectName: string;
+    orderRef: string | null;
+    state: string;
+    stage: string | null;
+    progress: number;
+    line: string;
+    qualityScore: number;
+    startedAt: string;
+  }>;
 }
 
 const TIMEOUT_MS = 20_000;

@@ -5,6 +5,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 
 import { ApiError, loadConnection, saveConnection, servedByBuilder, signInFromHub } from "@/lib/api";
 import { machineScope, readJson, writeJson } from "@/lib/store";
+import { UpdateStrip } from "./builder-version";
 
 /* ---------------- time ---------------- */
 
@@ -150,6 +151,7 @@ export const Header = ({
         </Link>
       ) : null}
     </div>
+    <UpdateStrip />
   </header>
 );
 

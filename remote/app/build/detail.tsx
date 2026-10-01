@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import { api, type Build, type BuildAudit, type BuildEvent, type BuildProfile, type BuildThought, type PreviewReport } from "@/lib/api";
 import { isLive, useActivity } from "../activity";
 import { Banner, Busy, CopyButton, Freshness, Header, Icon, Meter, Skeleton, ago, duration, useRemote, useToast } from "../ui";
 import { QUICK_STEERS, WritingPane } from "./writing";
 import { PreviewPane } from "../preview";
+import { LiveEditor } from "../live-editor";
 import { BuildProgress, CHECK_LABEL, Checks, StateBadge, Stepper, bestPass, describe, latestPass } from "./parts";
 
 const EVENT_TONE: Partial<Record<BuildEvent["kind"], string>> = {
@@ -214,6 +215,8 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
   const [profile, setProfile] = useState<BuildProfile | null>(null);
   const [showAllEvents, setShowAllEvents] = useState(false);
   const [showAllThoughts, setShowAllThoughts] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const previewFrame = useRef<HTMLIFrameElement | null>(null);
   const [openPass, setOpenPass] = useState<number | null>(null);
   const [files, setFiles] = useState<{ list: string[]; total: number; exists: boolean } | null>(null);
   const [viewing, setViewing] = useState<{ path: string; content: string; truncated: boolean } | null>(null);
@@ -371,8 +374,43 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
               refreshKey={`${build.iterations}-${build.state}-${build.qualityScore}`}
               title={`${build.projectName} preview`}
               onReports={onReports}
+              frameRef={previewFrame}
             />
+            <div className="btn-row" style={{ marginTop: 10 }}>
+              <button className={`btn small ${editing ? "accent" : ""}`} onClick={() => setEditing(!editing)} aria-pressed={editing}>
+                {Icon.wrench} {editing ? "Close the live editor" : "Edit it live"}
+              </button>
+            </div>
           </div>
+          {editing ? (
+            <LiveEditor
+              key={build.buildId}
+              storageKey={`build:${build.buildId}`}
+              frameRef={previewFrame}
+              actions={[
+                live
+                  ? {
+                      label: "Tell the running build",
+                      primary: true,
+                      clearAfter: true,
+                      run: async (brief) => {
+                        await api.guideBuild(build.buildId, brief);
+                        toast("Sent. It picks the changes up in its next pass.", "ok");
+                      }
+                    }
+                  : {
+                      label: "Make these changes",
+                      primary: true,
+                      clearAfter: true,
+                      run: async (brief) => {
+                        const result = await api.continueBuild(build.buildId, { instruction: brief });
+                        toast("Making your changes in a new pass. Follow it here.", "ok");
+                        onOpen(result.buildId);
+                      }
+                    }
+              ]}
+            />
+          ) : null}
           <AuditCard
             build={build}
             runtime={runtime}
