@@ -266,13 +266,22 @@ export const registerEcosystemRoutes = (app: Express) => {
   /** The carry-on builds for one project, newest first, with where each one is. */
   app.get("/api/ecosystem/projects/:id/builds", authenticateAgent("read"), async (req: Request, res: Response) => {
     const { BuildService } = await import("../orchestrator/BuildService.js");
+    const all = BuildService.list();
     const builds = await Promise.all(
       ProjectBuilds.list(req.params.id)
         .slice(0, 20)
         .map(async (record) => {
-          const view = BuildService.view(record.buildId);
+          // "Make these changes too" continues in the same copy as a new build:
+          // what stands for this carry-on is the newest build in that chain.
+          let view = BuildService.view(record.buildId);
+          for (let next = view; next; ) {
+            const after = all.find((build) => build.continuedFrom === next!.buildId) ?? null;
+            if (after) view = after;
+            next = after;
+          }
           return {
             ...record,
+            latestBuildId: view?.buildId ?? record.buildId,
             state: view?.state ?? record.finalState ?? "ended",
             qualityScore: view?.qualityScore ?? record.finalQuality ?? null,
             iterations: view?.iterations ?? null,

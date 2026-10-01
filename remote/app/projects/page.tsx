@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { api, type AiSession, type Commit, type Project, type ProjectEntry } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
 import { CloneCard, GitPanel, ProjectBuildList } from "./carry-on";
+import { ProjectLivePreview } from "./live-preview";
 
 type Filter = "all" | "attention" | "dirty" | "unpushed";
 
@@ -37,7 +38,8 @@ export default function Projects() {
   const [filter, setFilter] = useState<Filter>("all");
 
   // Advanced project management & code editing state
-  const [activeTab, setActiveTab] = useState<Record<string, "overview" | "instruct" | "files" | "git">>({});
+  const [activeTab, setActiveTab] = useState<Record<string, "overview" | "preview" | "instruct" | "files" | "git">>({});
+  const [previewBuild, setPreviewBuild] = useState<Record<string, string | null>>({});
   const [instructions, setInstructions] = useState<Record<string, string>>({});
   const [projectTrees, setProjectTrees] = useState<Record<string, ProjectEntry[]>>({});
   const [openFiles, setOpenFiles] = useState<Record<string, { path: string; content: string }>>({});
@@ -402,6 +404,12 @@ export default function Projects() {
                       Overview &amp; Checks
                     </button>
                     <button
+                      className={tab === "preview" ? "on" : ""}
+                      onClick={() => setActiveTab((p) => ({ ...p, [project.id]: "preview" }))}
+                    >
+                      Live preview
+                    </button>
+                    <button
                       className={tab === "instruct" ? "on" : ""}
                       onClick={() => setActiveTab((p) => ({ ...p, [project.id]: "instruct" }))}
                     >
@@ -483,6 +491,11 @@ export default function Projects() {
                     </div>
                   ) : null}
 
+                  {/* LIVE PREVIEW: now, and with a carry-on's changes, before applying */}
+                  {tab === "preview" ? (
+                    <ProjectLivePreview project={project} focusBuild={previewBuild[project.id] ?? null} onStarted={() => setBuildsKey((key) => key + 1)} />
+                  ) : null}
+
                   {/* TAB 2: INSTRUCT & AI CODER */}
                   {tab === "instruct" ? (
                     <div>
@@ -506,7 +519,14 @@ export default function Projects() {
                           {busy === `${project.id}:instruct` ? <Busy label="Copying the project…" /> : <>{Icon.sparkle} Carry on</>}
                         </button>
                       </div>
-                      <ProjectBuildList projectId={project.id} refreshKey={buildsKey} />
+                      <ProjectBuildList
+                        projectId={project.id}
+                        refreshKey={buildsKey}
+                        onPreview={(buildId) => {
+                          setPreviewBuild((p) => ({ ...p, [project.id]: buildId }));
+                          setActiveTab((p) => ({ ...p, [project.id]: "preview" }));
+                        }}
+                      />
                     </div>
                   ) : null}
 

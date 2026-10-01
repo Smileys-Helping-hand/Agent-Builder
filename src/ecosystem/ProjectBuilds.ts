@@ -136,7 +136,7 @@ const saveRecord = (record: ProjectBuildRecord): void => {
 };
 
 /** Every file worth copying, relative to the project root, with forward slashes. */
-const listProjectFiles = async (projectPath: string): Promise<string[]> => {
+export const listProjectFiles = async (projectPath: string): Promise<string[]> => {
   if (await isGitRepo(projectPath)) {
     // Tracked plus untracked-but-not-ignored: the project as you see it, minus node_modules and friends.
     const out = await git(projectPath, ["ls-files", "-co", "--exclude-standard", "-z"]);
@@ -305,7 +305,9 @@ export const ProjectBuilds = {
    * changed since is reported as a conflict and left as you left it.
    */
   async apply(record: ProjectBuildRecord): Promise<ApplyResult> {
-    if (BuildService.isRunning(record.buildId)) throw new Error("The build is still running. Stop it or wait for it to finish first.");
+    // A continuation ("make these changes too") works in the same copy, so it counts as this build running.
+    const inCopy = BuildService.list().some((build) => build.outputDir === record.workDir && BuildService.isRunning(build.buildId));
+    if (BuildService.isRunning(record.buildId) || inCopy) throw new Error("The build is still running. Stop it or wait for it to finish first.");
     if (!fs.existsSync(record.projectPath)) throw new Error(`${record.projectPath} no longer exists.`);
 
     const result: ApplyResult = { applied: [], unchanged: [], conflicts: [] };

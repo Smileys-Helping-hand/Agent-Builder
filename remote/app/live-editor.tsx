@@ -98,6 +98,8 @@ export interface EditorAction {
   label: string;
   primary?: boolean;
   run: (brief: string) => Promise<void> | void;
+  /** The changes have been handed over: clear them and show the page as it really is again. */
+  clearAfter?: boolean;
 }
 
 export const LiveEditor = ({
@@ -199,6 +201,15 @@ export const LiveEditor = ({
     ...c.order.map((id) => blocks.find((block) => block.id === id)).filter((block): block is Block => Boolean(block)),
     ...blocks.filter((block) => !c.order.includes(block.id))
   ];
+  const reset = () => {
+    setChanges(EMPTY);
+    setMode("none");
+    setPicked(null);
+    // A reload is the honest way back to how the page really is.
+    const frame = frameRef.current;
+    if (frame) frame.src = frame.src;
+  };
+
   const move = (id: string, to: number) => {
     const ids = ordered.map((block) => block.id).filter((entry) => entry !== id);
     ids.splice(Math.max(0, Math.min(ids.length, to)), 0, id);
@@ -414,6 +425,7 @@ export const LiveEditor = ({
               setBusy(action.label);
               try {
                 await action.run(brief);
+                if (action.clearAfter) reset();
               } catch (error) {
                 toast(error instanceof Error ? error.message : String(error), "error");
               } finally {
@@ -441,12 +453,7 @@ export const LiveEditor = ({
         <button
           className="btn small ghost"
           disabled={!count}
-          onClick={() => {
-            setChanges(EMPTY);
-            // A reload is the honest way back to how the page really is.
-            const frame = frameRef.current;
-            if (frame) frame.src = frame.src;
-          }}
+          onClick={reset}
         >
           Reset
         </button>

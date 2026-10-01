@@ -106,7 +106,16 @@ const Step = ({ n, label, tone, detail }: { n: number; label: string; tone: "tod
  *   4. Push   shows what will go first, then asks the remote where the branch
  *             is now, so "pushed" means it is really there.
  */
-export function ProjectBuildList({ projectId, refreshKey = 0 }: { projectId: string; refreshKey?: number }) {
+export function ProjectBuildList({
+  projectId,
+  refreshKey = 0,
+  onPreview
+}: {
+  projectId: string;
+  refreshKey?: number;
+  /** Show this build's site beside the project's, before applying it. */
+  onPreview?: (buildId: string) => void;
+}) {
   const toast = useToast();
   const builds = useRemote(() => api.projectBuilds(projectId), 6000);
   const [busy, setBusy] = useState<string | null>(null);
@@ -255,6 +264,11 @@ export function ProjectBuildList({ projectId, refreshKey = 0 }: { projectId: str
                 >
                   {testing ? <Busy label="Testing…" /> : <>{Icon.stethoscope} {t ? "Test again" : "Test"}</>}
                 </button>
+                {onPreview ? (
+                  <button className="btn small" onClick={() => onPreview(build.buildId)} title="See the site with these changes beside the project as it is">
+                    {Icon.eye} Preview before applying
+                  </button>
+                ) : null}
                 <button
                   className="btn small primary"
                   onClick={() => apply(build)}

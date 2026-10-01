@@ -451,6 +451,8 @@ export interface ProjectBuild {
   projectName: string;
   projectPath: string;
   workDir: string;
+  /** The newest build in this carry-on's chain (a continuation works in the same copy). */
+  latestBuildId?: string;
   instruction: string;
   createdAt: string;
   appliedAt: string | null;
@@ -673,8 +675,10 @@ export const servedByBuilder = async (): Promise<string | null> => {
 };
 
 /** Where a live preview is served, from the builder. `url` is a path on the builder. */
+export type PreviewKind = "template" | "build" | "project";
+
 export interface PreviewInfo {
-  kind: "template" | "build";
+  kind: PreviewKind;
   id: string;
   ready: boolean;
   url: string | null;
@@ -685,6 +689,11 @@ export interface PreviewInfo {
   version?: number | null;
   /** A template's published example, when it has one. */
   hosted?: string | null;
+  /** Projects: when what is shown was built, and whether it is the project's own build or a fresh preview. */
+  builtAt?: string | null;
+  from?: "project" | "preview" | null;
+  canBuild?: boolean;
+  job?: { state: "running" | "done" | "failed"; startedAt: string; step: string; error: string | null } | null;
 }
 
 /** A path on the builder as a full address this device can load. */
@@ -974,7 +983,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ target })
     }),
-  preview: (kind: "template" | "build", id: string) =>
+  buildProjectPreview: (id: string) =>
+    request<{ success: boolean }>(`/api/previews/project/${encodeURIComponent(id)}/build`, { method: "POST" }),
+  preview: (kind: PreviewKind, id: string) =>
     request<PreviewInfo>(`/api/previews/${kind}/${encodeURIComponent(id)}`),
   rebuildTemplatePreview: (id: string) =>
     request<{ success: boolean }>(`/api/previews/template/${encodeURIComponent(id)}/rebuild`, { method: "POST" }),

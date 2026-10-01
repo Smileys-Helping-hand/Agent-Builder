@@ -392,6 +392,7 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
                   ? {
                       label: "Tell the running build",
                       primary: true,
+                      clearAfter: true,
                       run: async (brief) => {
                         await api.guideBuild(build.buildId, brief);
                         toast("Sent. It picks the changes up in its next pass.", "ok");
@@ -400,6 +401,7 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
                   : {
                       label: "Make these changes",
                       primary: true,
+                      clearAfter: true,
                       run: async (brief) => {
                         const result = await api.continueBuild(build.buildId, { instruction: brief });
                         toast("Making your changes in a new pass. Follow it here.", "ok");
