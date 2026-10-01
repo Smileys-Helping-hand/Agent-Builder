@@ -928,6 +928,19 @@ button.link { background: none; border: none; color: var(--accent); font: inheri
 .icon-btn:disabled { opacity: 0.35; cursor: default; }
 .icon-btn svg { width: 15px; height: 15px; }
 
+/* what the builder has learned */
+.lessons { display: grid; margin-top: 12px; }
+.lesson { border-top: 1px solid var(--line); }
+.lesson:first-child { border-top: none; }
+.lesson-head { display: flex; gap: 12px; width: 100%; align-items: flex-start; padding: 11px 0; background: none; border: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.lesson-score { flex: none; width: 48px; text-align: center; padding: 6px 0; border-radius: 10px; font-weight: 760; font-size: 13px; border: 1px solid var(--line); }
+.lesson-score.good { color: var(--good); background: rgba(61, 220, 154, 0.08); }
+.lesson-score.warn { color: var(--warn); background: rgba(255, 194, 71, 0.08); }
+.lesson-score.bad { color: var(--bad); background: rgba(255, 107, 129, 0.08); }
+.lesson-text { font-size: 13.8px; line-height: 1.45; }
+.lesson-text small { display: block; color: var(--faint); font-size: 12px; margin-top: 3px; }
+.lesson-body { padding: 0 0 12px 60px; }
+
 /* home: live builds */
 .live-build { display: flex; gap: 12px; align-items: center; padding: 11px 0; border-top: 1px solid var(--line); color: inherit; }
 .live-build:first-of-type { border-top: none; }

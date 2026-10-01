@@ -11,6 +11,7 @@ import { Workspace } from "./Workspace.js";
 import { Verifier, type VerificationReport } from "./Verifier.js";
 import { createPatch } from "diff";
 import { LessonMemory, type Lesson } from "../learning/LessonMemory.js";
+import { ResearchStore } from "../research/ResearchStore.js";
 import { WorkloadCoordinator } from "../utils/WorkloadCoordinator.js";
 import { toKey } from "../knowledge/KnowledgeDb.js";
 import { ProjectSnapshot } from "./ProjectSnapshot.js";
@@ -689,9 +690,9 @@ changing — omit anything unchanged. No other prose.`;
     // failure a lesson targets is known.
     const lessons = LessonMemory.relevant("build", `${this.config.projectName} ${this.config.description}`, 5);
     const lessonPreamble =
-      lessons.length > 0
+      (lessons.length > 0
         ? `Lessons learned from earlier builds on this machine — apply them:\n${LessonMemory.formatForPrompt(lessons)}\n\n`
-        : "";
+        : "") + this.researchPreamble(context.iteration);
     if (this.config.workingDir) {
       const focus = [this.config.description, ...this.guidance.map((note) => note.text)].join(" ");
       context.existing = await ProjectSnapshot.describe(this.workspace.root, focus);
@@ -1046,6 +1047,42 @@ ${lines}
     if (added === 0) return null;
     this.think(this.currentIteration, "decision", `Added ${added} dependenc${added === 1 ? "y" : "ies"} to the template's package.json`, "");
     return `${JSON.stringify(current, null, 2)}\n`;
+  }
+
+  // Research findings for this build, looked up once: the request does not
+  // change between passes, and a new finding mid-build is not worth a moving prompt.
+  private research: Array<{ claim: string; source: string | null }> | null = null;
+
+  /**
+   * What the research on this machine found that bears on this build, for the
+   * front of the prompt. Only findings nobody rejected that are corroborated or
+   * held with good confidence; never allowed to fail the build.
+   */
+  private researchPreamble(iteration: number): string {
+    if (this.research === null) {
+      try {
+        const focus = [this.config.projectName, this.config.description, ...this.guidance.map((note) => note.text)].join(" ");
+        this.research = ResearchStore.relevantFindings(focus, 6).map((finding) => ({
+          claim: finding.claim,
+          source: finding.sourceTitle ?? finding.sourceUrl
+        }));
+        if (this.research.length > 0) {
+          this.think(
+            iteration,
+            "lesson",
+            `Using ${this.research.length} finding(s) from research`,
+            this.research.map((item) => `• ${item.claim}${item.source ? ` — ${item.source}` : ""}`).join("\n")
+          );
+        }
+      } catch (error: any) {
+        Logger.warn("Research lookup for the build failed; building without it", { error: error?.message });
+        this.research = [];
+      }
+    }
+    if (this.research.length === 0) return "";
+    return `What research on this machine has found that bears on this (checked against its sources) — use it where it applies:\n${this.research
+      .map((item) => `- ${item.claim}`)
+      .join("\n")}\n\n`;
   }
 
   /** Tell whoever is watching what the build is thinking. Never allowed to fail the build. */

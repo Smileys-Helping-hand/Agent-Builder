@@ -614,6 +614,29 @@ export const ResearchStore = {
     return rows.map(mapFinding);
   },
 
+  /**
+   * Research that bears on something about to be built: findings matching the
+   * text, across every topic, that nobody rejected and that are either
+   * corroborated (two sources, or confirmed by a person) or held with good
+   * confidence. Best match first.
+   */
+  relevantFindings(text: string, limit: number): ResearchFinding[] {
+    const ids = ResearchStore.search(text, limit * 6)
+      .filter((hit) => hit.kind === "finding")
+      .map((hit) => Number(hit.refId))
+      .filter((id) => Number.isFinite(id));
+    if (ids.length === 0) return [];
+    const rank = new Map(ids.map((id, index) => [id, index]));
+    const rows = getKnowledgeDb()
+      .prepare(`${FINDING_SELECT} WHERE f.id IN (${ids.map(() => "?").join(",")}) AND f.status != 'contested'`)
+      .all(...ids) as FindingRow[];
+    return rows
+      .map(mapFinding)
+      .filter((finding) => finding.status === "corroborated" || finding.confidence >= 0.6)
+      .sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0))
+      .slice(0, limit);
+  },
+
   strongestClaims(topicId: string, limit: number): string[] {
     return ResearchStore.listFindings(topicId, limit, "strongest").map((finding) => finding.claim);
   },

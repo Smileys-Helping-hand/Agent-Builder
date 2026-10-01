@@ -316,6 +316,23 @@ export interface BuildAudit {
   site: boolean;
 }
 
+/** Something the builder learned, from a fix that worked or from research. */
+export interface Lesson {
+  id: number;
+  scope: "build" | "research";
+  signature: string;
+  lesson: string;
+  example: string | null;
+  timesApplied: number;
+  timesHelped: number;
+  timesFailed: number;
+  /** How often it helped, smoothed: (helped + 1) / (applied + 2). */
+  utility: number;
+  createdAt: string;
+  updatedAt: string;
+  lastAppliedAt: string | null;
+}
+
 export type BuildState = "running" | "paused" | "completed" | "stopped" | "error" | "interrupted";
 export type BuildProfile = "fast" | "balanced" | "deep";
 
@@ -904,6 +921,9 @@ export const api = {
       { method: "POST", body: JSON.stringify(options) },
       60000
     ),
+  lessons: (scope?: "build" | "research") =>
+    request<{ lessons: Lesson[] }>(`/api/learning/lessons${scope ? `?scope=${scope}` : ""}`),
+  retireLesson: (id: number) => request<{ ok: boolean }>(`/api/learning/lessons/${id}`, { method: "DELETE" }),
   auditBuild: (id: string, runtime: PreviewReport[]) =>
     request<{ audit: BuildAudit }>(
       `/api/autonomous/${encodeURIComponent(id)}/audit`,

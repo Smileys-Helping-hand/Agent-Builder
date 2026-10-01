@@ -185,10 +185,11 @@ export const registerResearchRoutes = (app: Express) => {
     res.json({ lessons: LessonMemory.list(scope, 200) });
   });
 
+  // Retiring a lesson is a change to how builds behave: the app's key needs
+  // "execute", a signed-in dashboard user is accepted as before.
   app.delete(
     "/api/learning/lessons/:id",
-    authenticate,
-    authorizeRoles(["admin", "owner"]),
+    authenticateAgent("execute"),
     (req: Request, res: Response) => {
       if (!LessonMemory.remove(Number(req.params.id))) return res.status(404).json({ error: "Lesson not found." });
       return res.json({ ok: true });
