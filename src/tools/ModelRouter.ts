@@ -2,6 +2,7 @@ import { OpenAIClient } from "./OpenAIClient.js";
 import { gpuLock } from "../utils/GpuLock.js";
 import { ModelPerfLog } from "./ModelPerfLog.js";
 import { buildActivity, currentBuild } from "../utils/BuildContext.js";
+import { GameMode, GameModeOnError } from "../utils/GameMode.js";
 
 export type ModelProvider = "openai" | "ollama" | "lmstudio";
 
@@ -166,6 +167,8 @@ export class ModelRouter {
     // contend for it. OpenAI is a remote API with its own concurrency —
     // serializing those too would only add latency for no reason.
     const isLocalProvider = provider === "ollama" || provider === "lmstudio";
+    // Game mode: the GPU belongs to the person at the keyboard.
+    if (isLocalProvider && GameMode.isOn()) throw new GameModeOnError();
 
     const startedAt = Date.now();
     const response = isLocalProvider

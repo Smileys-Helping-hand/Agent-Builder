@@ -21,6 +21,7 @@ import { OrderStore, ORDER_STATUSES, type OrderStatus } from "../orders/OrderSto
 import { Packager } from "../orders/Packager.js";
 import { SiteClient } from "../orders/SiteClient.js";
 import { Logger } from "../utils/Logger.js";
+import { GameMode } from "../utils/GameMode.js";
 import { signLink, verifyLink } from "../utils/SignedLinks.js";
 
 /** The build as a list needs it, without its thought feed and logs. */
@@ -376,6 +377,9 @@ export const registerOrderRoutes = (app: Express) => {
   });
 
   app.post("/api/orders/:id/build", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    if (GameMode.isOn()) {
+      return res.status(409).json({ error: "Game mode is on: switch it off to build. The order waits in the queue until then." });
+    }
     const result = await OrderPipeline.startBuild(req.params.id, (req as AgentRequest).actor ?? "user");
     if (!result) {
       return res.status(409).json({ error: "That order cannot be built right now — it may already be building." });

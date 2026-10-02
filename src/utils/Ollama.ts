@@ -8,6 +8,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { Logger } from "./Logger.js";
+import { GameMode } from "./GameMode.js";
 
 export const OLLAMA_URL = process.env.OLLAMA_BASE_URL ?? process.env.OLLAMA_URL ?? "http://localhost:11434";
 
@@ -49,6 +50,8 @@ let starting: Promise<boolean> | null = null;
  */
 export const ensureOllama = async (waitMs = 20_000): Promise<boolean> => {
   if ((await checkOllama()).state !== "down") return true;
+  // Game mode keeps the model server off on purpose; do not start it behind the gamer's back.
+  if (GameMode.isOn()) return false;
   if (starting) return starting;
 
   starting = (async () => {
