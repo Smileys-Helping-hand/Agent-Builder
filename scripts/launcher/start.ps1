@@ -42,6 +42,14 @@ function Write-LauncherLog($text) {
     if ($lines.Count -gt 500) { $lines | Select-Object -Last 500 | Set-Content $launcherLog -Encoding ascii }
 }
 
+# Game mode (set from the app): the graphics card is the gamer's, so the model
+# server stays off until it is switched off again. See src/utils/GameMode.ts.
+$gameModeFile = Join-Path $dataDir "game-mode.json"
+function Test-GameMode {
+    if (-not (Test-Path $gameModeFile)) { return $false }
+    try { return [bool]((Get-Content $gameModeFile -Raw | ConvertFrom-Json).on) } catch { return $false }
+}
+
 $started = @{ api = $null; ollama = $null; tunnel = $null; jarvis = $null; jarvisAgent = $null }
 
 function Write-Step($text) {
@@ -124,7 +132,9 @@ if (-not $NoUpdate -and (Test-Path (Join-Path $repo ".git")) -and (Get-Command g
 # through its OpenAI-style endpoint, which cannot ask for a window; without
 # this the model would be reloaded each time he and a build take turns.
 if (-not $env:OLLAMA_CONTEXT_LENGTH) { $env:OLLAMA_CONTEXT_LENGTH = "16384" }
-if (Test-Endpoint "http://localhost:11434/api/tags") {
+if (Test-GameMode) {
+    Write-Step "Game mode is on: leaving the model server off (switch it off in the app)"
+} elseif (Test-Endpoint "http://localhost:11434/api/tags") {
     Write-Good "Model server already running"
 } else {
     $ollama = @(
@@ -439,7 +449,8 @@ try {
         }
 
         # The model server: builds, repairs and research all need it.
-        if ($ollamaExe) {
+        # Not while game mode is on: then it is off on purpose.
+        if ($ollamaExe -and -not (Test-GameMode)) {
             if (Test-Endpoint "http://localhost:11434/api/tags" 5) {
                 $ollamaMisses = 0
             } else {

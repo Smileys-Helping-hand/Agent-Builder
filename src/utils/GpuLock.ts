@@ -33,6 +33,11 @@ export class GpuLock {
     }
   }
 
+  /** True while a model call is running or waiting its turn. */
+  get busy(): boolean {
+    return this.locked || this.queue.length > 0;
+  }
+
   async run<T>(fn: () => Promise<T>): Promise<T> {
     const release = await this.acquire();
     try {

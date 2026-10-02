@@ -7,6 +7,7 @@ import { LessonMemory, type LessonScope } from "../learning/LessonMemory.js";
 import { LearningReports } from "../research/LearningReport.js";
 import { SecondBrainClient } from "../integrations/SecondBrainClient.js";
 import { Logger } from "../utils/Logger.js";
+import { GameMode } from "../utils/GameMode.js";
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -30,6 +31,7 @@ export const registerResearchRoutes = (app: Express) => {
     "/api/research/topics",
     authenticateAgent("write"),
     (req: Request, res: Response) => {
+      if (GameMode.isOn()) return res.status(409).json({ error: "Game mode is on: the graphics card is free for you. Switch it off to build or research again." });
       const { title, question } = (req.body ?? {}) as { title?: unknown; question?: unknown };
       const cleanTitle = typeof title === "string" ? title.replace(/\s+/g, " ").trim() : "";
       const cleanQuestion =

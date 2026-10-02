@@ -587,6 +587,15 @@ export interface JarvisStatus {
   last: { at: string; ok: boolean; detail: string } | null;
 }
 
+/** Game mode: the PC's graphics card handed over for games. */
+export interface GameModeStatus {
+  on: boolean;
+  since: string | null;
+  pausedBuilds: string[];
+  pausedTopics: string[];
+  modelServer?: "up" | "down" | "degraded";
+}
+
 export interface Topic {
   id: string;
   title: string;
@@ -983,6 +992,8 @@ export const api = {
       { method: "POST", body: JSON.stringify(options) },
       60000
     ),
+  gameMode: () => request<GameModeStatus>("/api/game-mode"),
+  setGameMode: (on: boolean) => request<GameModeStatus>("/api/game-mode", { method: "POST", body: JSON.stringify({ on }) }, 150000),
   builderVersion: (refresh = false) => request<BuilderVersion>(`/api/power/version${refresh ? "?refresh=1" : ""}`, {}, 120000),
   updateStatus: () => request<{ job: UpdateJob | null }>("/api/power/update", {}, 10000),
   updateBuilder: (force = false) =>
