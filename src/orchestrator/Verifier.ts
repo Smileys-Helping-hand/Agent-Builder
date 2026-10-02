@@ -61,6 +61,44 @@ export class Verifier {
    * model generated (or forgot to). Only fills gaps — never overwrites a
    * test script that already looks real.
    */
+  /**
+   * Models sometimes write JSX into a file named .ts (most often a test that
+   * calls render(<App />)). TypeScript then fails on every line of it, and the
+   * model rarely spots the cause, so a build can stall on that alone. A .ts
+   * file with a closing tag or a self-closing tag (neither appears in
+   * TypeScript generics) is renamed to .tsx, unless a .tsx of that name exists.
+   * Imports are unaffected: they leave the extension off.
+   */
+  static async fixJsxExtensions(workspace: Workspace): Promise<string[]> {
+    const renamed: string[] = [];
+    const jsx = /<\/[A-Za-z][\w.]*\s*>|<[A-Za-z][\w.]*(\s[^<>]*)?\/>/;
+    const walk = async (dir: string): Promise<void> => {
+      let entries: import("fs").Dirent[];
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(full);
+          continue;
+        }
+        if (!entry.name.endsWith(".ts") || entry.name.endsWith(".d.ts")) continue;
+        const text = await fs.readFile(full, "utf8").catch(() => "");
+        if (!jsx.test(text)) continue;
+        const target = `${full.slice(0, -3)}.tsx`;
+        if (await exists(target)) continue;
+        await fs.rename(full, target);
+        renamed.push(path.relative(workspace.root, target));
+      }
+    };
+    await walk(path.join(workspace.root, "src"));
+    return renamed;
+  }
+
   static async scaffoldTests(workspace: Workspace): Promise<void> {
     const pkgPath = path.join(workspace.root, "package.json");
     const existing = await readJson(pkgPath);
@@ -142,6 +180,7 @@ export class Verifier {
   ): Promise<VerificationReport> {
     if (options.scaffoldTests !== false) {
       await this.scaffoldTests(workspace);
+      await this.fixJsxExtensions(workspace);
     }
 
     const root = workspace.root;
