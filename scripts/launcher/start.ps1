@@ -42,7 +42,7 @@ function Write-LauncherLog($text) {
     if ($lines.Count -gt 500) { $lines | Select-Object -Last 500 | Set-Content $launcherLog -Encoding ascii }
 }
 
-$started = @{ api = $null; ollama = $null; tunnel = $null }
+$started = @{ api = $null; ollama = $null; tunnel = $null; jarvis = $null; jarvisAgent = $null }
 
 function Write-Step($text) {
     if (-not $Quiet) { Write-Host "  $text" -ForegroundColor Gray }
@@ -120,6 +120,10 @@ if (-not $NoUpdate -and (Test-Path (Join-Path $repo ".git")) -and (Get-Command g
 }
 
 # --- 1. the local model -------------------------------------------------------
+# Every caller gets the builder's 16k window by default. Jarvis talks to Ollama
+# through its OpenAI-style endpoint, which cannot ask for a window; without
+# this the model would be reloaded each time he and a build take turns.
+if (-not $env:OLLAMA_CONTEXT_LENGTH) { $env:OLLAMA_CONTEXT_LENGTH = "16384" }
 if (Test-Endpoint "http://localhost:11434/api/tags") {
     Write-Good "Model server already running"
 } else {
@@ -215,6 +219,51 @@ if (Test-Endpoint "http://127.0.0.1:4000/api/update/check") {
             Start-Process -FilePath $restartRemoteDeskPath
         }
     }
+}
+
+# --- 2b. Jarvis ---------------------------------------------------------------
+# Jarvis (the Second Brain assistant) runs from his own checkout of GitHub main,
+# kept apart from the copy he is developed in, so work in progress there never
+# takes him down. scripts/launcher/update-jarvis.ps1 pulls and rebuilds it.
+$jarvisDir = if ($env:JARVIS_DIR) { $env:JARVIS_DIR } else { "E:\Services\jarvis" }
+$jarvisLog = Join-Path $dataDir "jarvis.log"
+$jarvisUrl = "http://127.0.0.1:3005/api/jarvis/status"
+$hasJarvis = Test-Path (Join-Path $jarvisDir ".next\BUILD_ID")
+
+function Start-Jarvis {
+    Add-Content -Path $jarvisLog -Value ("`n==== started {0} ====" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss")) -Encoding ascii
+    $process = Start-Process -FilePath "cmd.exe" `
+        -ArgumentList "/c npx next start -p 3005 -H 127.0.0.1 >> `"$jarvisLog`" 2>&1" `
+        -WorkingDirectory $jarvisDir -WindowStyle Hidden -PassThru
+    return $process.Id
+}
+
+# His heartbeat: presence, project probes and keeping the model warm.
+function Start-JarvisAgent {
+    $process = Start-Process -FilePath "cmd.exe" `
+        -ArgumentList "/c node --env-file=.env scripts/jarvis-node-agent.mjs >> `"$jarvisLog`" 2>&1" `
+        -WorkingDirectory $jarvisDir -WindowStyle Hidden -PassThru
+    return $process.Id
+}
+
+function Stop-JarvisProcesses {
+    Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like "*next*start -p 3005*" -or $_.CommandLine -like "*jarvis-node-agent*" } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+
+if ($hasJarvis) {
+    if (Test-Endpoint $jarvisUrl 3) {
+        Write-Good "Jarvis already running"
+    } else {
+        Write-Step "Starting Jarvis..."
+        Stop-JarvisProcesses
+        $started.jarvis = Start-Jarvis
+        if (Wait-For $jarvisUrl 90 "Jarvis") { Write-Good "Jarvis ready on port 3005" }
+        $started.jarvisAgent = Start-JarvisAgent
+    }
+} else {
+    Write-Step "Jarvis is not set up on this PC (no build in $jarvisDir) - skipping."
 }
 
 # --- 3. a way in from outside -------------------------------------------------
@@ -330,8 +379,9 @@ $backoff = @(5, 15, 30, 60, 120, 300)
 $apiFailures = 0
 $apiMisses = 0
 $ollamaMisses = 0
+$jarvisMisses = 0
 $healthySince = Get-Date
-Write-LauncherLog "Launcher watching the builder and the model server"
+Write-LauncherLog "Launcher watching the builder, the model server and Jarvis"
 
 try {
     while ($true) {
@@ -367,6 +417,27 @@ try {
             Write-LauncherLog "Builder stable for 10 minutes"
         }
 
+        # Jarvis: bring him back if he stops answering for a minute.
+        # Not while update-jarvis.ps1 is rebuilding him (a flag older than 25 minutes is a crashed update).
+        $jarvisUpdating = $false
+        $jarvisFlag = Join-Path $dataDir "jarvis-updating.flag"
+        if (Test-Path $jarvisFlag) { $jarvisUpdating = ((Get-Date) - (Get-Item $jarvisFlag).LastWriteTime).TotalMinutes -lt 25 }
+        if ($hasJarvis -and -not $jarvisUpdating) {
+            if (Test-Endpoint $jarvisUrl 5) {
+                $jarvisMisses = 0
+            } else {
+                $jarvisMisses++
+                if ($jarvisMisses -ge 4) {
+                    Write-LauncherLog "Jarvis not answering; restarting him"
+                    Stop-JarvisProcesses
+                    $started.jarvis = Start-Jarvis
+                    $jarvisMisses = 0
+                    if (Wait-For $jarvisUrl 90 "Jarvis") { Write-LauncherLog "Jarvis back up" }
+                    $started.jarvisAgent = Start-JarvisAgent
+                }
+            }
+        }
+
         # The model server: builds, repairs and research all need it.
         if ($ollamaExe) {
             if (Test-Endpoint "http://localhost:11434/api/tags" 5) {
@@ -387,13 +458,14 @@ try {
     Write-LauncherLog "Launcher stopping everything it started"
     if (-not $Daemon) {
         if (-not $Quiet) { Write-Host "  Stopping..." -ForegroundColor Gray }
-        foreach ($id in @($started.tunnel, $started.api, $started.ollama)) {
+        foreach ($id in @($started.tunnel, $started.api, $started.ollama, $started.jarvis, $started.jarvisAgent)) {
             if ($id) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
         }
         # The builder runs under a cmd wrapper, so stop the node process it spawned.
         Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
             Where-Object { $_.CommandLine -like "*src/server/server.ts*" } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        if ($hasJarvis) { Stop-JarvisProcesses }
         Remove-Item $urlFile -ErrorAction SilentlyContinue
         Remove-Item $pidFile -ErrorAction SilentlyContinue
         if (-not $Quiet) { Write-Host "  Stopped." -ForegroundColor Gray }
