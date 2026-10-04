@@ -1,22 +1,31 @@
 import { OpenAIClient } from "./OpenAIClient.js";
+import { AnthropicClient } from "./AnthropicClient.js";
 import { gpuLock } from "../utils/GpuLock.js";
 import { ModelPerfLog } from "./ModelPerfLog.js";
 import { buildActivity, currentBuild } from "../utils/BuildContext.js";
 import { GameMode, GameModeOnError } from "../utils/GameMode.js";
 
-export type ModelProvider = "openai" | "ollama" | "lmstudio";
+export type ModelProvider = "openai" | "ollama" | "lmstudio" | "anthropic";
 
 type GenerateOptions = {
   provider?: ModelProvider;
   model?: string;
 };
 
-const getProviderFromEnv = (): ModelProvider => {
-  const provider = (process.env.MODEL_PROVIDER ?? process.env.AI_PROVIDER ?? process.env.LLM_PROVIDER ?? "ollama").toLowerCase();
-  if (provider === "ollama" || provider === "lmstudio" || provider === "openai") {
-    return provider;
-  }
-  return "ollama";
+const asProvider = (value: string | undefined): ModelProvider | null => {
+  const provider = (value ?? "").toLowerCase();
+  return provider === "ollama" || provider === "lmstudio" || provider === "openai" || provider === "anthropic" ? provider : null;
+};
+
+/**
+ * Which model server answers this call. A customer order's build can have its
+ * own (ORDER_MODEL_PROVIDER, e.g. Claude for client work) while everything else
+ * stays on the local model; "same" or unset means no difference.
+ */
+export const getProviderFromEnv = (): ModelProvider => {
+  const order = currentBuild()?.orderId ? asProvider(process.env.ORDER_MODEL_PROVIDER) : null;
+  if (order) return order;
+  return asProvider(process.env.MODEL_PROVIDER ?? process.env.AI_PROVIDER ?? process.env.LLM_PROVIDER) ?? "ollama";
 };
 
 /** How much of the answer-in-progress to share, and how often. */
@@ -154,6 +163,8 @@ const dispatch = (provider: ModelProvider, prompt: string, model?: string): Prom
       return generateWithOllama(prompt, model);
     case "lmstudio":
       return generateWithLMStudio(prompt, model);
+    case "anthropic":
+      return AnthropicClient.generate(prompt, model);
     case "openai":
     default:
       return OpenAIClient.generate(prompt, model);

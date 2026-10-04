@@ -37,7 +37,46 @@ interface Setting {
   check?: (value: string) => string | null;
 }
 
+const needsKey = (value: string): string | null => {
+  if (value === "anthropic" && !process.env.ANTHROPIC_API_KEY?.trim()) {
+    return "Add ANTHROPIC_API_KEY=… to the .env file on the PC first (keys are never set from the app), then choose Claude.";
+  }
+  if (value === "openai" && !process.env.OPENAI_API_KEY?.trim()) {
+    return "Add OPENAI_API_KEY=… to the .env file on the PC first, then choose OpenAI.";
+  }
+  return null;
+};
+
 const SETTINGS: Setting[] = [
+  {
+    name: "MODEL_PROVIDER",
+    group: "Models",
+    label: "Who writes the code",
+    help: "ollama: the model on this PC (free, private, limited by its 8 GB graphics card). anthropic: Claude in the cloud — far stronger code, costs per build, needs ANTHROPIC_API_KEY in .env.",
+    kind: "choice",
+    choices: ["ollama", "anthropic", "openai"],
+    fallback: "ollama",
+    check: needsKey
+  },
+  {
+    name: "ORDER_MODEL_PROVIDER",
+    group: "Models",
+    label: "Who writes customer orders",
+    help: "Give paid client work the strongest model while your own builds stay on this PC. same: whatever writes everything else.",
+    kind: "choice",
+    choices: ["same", "anthropic", "openai", "ollama"],
+    fallback: "same",
+    check: needsKey
+  },
+  {
+    name: "ANTHROPIC_MODEL",
+    group: "Models",
+    label: "Which Claude",
+    help: "Sonnet: the best value for building apps. Opus: the strongest, slower and dearer. Haiku: quick and cheap.",
+    kind: "choice",
+    choices: ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-4-5-20251001"],
+    fallback: "claude-sonnet-5-5"
+  },
   {
     name: "OLLAMA_MODEL",
     group: "Models",

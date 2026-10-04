@@ -21,7 +21,7 @@ export type TopicStatus = "running" | "paused" | "stopped";
 export type FindingStatus = "open" | "corroborated" | "contested";
 export type QuestionStatus = "open" | "explored";
 export type DocumentKind = "summary" | "study_guide" | "report";
-export type ActivityKind = "cycle" | "search" | "source" | "finding" | "question" | "document" | "backoff" | "error" | "status";
+export type ActivityKind = "cycle" | "search" | "source" | "finding" | "question" | "document" | "backoff" | "error" | "status" | "thought";
 
 export interface ResearchTopic {
   id: string;

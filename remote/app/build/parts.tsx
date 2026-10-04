@@ -114,7 +114,9 @@ export const CHECK_LABEL: Record<string, string> = {
   typecheck: "Types",
   build: "Builds",
   test: "Tests",
-  lint: "Lint"
+  lint: "Lint",
+  tailoring: "Tailored",
+  completeness: "Complete"
 };
 
 export type Tone = "good" | "warn" | "bad" | "busy" | "muted";

@@ -10,8 +10,13 @@ import fs from "fs/promises";
 import path from "path";
 import { Executor } from "./Executor.js";
 import { Workspace } from "./Workspace.js";
+import { AutoFix } from "./AutoFix.js";
+import { CodeGuard } from "./CodeGuard.js";
+import { Logger } from "../utils/Logger.js";
 
-export type CheckName = "install" | "typecheck" | "build" | "test" | "lint";
+/** "tailoring": a template build still showing the template's sample content (added by the orchestrator). */
+/** "completeness": a new app that compiles but leaves out what its brief asked for (added by the orchestrator). */
+export type CheckName = "install" | "typecheck" | "build" | "test" | "lint" | "tailoring" | "completeness";
 
 export type CheckResult = {
   name: CheckName;
@@ -71,7 +76,9 @@ export class Verifier {
    */
   static async fixJsxExtensions(workspace: Workspace): Promise<string[]> {
     const renamed: string[] = [];
-    const jsx = /<\/[A-Za-z][\w.]*\s*>|<[A-Za-z][\w.]*(\s[^<>]*)?\/>/;
+    // Only a cheap first look ("a tag might be here"); parsing decides. A
+    // stricter pattern missed <Game onClick={() => {}} />, whose "=>" has a ">".
+    const jsx = /<\/?[A-Za-z][\w.]*[\s/>]/;
     const walk = async (dir: string): Promise<void> => {
       let entries: import("fs").Dirent[];
       try {
@@ -89,8 +96,19 @@ export class Verifier {
         if (!entry.name.endsWith(".ts") || entry.name.endsWith(".d.ts")) continue;
         const text = await fs.readFile(full, "utf8").catch(() => "");
         if (!jsx.test(text)) continue;
+        // Only when it is actually broken as .ts and fine as .tsx: a tag inside a
+        // string is not JSX, and some valid TypeScript (a generic arrow) breaks in .tsx.
+        if (CodeGuard.syntaxErrors(entry.name, text).length === 0) continue;
+        if (CodeGuard.syntaxErrors(`${entry.name.slice(0, -3)}.tsx`, text).length > 0) continue;
         const target = `${full.slice(0, -3)}.tsx`;
-        if (await exists(target)) continue;
+        if (await exists(target)) {
+          // The model wrote the file again under the right name and left the
+          // broken .ts beside it; it can never compile, and it stops the
+          // typecheck before it reaches any other error.
+          await fs.rm(full);
+          renamed.push(`${path.relative(workspace.root, full)} (removed: broken duplicate of ${path.basename(target)})`);
+          continue;
+        }
         await fs.rename(full, target);
         renamed.push(path.relative(workspace.root, target));
       }
@@ -176,11 +194,17 @@ export class Verifier {
    */
   static async verify(
     workspace: Workspace,
-    options: { scaffoldTests?: boolean } = {}
+    options: { scaffoldTests?: boolean; autofix?: boolean } = {}
   ): Promise<VerificationReport> {
-    if (options.scaffoldTests !== false) {
-      await this.scaffoldTests(workspace);
-      await this.fixJsxExtensions(workspace);
+    if (options.scaffoldTests !== false) await this.scaffoldTests(workspace);
+    // Fixing the model's usual slips is safe on anything we generated (a fresh
+    // build, or a copy of one of our templates), never on a user's own project.
+    if (options.autofix ?? options.scaffoldTests !== false) {
+      const renamed = await this.fixJsxExtensions(workspace);
+      const fixed = await AutoFix.run(workspace.root).catch(() => [] as string[]);
+      if (renamed.length || fixed.length) {
+        Logger.log("Auto-fixed common mistakes before checking", { renamed, fixed });
+      }
     }
 
     const root = workspace.root;
@@ -281,8 +305,13 @@ export class Verifier {
     return this.score(checks);
   }
 
+  /** The same report with one more check, scored again. */
+  static withCheck(report: VerificationReport, check: CheckResult): VerificationReport {
+    return this.score([...report.checks.filter((existing) => existing.name !== check.name), check]);
+  }
+
   private static score(checks: CheckResult[]): VerificationReport {
-    const weights: Record<CheckName, number> = { install: 25, typecheck: 20, build: 15, test: 35, lint: 5 };
+    const weights: Record<CheckName, number> = { install: 25, typecheck: 20, build: 15, test: 35, lint: 5, tailoring: 30, completeness: 30 };
 
     const applicable = checks.filter((check) => check.applicable);
     const totalWeight = applicable.reduce((sum, check) => sum + weights[check.name], 0) || 1;

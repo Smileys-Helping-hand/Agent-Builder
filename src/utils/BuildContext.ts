@@ -15,6 +15,8 @@ export interface BuildScope {
   buildId: string;
   /** What the build is doing right now, in words: "Writing code (pass 2)". BuildService keeps it current. */
   phase?: string;
+  /** Set for a customer order's build, so the model router can give orders their own model. */
+  orderId?: string | null;
 }
 
 export const buildScope = new AsyncLocalStorage<BuildScope>();

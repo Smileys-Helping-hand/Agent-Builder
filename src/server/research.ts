@@ -5,6 +5,7 @@ import { ResearchEngine } from "../research/ResearchEngine.js";
 import { ResearchStore } from "../research/ResearchStore.js";
 import { LessonMemory, type LessonScope } from "../learning/LessonMemory.js";
 import { LearningReports } from "../research/LearningReport.js";
+import { ResearchChat } from "../research/ResearchChat.js";
 import { SecondBrainClient } from "../integrations/SecondBrainClient.js";
 import { Logger } from "../utils/Logger.js";
 import { GameMode } from "../utils/GameMode.js";
@@ -175,6 +176,30 @@ export const registerResearchRoutes = (app: Express) => {
     const topic = ResearchStore.getTopic(req.params.id);
     if (topic) ResearchStore.logActivity(topic.id, topic.cycles, "finding", `You ${verdict === "confirm" ? "confirmed" : "rejected"} a finding`);
     return res.json({ ok: true });
+  });
+
+  // --- talking to a topic -----------------------------------------------
+
+  /** GET — the conversation with this topic so far. */
+  app.get("/api/research/topics/:id/chat", authenticateAgent("read"), (req: Request, res: Response) => {
+    if (!ResearchStore.getTopic(req.params.id)) return res.status(404).json({ error: "Research topic not found." });
+    return res.json({ messages: ResearchChat.history(req.params.id) });
+  });
+
+  /** POST { message } — ask it something; it answers from its findings and cites them. */
+  app.post("/api/research/topics/:id/chat", authenticateAgent("write"), async (req: Request, res: Response) => {
+    if (GameMode.isOn()) return res.status(409).json({ error: "Game mode is on: switch it off to talk to your research." });
+    const message = typeof req.body?.message === "string" ? req.body.message : "";
+    try {
+      return res.json(await ResearchChat.ask(req.params.id, message));
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      return res.status(/not found/i.test(text) ? 404 : /Ask something/.test(text) ? 400 : 500).json({ error: text });
+    }
+  });
+
+  app.delete("/api/research/topics/:id/chat", authenticateAgent("write"), (req: Request, res: Response) => {
+    return res.json({ cleared: ResearchChat.clear(req.params.id) });
   });
 
   app.get("/api/research/search", authenticateAgent("read"), (req: Request, res: Response) => {

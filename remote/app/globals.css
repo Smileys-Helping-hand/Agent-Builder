@@ -1356,3 +1356,56 @@ body::before {
 .game-card.on { border-color: rgba(155, 125, 255, 0.55); box-shadow: var(--shadow), 0 0 0 1px rgba(155, 125, 255, 0.25), 0 12px 40px rgba(139, 125, 255, 0.18); }
 .game-card.on .game-icon { filter: none; transform: rotate(-8deg) scale(1.08); }
 .power.game-go { background: linear-gradient(135deg, #b9a8ff, #7b61ff); box-shadow: 0 14px 30px rgba(123, 97, 255, 0.35); }
+
+/* ---------------- research: talk and thinking ---------------- */
+
+.ws-feed-item.thought { background: rgba(139, 125, 255, 0.08) !important; border-left: 2px solid rgba(155, 125, 255, 0.6); }
+.ws-thought-label { color: #b9a8ff; font-weight: 700; }
+.ws-feed-item.thought .ws-feed-msg { font-style: italic; }
+
+.talk { display: flex; flex-direction: column; gap: 6px; }
+.talk-thread { display: flex; flex-direction: column; gap: 10px; max-height: 55vh; overflow-y: auto; padding: 4px 2px 8px; }
+.ws-overlay .talk-thread { max-height: calc(100vh - 330px); }
+.talk-empty { text-align: center; color: var(--muted); padding: 18px 8px 4px; }
+.talk-empty strong { color: var(--text); display: block; margin-bottom: 4px; }
+.talk-msg { display: flex; flex-direction: column; gap: 6px; animation: fade 0.3s var(--ease); }
+.talk-msg.you { align-items: flex-end; }
+.talk-msg.research { align-items: flex-start; }
+.talk-bubble { max-width: min(680px, 92%); padding: 10px 13px; border-radius: 16px; font-size: 14.2px; line-height: 1.55; }
+.talk-bubble p { margin: 0 0 8px; white-space: pre-wrap; }
+.talk-bubble p:last-child { margin-bottom: 0; }
+.talk-msg.you .talk-bubble { background: linear-gradient(135deg, rgba(76, 196, 255, 0.28), rgba(27, 142, 242, 0.22)); border: 1px solid rgba(76, 196, 255, 0.35); border-bottom-right-radius: 5px; }
+.talk-msg.research .talk-bubble { background: rgba(255, 255, 255, 0.05); border: 1px solid var(--line); border-bottom-left-radius: 5px; }
+.talk-cite { all: unset; cursor: pointer; display: inline-block; padding: 0 6px; margin: 0 1px; border-radius: 6px; font-size: 11.5px; font-weight: 700; background: var(--accent-soft); color: var(--accent); }
+.talk-cite:hover { background: rgba(76, 196, 255, 0.3); }
+.talk-finding { padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(76, 196, 255, 0.35); background: rgba(76, 196, 255, 0.06); animation: fade 0.25s var(--ease); }
+.talk-finding small { color: var(--muted); }
+.talk-finding p { margin: 4px 0; font-size: 13.8px; }
+.talk-finding a { color: var(--accent); font-size: 12.5px; overflow-wrap: anywhere; }
+.talk-typing { display: inline-flex; gap: 5px; padding: 13px 15px; }
+.talk-typing i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: blink 1.2s ease-in-out infinite; }
+.talk-typing i:nth-child(2) { animation-delay: 0.2s; }
+.talk-typing i:nth-child(3) { animation-delay: 0.4s; }
+.talk-input { display: flex; gap: 8px; align-items: flex-end; margin-top: 4px; }
+.talk-input textarea { flex: 1; resize: none; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; color: var(--text); font: inherit; font-size: 14.5px; }
+.talk-input textarea:focus { outline: none; border-color: var(--accent); }
+
+/* ---------------- review before handover ---------------- */
+
+.review { display: grid; gap: 14px; margin-top: 10px; }
+.review-step { display: flex; gap: 12px; align-items: flex-start; }
+.review-n { width: 26px; height: 26px; flex: none; border-radius: 9px; display: grid; place-items: center; font-weight: 800; font-size: 13px; background: var(--accent-soft); color: var(--accent); margin-top: 2px; }
+.review-body { flex: 1; min-width: 0; display: grid; gap: 6px; }
+.review-body > small { color: var(--muted); }
+.review-checklist { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 4px; }
+.review-checklist label { display: flex; gap: 9px; align-items: flex-start; padding: 7px 9px; border-radius: 10px; border: 1px solid var(--line); cursor: pointer; font-size: 13.8px; transition: background 0.2s var(--ease), border-color 0.2s var(--ease); }
+.review-checklist label:hover { border-color: var(--line-strong); }
+.review-checklist input { margin-top: 3px; accent-color: #3ddc9a; }
+.review-checklist input:checked + span { color: var(--muted); text-decoration: line-through; }
+.review-findings { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }
+.review-findings li.error { color: #ffc2cb; }
+.review-findings li.warning { color: var(--warn); }
+.review-share { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.review-share input { flex: 1; min-width: 0; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; color: var(--text); font: inherit; font-size: 13px; }
+.review-checklist input[type="checkbox"] { width: 18px; height: 18px; flex: none; padding: 0; margin: 2px 0 0; }
+.review-checklist span { flex: 1; text-align: left; }

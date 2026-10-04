@@ -11,11 +11,13 @@ import { createPortal } from "react-dom";
 
 import { api, type TopicDetail, type TopicFinding } from "@/lib/api";
 import { Banner, Busy, Icon, Skeleton, ago, useRemote, useToast } from "../ui";
+import { Talk } from "./talk";
 
-type Tab = "live" | "findings" | "questions" | "sources" | "documents" | "settings";
+type Tab = "live" | "talk" | "findings" | "questions" | "sources" | "documents" | "settings";
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: "live", label: "Live" },
+  { id: "talk", label: "Talk" },
   { id: "findings", label: "Findings" },
   { id: "questions", label: "Questions" },
   { id: "sources", label: "Sources" },
@@ -34,7 +36,8 @@ const ACTIVITY_TONE: Record<string, string> = {
   cycle: "accent",
   backoff: "warn",
   status: "",
-  error: "bad"
+  error: "bad",
+  thought: "accent"
 };
 
 export function TopicWorkspace({
@@ -100,6 +103,7 @@ export function TopicWorkspace({
       </div>
       <div className="ws-body fade-in" key={tab}>
         {tab === "live" ? <LiveFeed data={data} /> : null}
+        {tab === "talk" ? <Talk data={data} onResearchThis={() => void detail.refresh()} /> : null}
         {tab === "findings" ? <Findings data={data} busy={busy} act={act} /> : null}
         {tab === "questions" ? <Questions data={data} busy={busy} act={act} /> : null}
         {tab === "sources" ? <Sources data={data} /> : null}
@@ -178,10 +182,13 @@ function LiveFeed({ data }: { data: TopicDetail }) {
   return (
     <ol className="ws-feed">
       {data.activity.map((entry) => (
-        <li key={entry.id} className="ws-feed-item">
+        <li key={entry.id} className={`ws-feed-item ${entry.kind === "thought" ? "thought" : ""}`}>
           <span className={`pill ${ACTIVITY_TONE[entry.kind] === "good" ? "up" : ACTIVITY_TONE[entry.kind] === "bad" ? "down" : ACTIVITY_TONE[entry.kind] === "warn" ? "degraded" : ""}`} />
           <div>
-            <div className="ws-feed-msg">{entry.message}</div>
+            <div className="ws-feed-msg">
+              {entry.kind === "thought" ? <span className="ws-thought-label">Thinking · </span> : null}
+              {entry.message}
+            </div>
             <small>
               {entry.kind} · cycle {entry.cycle} · {ago(entry.createdAt)}
             </small>

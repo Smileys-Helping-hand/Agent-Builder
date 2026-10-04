@@ -428,7 +428,7 @@ export const BuildService = {
     const buildId = status.buildId as string;
     // Carried through every await of this build, so the model router can say
     // which build its streaming answer belongs to; phase follows the stage.
-    const scope: BuildScope = { buildId, phase: "Getting ready" };
+    const scope: BuildScope = { buildId, phase: "Getting ready", orderId: options.orderId ?? null };
 
     orchestrators.set(buildId, orchestrator);
     const record: BuildRecord = {

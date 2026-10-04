@@ -662,6 +662,17 @@ export interface TopicActivity {
   createdAt: string;
 }
 
+/** One turn in a conversation with a research topic. */
+export interface ResearchChatMessage {
+  id: number;
+  role: "you" | "research";
+  text: string;
+  cites: number[];
+  /** The answer says its research does not cover this yet. */
+  gap: boolean;
+  createdAt: string;
+}
+
 export interface TopicDetail {
   topic: Topic;
   findings: TopicFinding[];
@@ -1078,6 +1089,8 @@ export const api = {
   }) => request<{ order: Order; created: boolean }>("/api/orders", { method: "POST", body: JSON.stringify(order) }),
   pullOrders: () => request<{ found: number; created: number }>("/api/orders/intake", { method: "POST" }, 45000),
   acceptOrder: (id: string) => request<{ order: Order }>(`/api/orders/${id}/accept`, { method: "POST" }),
+  shareOrderPreview: (id: string) =>
+    request<{ previewUrl: string; sentToSite: boolean }>(`/api/orders/${id}/share-preview`, { method: "POST" }),
   buildOrder: (id: string) => request<{ order: Order }>(`/api/orders/${id}/build`, { method: "POST" }, 45000),
   instructOrder: (id: string, text: string) =>
     request<{ success: boolean }>(`/api/orders/${id}/instruct`, { method: "POST", body: JSON.stringify({ text }) }),
@@ -1158,6 +1171,14 @@ export const api = {
     request<{ topic: Topic }>(`/api/research/topics/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   runTopicNow: (id: string) => request<unknown>(`/api/research/topics/${id}/run`, { method: "POST" }),
   deleteTopic: (id: string) => request<unknown>(`/api/research/topics/${id}`, { method: "DELETE" }),
+  topicChat: (id: string) => request<{ messages: ResearchChatMessage[] }>(`/api/research/topics/${id}/chat`),
+  talkToTopic: (id: string, message: string) =>
+    request<{ question: ResearchChatMessage; answer: ResearchChatMessage; findings: TopicFinding[] }>(
+      `/api/research/topics/${id}/chat`,
+      { method: "POST", body: JSON.stringify({ message }) },
+      300000
+    ),
+  clearTopicChat: (id: string) => request<{ cleared: number }>(`/api/research/topics/${id}/chat`, { method: "DELETE" }),
   askTopic: (id: string, text: string) =>
     request<unknown>(`/api/research/topics/${id}/questions`, { method: "POST", body: JSON.stringify({ text }) }),
   dropQuestion: (id: string, questionId: number) =>

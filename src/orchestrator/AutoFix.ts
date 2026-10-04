@@ -1,0 +1,395 @@
+/**
+ * AutoFix — the mistakes a small model makes over and over, fixed without
+ * asking it. Run before every check on generated apps (never on a project the
+ * user owns). Each fix is narrow and safe to repeat.
+ *
+ *  - Jest in a Vitest project: `jest.fn()` and friends become `vi.fn()`, and a
+ *    test file that uses describe/it/expect without importing them (Vitest has
+ *    no globals unless configured) gets the import.
+ *  - A package imported in src/ but missing from package.json is added, so
+ *    `npm install` fetches it instead of the typecheck failing on it.
+ *  - A relative import pointing at the wrong folder is pointed at the one file
+ *    in src/ it must mean.
+ */
+import fs from "fs/promises";
+import path from "path";
+import { builtinModules } from "module";
+
+const NODE_BUILTINS = new Set([...builtinModules, ...builtinModules.map((name) => `node:${name}`)]);
+const TEST_FILE = /\.(test|spec)\.(t|j)sx?$/;
+const SOURCE_FILE = /\.(t|j)sx?$/;
+const VITEST_GLOBALS = ["describe", "it", "test", "expect", "vi", "beforeEach", "afterEach", "beforeAll", "afterAll"];
+/** Packages a test may import that belong in devDependencies. */
+const DEV_PACKAGES = /^(@testing-library\/|vitest$|@vitest\/|jsdom$|happy-dom$|@types\/)/;
+
+const listFiles = async (dir: string): Promise<string[]> => {
+  let entries: import("fs").Dirent[];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const entry of entries) {
+    if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...(await listFiles(full)));
+    else out.push(full);
+  }
+  return out;
+};
+
+/** "react-dom/client" -> "react-dom", "@scope/pkg/sub" -> "@scope/pkg". */
+const packageName = (specifier: string): string | null => {
+  if (specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith("@/") || specifier.startsWith("~/")) return null;
+  if (NODE_BUILTINS.has(specifier) || NODE_BUILTINS.has(specifier.split("/")[0])) return null;
+  if (/^(virtual:|vite\/|\w+:)/.test(specifier) && !specifier.startsWith("@")) return null;
+  const parts = specifier.split("/");
+  return specifier.startsWith("@") ? (parts.length >= 2 ? `${parts[0]}/${parts[1]}` : null) : parts[0];
+};
+
+const RESOLVE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".d.ts"];
+const posix = (value: string) => value.replace(/\\/g, "/");
+/** Relative import specifiers in a file: `from "./x"`, `import("./x")`, `import "./x.css"`. */
+const RELATIVE_IMPORT = /(?:from\s+|import\s*\(\s*|import\s+|require\(\s*)(["'])(\.{1,2}\/[^"']+)\1/g;
+
+/** Whether a relative specifier points at a file that exists (with any of the usual extensions). */
+const resolves = (known: Set<string>, fromFile: string, specifier: string): boolean => {
+  const base = posix(path.join(path.dirname(fromFile), specifier));
+  if (known.has(base)) return true;
+  return RESOLVE_EXTENSIONS.some((ext) => known.has(base + ext) || known.has(`${base}/index${ext}`));
+};
+
+/** The specifier without its leading ./ and ../ steps: "../lib/gameLogic" -> "lib/gameLogic". */
+const importKey = (specifier: string) => specifier.replace(/^(\.\.?\/)+/, "").replace(/\.(t|j)sx?$/, "");
+
+/** Names a file imports from `specifier`: `import A, { b, c as d } from "…"` -> A, b, c. */
+const importedNames = (text: string, specifier: string): string[] => {
+  const escaped = specifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const names: string[] = [];
+  for (const match of text.matchAll(new RegExp(`import\\s+(type\\s+)?([^;]*?)\\s+from\\s+["']${escaped}["']`, "g"))) {
+    const clause = match[2];
+    const defaultName = /^([A-Za-z_$][\w$]*)/.exec(clause)?.[1];
+    if (defaultName) names.push(`${defaultName} (default export)`);
+    const braces = /\{([^}]*)\}/.exec(clause)?.[1];
+    for (const part of braces?.split(",") ?? []) {
+      const name = part.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0]?.trim();
+      if (name) names.push(name);
+    }
+  }
+  return names;
+};
+
+/** The file a relative specifier means, the way TypeScript picks it (.ts before .tsx), or null. */
+const resolveFile = (known: Set<string>, fromFile: string, specifier: string): string | null => {
+  const base = posix(path.join(path.dirname(fromFile), specifier));
+  if (known.has(base)) return base;
+  for (const ext of RESOLVE_EXTENSIONS) if (known.has(base + ext)) return base + ext;
+  for (const ext of RESOLVE_EXTENSIONS) if (known.has(`${base}/index${ext}`)) return `${base}/index${ext}`;
+  return null;
+};
+
+/** What a module exports: its named exports, and the local name of its default export if it has one. */
+const exportsOf = (text: string): { named: Set<string>; defaultName: string | null; hasDefault: boolean } => {
+  const named = new Set<string>();
+  for (const m of text.matchAll(/export\s+(?:declare\s+)?(?:async\s+)?(?:const|let|var|function\*?|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g)) named.add(m[1]);
+  for (const m of text.matchAll(/export\s*\{([^}]*)\}/g)) {
+    for (const part of m[1].split(",")) {
+      const name = part.trim().replace(/^type\s+/, "").split(/\s+as\s+/).pop()?.trim();
+      if (name && name !== "default") named.add(name);
+    }
+  }
+  const defaultName =
+    /export\s+default\s+(?:async\s+)?(?:function\*?|class)\s+([A-Za-z_$][\w$]*)/.exec(text)?.[1] ??
+    /export\s+default\s+([A-Za-z_$][\w$]*)\s*;?\s*$/m.exec(text)?.[1] ??
+    null;
+  return { named, defaultName, hasDefault: /export\s+default\b/.test(text) };
+};
+
+/** Every `import … from "<relative>"` statement in a file, with its parts. */
+const IMPORT_STATEMENT = /import\s+(type\s+)?([A-Za-z_$][\w$]*)?\s*,?\s*(\{[^}]*\})?\s*from\s+(["'])(\.{1,2}\/[^"']+)\4;?/g;
+/** String.replace with an async replacer. */
+const replaceAsync = async (text: string, pattern: RegExp, replacer: (...groups: any[]) => Promise<string>): Promise<string> => {
+  const parts: Promise<string>[] = [];
+  text.replace(pattern, (...groups: any[]) => {
+    parts.push(replacer(...groups));
+    return groups[0];
+  });
+  const done = await Promise.all(parts);
+  let index = 0;
+  return text.replace(pattern, () => done[index++]);
+};
+
+const braceNames = (braces: string | undefined): string[] =>
+  (braces ?? "")
+    .replace(/[{}]/g, "")
+    .split(",")
+    .map((part) => part.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0]?.trim())
+    .filter((name): name is string => Boolean(name));
+
+export const AutoFix = {
+  /**
+   * src/Game.ts (logic) beside src/Game.tsx (screen): "./Game" always means
+   * the .ts, so the screen can never be imported. Move the .ts to
+   * src/Game.logic.ts and point at it every import that wants what it exports.
+   */
+  async splitNameClashes(root: string): Promise<string[]> {
+    const notes: string[] = [];
+    const all = (await listFiles(path.join(root, "src"))).map((file) => posix(path.relative(root, file)));
+    const known = new Set(all);
+    for (const ts of all.filter((file) => /\.ts$/.test(file) && !file.endsWith(".d.ts") && !TEST_FILE.test(file))) {
+      const bare = ts.slice(0, -3);
+      if (!known.has(`${bare}.tsx`) || known.has(`${bare}.logic.ts`)) continue;
+      const logic = exportsOf(await fs.readFile(path.join(root, ts), "utf8"));
+      const target = `${bare}.logic.ts`;
+      for (const rel of all.filter((file) => SOURCE_FILE.test(file) && file !== ts)) {
+        const full = path.join(root, rel);
+        const text = await fs.readFile(full, "utf8");
+        const updated = text.replace(IMPORT_STATEMENT, (whole, typeOnly, defaultName, braces, quote, specifier) => {
+          if (resolveFile(known, rel, specifier) !== ts) return whole;
+          const names = braceNames(braces);
+          if (defaultName || names.length === 0 || !names.every((name) => logic.named.has(name))) return whole;
+          let fixed = posix(path.relative(path.dirname(rel), target.replace(/\.ts$/, "")));
+          if (!fixed.startsWith(".")) fixed = `./${fixed}`;
+          return whole.replace(`${quote}${specifier}${quote}`, `${quote}${fixed}${quote}`);
+        });
+        if (updated !== text) await fs.writeFile(full, updated, "utf8");
+      }
+      await fs.rename(path.join(root, ts), path.join(root, target));
+      known.delete(ts);
+      known.add(target);
+      notes.push(`${ts} moved to ${target}: it shared its name with ${bare}.tsx, so the screen could never be imported`);
+    }
+    return notes;
+  },
+
+  /**
+   * `import { Game } from "./Game"` when Game.tsx has `export default Game`
+   * and no named export: the model's other favourite. Becomes a default import.
+   */
+  async fixDefaultImports(root: string): Promise<string[]> {
+    const notes: string[] = [];
+    const all = (await listFiles(path.join(root, "src"))).map((file) => posix(path.relative(root, file)));
+    const known = new Set(all);
+    const cache = new Map<string, ReturnType<typeof exportsOf>>();
+    for (const rel of all.filter((file) => SOURCE_FILE.test(file) && !file.endsWith(".d.ts"))) {
+      const full = path.join(root, rel);
+      const text = await fs.readFile(full, "utf8");
+      const updated = await replaceAsync(text, IMPORT_STATEMENT, async (whole, typeOnly, defaultName, braces, quote, specifier) => {
+        if (typeOnly || defaultName) return whole;
+        const names = braceNames(braces);
+        if (names.length !== 1 || /\sas\s/.test(braces ?? "")) return whole;
+        const target = resolveFile(known, rel, specifier);
+        if (!target || !SOURCE_FILE.test(target)) return whole;
+        let info = cache.get(target);
+        if (!info) {
+          info = exportsOf(await fs.readFile(path.join(root, target), "utf8"));
+          cache.set(target, info);
+        }
+        const [name] = names;
+        if (info.named.has(name) || !info.hasDefault || (info.defaultName && info.defaultName !== name)) return whole;
+        notes.push(`${rel}: import { ${name} } from "${specifier}" is its default export; imported as one`);
+        return `import ${name} from ${quote}${specifier}${quote};`;
+      });
+      if (updated !== text) await fs.writeFile(full, updated, "utf8");
+    }
+    return notes;
+  },
+
+  /**
+   * `<Save />` in App.tsx with no import of Save, while src/Save.tsx exists:
+   * add the import. Only for a capitalised tag nothing in the file declares,
+   * and only when exactly one component file has that name.
+   */
+  async addMissingComponentImports(root: string): Promise<string[]> {
+    const notes: string[] = [];
+    const all = (await listFiles(path.join(root, "src"))).map((file) => posix(path.relative(root, file)));
+    const components = new Map<string, string[]>();
+    for (const file of all.filter((f) => /\.(t|j)sx$/.test(f) && !TEST_FILE.test(f))) {
+      const name = /([A-Z][\w$]*)(?:\/index)?\.(t|j)sx$/.exec(file)?.[1];
+      if (name) components.set(name, [...(components.get(name) ?? []), file]);
+    }
+    for (const rel of all.filter((file) => /\.(t|j)sx$/.test(file))) {
+      const full = path.join(root, rel);
+      const text = await fs.readFile(full, "utf8");
+      const used = new Set(Array.from(text.matchAll(/<([A-Z][\w$]*)[\s/>]/g)).map((m) => m[1]));
+      const additions: string[] = [];
+      for (const name of used) {
+        const declared = new RegExp(
+          `(import\\s+${name}\\b|import\\s*\\{[^}]*\\b${name}\\b[^}]*\\}|import\\s+[\\w$]+\\s*,\\s*\\{[^}]*\\b${name}\\b|(const|let|var|function|class|enum|type|interface)\\s+${name}\\b)`
+        ).test(text);
+        if (declared) continue;
+        const files = (components.get(name) ?? []).filter((file) => file !== rel);
+        if (files.length !== 1) continue;
+        const info = exportsOf(await fs.readFile(path.join(root, files[0]), "utf8"));
+        let specifier = posix(path.relative(path.dirname(rel), files[0].replace(/(\/index)?\.(t|j)sx$/, "")));
+        if (!specifier.startsWith(".")) specifier = `./${specifier}`;
+        if (info.hasDefault && (!info.defaultName || info.defaultName === name)) additions.push(`import ${name} from "${specifier}";`);
+        else if (info.named.has(name)) additions.push(`import { ${name} } from "${specifier}";`);
+        else continue;
+        notes.push(`${rel}: uses <${name} /> without importing it; imported from ${files[0]}`);
+      }
+      if (additions.length === 0) continue;
+      // After the last import, so the file still reads top to bottom.
+      const lastImport = Array.from(text.matchAll(/^import[^\n]*(?:\n(?!import)[^\n]*?from\s+["'][^"']+["'];?)?$/gm)).pop();
+      const at = lastImport ? (lastImport.index ?? 0) + lastImport[0].length : 0;
+      await fs.writeFile(full, `${text.slice(0, at)}${at ? "\n" : ""}${additions.join("\n")}${at ? "" : "\n"}${text.slice(at)}`, "utf8");
+    }
+    return notes;
+  },
+
+  /**
+   * The model's commonest compile error on a fresh app: an import of a file
+   * that is not where the import says — "../lib/x" from src/App.tsx when the
+   * file is src/lib/x.ts. When exactly one file in src/ matches, point the
+   * import at it.
+   */
+  async fixImportPaths(root: string): Promise<string[]> {
+    const notes: string[] = [];
+    const all = (await listFiles(path.join(root, "src"))).map((file) => posix(path.relative(root, file)));
+    const known = new Set(all);
+    for (const rel of all.filter((file) => SOURCE_FILE.test(file) && !file.endsWith(".d.ts"))) {
+      const full = path.join(root, rel);
+      let text = await fs.readFile(full, "utf8");
+      const original = text;
+      for (const match of Array.from(text.matchAll(RELATIVE_IMPORT))) {
+        const specifier = match[2];
+        if (resolves(known, rel, specifier)) continue;
+        const key = importKey(specifier);
+        const candidates = all.filter((file) => {
+          const bare = file.replace(/(\/index)?\.(d\.)?(t|j)sx?$|(\.(css|scss|json|svg|png))$/, (whole, _index, _d, _tj, asset) => asset ?? "");
+          return bare === `src/${key}` || bare.endsWith(`/${key}`);
+        });
+        if (candidates.length !== 1) continue;
+        const target = candidates[0].replace(/(\/index)?\.(d\.)?(t|j)sx?$/, "");
+        let fixed = posix(path.relative(path.dirname(rel), target));
+        if (!fixed.startsWith(".")) fixed = `./${fixed}`;
+        text = text.split(`${match[1]}${specifier}${match[1]}`).join(`${match[1]}${fixed}${match[1]}`);
+        notes.push(`${rel}: import "${specifier}" now points at ${candidates[0]}`);
+      }
+      if (text !== original) await fs.writeFile(full, text, "utf8");
+    }
+    return notes;
+  },
+
+  /**
+   * For the repair prompt: each missing module the typecheck names, where it
+   * should be created, and every name the app imports from it. A small model
+   * told only "Cannot find module" tends to rewrite the importer instead.
+   */
+  async missingModules(root: string, errorOutput: string): Promise<string> {
+    const wanted = new Map<string, { importers: string[]; names: Set<string> }>();
+    for (const match of errorOutput.matchAll(/([\w./\\-]+\.(?:t|j)sx?)\(\d+,\d+\): error TS2307: Cannot find module '(\.{1,2}\/[^']+)'/g)) {
+      const importer = posix(match[1]);
+      const specifier = match[2];
+      let target = posix(path.join(path.dirname(importer), specifier)).replace(/\.(t|j)sx?$/, "");
+      // "../lib/x" from src/App.tsx lands outside src/: the app's code belongs inside it.
+      if (!target.startsWith("src/")) target = `src/${importKey(specifier)}`;
+      const text = await fs.readFile(path.join(root, importer), "utf8").catch(() => "");
+      const entry = wanted.get(target) ?? { importers: [], names: new Set<string>() };
+      entry.importers.push(`${importer} (as "${specifier}")`);
+      for (const name of importedNames(text, specifier)) entry.names.add(name);
+      wanted.set(target, entry);
+    }
+    const lines = Array.from(wanted, ([target, entry]) => {
+      const isComponent = /\/components\//.test(target) || Array.from(entry.names).some((name) => /^[A-Z]\w* \(default export\)$/.test(name));
+      return `- Create FILE: ${target}${isComponent ? ".tsx" : ".ts"} — imported by ${entry.importers.join(", ")}${
+        entry.names.size ? `; it must export: ${Array.from(entry.names).join(", ")}` : ""
+      }. Fix any import path that does not point at it.`;
+    });
+    const missing = lines.length ? `\nThese modules are imported but do not exist. Write each one in full:\n${lines.join("\n")}\n` : "";
+    return missing + (await AutoFix.nameClashes(root));
+  },
+
+  /**
+   * Two files that differ only in extension (src/Game.ts with the types,
+   * src/Game.tsx with the component): "./Game" always means the .ts one, so
+   * every import of the component gets the types instead. Said plainly in the
+   * repair prompt, because the errors it causes point everywhere but here.
+   */
+  async nameClashes(root: string): Promise<string> {
+    const groups = new Map<string, string[]>();
+    for (const file of (await listFiles(path.join(root, "src"))).map((full) => posix(path.relative(root, full)))) {
+      if (!SOURCE_FILE.test(file) || file.endsWith(".d.ts")) continue;
+      const bare = file.replace(/\.(t|j)sx?$/, "");
+      groups.set(bare, [...(groups.get(bare) ?? []), file]);
+    }
+    const clashes = Array.from(groups.values()).filter((files) => files.length > 1);
+    if (clashes.length === 0) return "";
+    return `\nThese files share a name, so an import without the extension always gets the first one:\n${clashes
+      .map((files) => `- ${files.join(" and ")}: "./${path.posix.basename(files[0]).replace(/\.(t|j)sx?$/, "")}" means ${files.sort()[0]}. Merge them, or move one to a new name (types into src/types.ts) and update every import.`)
+      .join("\n")}\n`;
+  },
+
+  async run(root: string): Promise<string[]> {
+    const notes: string[] = [
+      ...(await AutoFix.splitNameClashes(root)),
+      ...(await AutoFix.fixImportPaths(root)),
+      ...(await AutoFix.fixDefaultImports(root)),
+      ...(await AutoFix.addMissingComponentImports(root))
+    ];
+    const pkgPath = path.join(root, "package.json");
+    let pkg: Record<string, any>;
+    try {
+      pkg = JSON.parse(await fs.readFile(pkgPath, "utf8"));
+    } catch {
+      return notes;
+    }
+    const deps: Record<string, string> = { ...(pkg.dependencies ?? {}) };
+    const devDeps: Record<string, string> = { ...(pkg.devDependencies ?? {}) };
+    const usesVitest = Boolean(devDeps.vitest || deps.vitest);
+
+    let configHasGlobals = false;
+    for (const name of ["vite.config.ts", "vite.config.js", "vite.config.mts", "vitest.config.ts", "vitest.config.js"]) {
+      const text = await fs.readFile(path.join(root, name), "utf8").catch(() => "");
+      if (/globals\s*:\s*true/.test(text)) configHasGlobals = true;
+    }
+
+    const files = (await listFiles(path.join(root, "src"))).filter((file) => SOURCE_FILE.test(file) && !file.endsWith(".d.ts"));
+    const missing = new Map<string, "dep" | "dev">();
+
+    for (const file of files) {
+      const rel = path.relative(root, file).replace(/\\/g, "/");
+      let text = await fs.readFile(file, "utf8");
+      const original = text;
+      const isTest = TEST_FILE.test(file);
+
+      if (usesVitest && isTest) {
+        if (/\bjest\./.test(text)) {
+          text = text.replace(/\bjest\.(fn|mock|spyOn|clearAllMocks|resetAllMocks|restoreAllMocks|useFakeTimers|useRealTimers|advanceTimersByTime|runAllTimers|requireActual)\b/g, "vi.$1");
+          text = text.replace(/\bjest\.requireActual\b/g, "vi.importActual");
+          text = text.replace(/^\s*import\s+.*from\s+["']@jest\/globals["'];?\s*$/gm, "");
+        }
+        if (!configHasGlobals && !/from\s+["']vitest["']/.test(text)) {
+          const used = VITEST_GLOBALS.filter((name) => new RegExp(`(^|[^\\w.])${name}[.(]`, "m").test(text));
+          if (used.length > 0) text = `import { ${used.join(", ")} } from "vitest";\n${text}`;
+        }
+      }
+
+      if (text !== original) {
+        await fs.writeFile(file, text, "utf8");
+        notes.push(`${rel}: switched Jest calls to Vitest and added its imports`);
+      }
+
+      for (const match of text.matchAll(/(?:import\s+(?:[^"'`;]*?\s+from\s+)?|import\(|require\()\s*["']([^"']+)["']/g)) {
+        const name = packageName(match[1]);
+        if (!name || deps[name] || devDeps[name]) continue;
+        const kind = isTest || DEV_PACKAGES.test(name) ? "dev" : "dep";
+        // Used by the app itself anywhere: a runtime dependency, even if a test saw it first.
+        if (!missing.has(name) || kind === "dep") missing.set(name, missing.get(name) === "dep" ? "dep" : kind);
+      }
+    }
+
+    if (missing.size > 0) {
+      for (const [name, kind] of missing) {
+        if (kind === "dev") devDeps[name] = "latest";
+        else deps[name] = "latest";
+      }
+      pkg.dependencies = deps;
+      pkg.devDependencies = devDeps;
+      await fs.writeFile(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
+      notes.push(`package.json: added ${Array.from(missing.keys()).join(", ")} (imported but not installed)`);
+    }
+    return notes;
+  }
+};
