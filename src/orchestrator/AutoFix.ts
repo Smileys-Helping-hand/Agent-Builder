@@ -12,6 +12,7 @@
  *    in src/ it must mean.
  */
 import fs from "fs/promises";
+import fsSync from "fs";
 import path from "path";
 import { builtinModules } from "module";
 
@@ -298,7 +299,24 @@ export const AutoFix = {
       }. Fix any import path that does not point at it.`;
     });
     const missing = lines.length ? `\nThese modules are imported but do not exist. Write each one in full:\n${lines.join("\n")}\n` : "";
-    return missing + (await AutoFix.nameClashes(root));
+
+    // "Module './game' has no exported member 'saveGame'": the module is there,
+    // the name is not. Say which file to add it to, and what it already has.
+    const absent = new Map<string, Set<string>>();
+    for (const match of errorOutput.matchAll(/([\w./\\-]+\.(?:t|j)sx?)\(\d+,\d+\): error TS2305: Module '"(\.{1,2}\/[^"]+)"' has no exported member '([\w$]+)'/g)) {
+      const target = posix(path.join(path.dirname(posix(match[1])), match[2]));
+      const file = [".ts", ".tsx", "/index.ts", "/index.tsx"].map((ext) => target + ext).find((candidate) => fsSync.existsSync(path.join(root, candidate)));
+      if (!file) continue;
+      absent.set(file, (absent.get(file) ?? new Set()).add(match[3]));
+    }
+    const exportsLines = await Promise.all(
+      Array.from(absent, async ([file, names]) => {
+        const has = Array.from(exportsOf(await fs.readFile(path.join(root, file), "utf8")).named).slice(0, 12);
+        return `- ${file} does not export ${Array.from(names).join(", ")}. Add ${names.size === 1 ? "it" : "them"} to ${file} as new exports, keeping everything it already exports${has.length ? ` (${has.join(", ")})` : ""}, or import what it does have instead.`;
+      })
+    );
+    const absentText = exportsLines.length ? `\nThese imports ask for names their module does not export:\n${exportsLines.join("\n")}\n` : "";
+    return missing + absentText + (await AutoFix.nameClashes(root));
   },
 
   /**

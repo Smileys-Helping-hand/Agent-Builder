@@ -3,8 +3,11 @@ import { CodeGuard } from "./CodeGuard.js";
 import { AutoFix } from "./AutoFix.js";
 import { appSource, coverage, parseReview, reviewPrompt } from "./Completeness.js";
 import { applyFacts, readFacts, sampleFactsLeft } from "./Tailoring.js";
+import { ExemplarMemory, type Exemplar } from "../learning/ExemplarMemory.js";
+import { GameModeOnError } from "../utils/GameMode.js";
 import fs from "fs";
 import path from "path";
+import { execFileSync } from "child_process";
 import { ModelRouter, getProviderFromEnv, ollamaOptions } from "../tools/ModelRouter.js";
 import { Logger } from "../utils/Logger.js";
 import { QualityAnalyzer } from "./QualityAnalyzer.js";
@@ -196,6 +199,8 @@ export class AutonomousOrchestrator extends EventEmitter {
 
       // A template order starts with the customer's name already in.
       await this.prefillTailoring().catch((error: any) => Logger.warn("Could not pre-fill the template", { error: error?.message }));
+      // A new app close to one of our catalogue engines starts with that engine.
+      await this.adoptExemplarEngine().catch((error: any) => Logger.warn("Could not start from the example's engine", { error: error?.message }));
 
       // Optimize for current hardware
       if (this.config.hardwareOptimization) {
@@ -253,6 +258,7 @@ export class AutonomousOrchestrator extends EventEmitter {
             score: iteration.qualityScore,
             threshold: this.config.qualityThreshold
           });
+          this.rememberSuccess(iteration);
 
           // A score above threshold isn't the same as every applicable check
           // passing — e.g. a heavily-weighted install pass can clear a low
@@ -811,7 +817,9 @@ changing — omit anything unchanged. No other prose.`;
     const lessonPreamble =
       (lessons.length > 0
         ? `Lessons learned from earlier builds on this machine — apply them:\n${LessonMemory.formatForPrompt(lessons)}\n\n`
-        : "") + this.researchPreamble(context.iteration);
+        : "") +
+      this.researchPreamble(context.iteration) +
+      this.exemplarPreamble(context.iteration);
     // The prompt and the answer share the model's window. A project that grows
     // pass by pass used to push the prompt to the edge of it, leaving no room
     // for the files: the model then answered in prose or stopped mid-file, and
@@ -1163,8 +1171,92 @@ ${lines}
     } catch {
       // No template.json, or an unreadable one: nothing is locked as kit.
     }
+    if (kit.size === 0 && fs.existsSync(path.join(this.workspace.root, "template.json"))) {
+      // A template the catalogue no longer has under that name: its kit is
+      // whatever src/lib held when this build folder was started.
+      try {
+        const git = (args: string[]) => execFileSync("git", args, { cwd: this.workspace.root, encoding: "utf8" }).trim();
+        const first = git(["rev-list", "--max-parents=0", "HEAD"]).split(/\s+/)[0];
+        for (const file of git(["ls-tree", "-r", "--name-only", first, "--", "src/lib"]).split(/\r?\n/)) if (file) kit.add(file);
+      } catch {
+        // No history to read: leave src/lib open rather than guess.
+      }
+    }
     this.kitCache = kit;
     return kit;
+  }
+
+  /** The worked example this build was shown, chosen once so every pass sees the same one (and the prompt cache holds). */
+  private exemplar: Exemplar | null | undefined = undefined;
+
+  /**
+   * A new app gets the closest app this builder made before (or a catalogue
+   * engine) as a worked example: what good looks like, which a small model
+   * otherwise never sees. Template orders and the user's own projects have
+   * their own code to follow.
+   */
+  private exemplarPreamble(iteration: number): string {
+    if (this.config.workingDir && !this.isStarter()) return "";
+    if (this.exemplar === undefined) this.chooseExemplar(iteration);
+    return this.exemplar ? `${ExemplarMemory.formatForPrompt(this.exemplar, this.adoptedEngine)}\n` : "";
+  }
+
+  private chooseExemplar(iteration: number): void {
+    try {
+      this.exemplar = ExemplarMemory.relevant(`${this.config.projectName}\n${this.config.description}`);
+    } catch (error: any) {
+      Logger.warn("Could not look up a worked example", { error: error?.message });
+      this.exemplar = null;
+    }
+    if (this.exemplar) {
+      ExemplarMemory.markUsed(this.exemplar.id);
+      this.think(iteration, "lesson", `Following a worked example: ${this.exemplar.title}`, "The closest app it knows how to build well. It shows the structure and depth to aim for; the content is this brief's.");
+    }
+  }
+
+  /** Engine files from the worked example that this build started with. */
+  private adoptedEngine: string[] = [];
+
+  /**
+   * A fresh app whose closest example is one of our catalogue engines starts
+   * with that engine in it. Shown the engine as an example, the model wrote a
+   * real brick-breaker around it — and then imported a game.ts that was not
+   * there and rebuilt it as a broken stub. Tested code in the project beats a
+   * description of it.
+   */
+  private async adoptExemplarEngine(): Promise<void> {
+    if (!this.config.workingDir || !this.isStarter() || !this.starterStillPlaceholder()) return;
+    if (this.exemplar === undefined) this.chooseExemplar(1);
+    if (!this.exemplar) return;
+    const files = ExemplarMemory.engineFiles(this.exemplar, path.resolve(process.env.TEMPLATES_DIR ?? "templates/sites"));
+    const fresh = Object.fromEntries(Object.entries(files).filter(([file]) => !fs.existsSync(path.join(this.workspace.root, file))));
+    if (Object.keys(fresh).length === 0) return;
+    await this.workspace.writeFiles(fresh, `Head start: the engine from ${this.exemplar.title}`);
+    this.adoptedEngine = Object.keys(fresh);
+    this.think(
+      1,
+      "decision",
+      `Started from a tested engine: ${this.adoptedEngine.join(", ")}`,
+      `From our "${this.exemplar.title}". The app is built on it, so the rules (levels, scoring, winning and losing) work from the first pass.`,
+      this.adoptedEngine
+    );
+  }
+
+  /**
+   * A new app that passed every check is kept as a worked example for the
+   * next similar brief, and the example this build followed gets the credit.
+   */
+  private rememberSuccess(iteration: BuildIteration): void {
+    if (!iteration.verification?.passed || (this.config.workingDir && !this.isStarter())) return;
+    try {
+      if (this.exemplar) ExemplarMemory.recordOutcome(this.exemplar.id, true);
+      const id = ExemplarMemory.recordSuccess(this.workspace.root, this.config.projectName, this.config.description, iteration.qualityScore);
+      if (id !== null) {
+        this.think(iteration.iteration, "lesson", "Remembered this app as a worked example", "The next build with a similar brief starts from how this one was done.");
+      }
+    } catch (error: any) {
+      Logger.warn("Could not remember this build as a worked example", { error: error?.message });
+    }
   }
 
   /** Whether this build started from the web starter (templates/starters/web) rather than a real project or template. */
@@ -1282,7 +1374,10 @@ No placeholders: where the brief does not give a detail, write realistic wording
    * template orders (tailoring covers those) and for projects the user owns.
    */
   private async completenessCheck(iteration: number, report: VerificationReport): Promise<CheckResult | null> {
-    if (this.config.workingDir && !this.isStarter()) return null;
+    // Only apps on the web starter: its layout (src/, App.tsx) is what this
+    // measures. A CLI or API built from an empty folder has no src/ to count,
+    // and would fail it forever.
+    if (!this.config.workingDir || !this.isStarter()) return null;
     const started = Date.now();
     const brief = [this.config.description, ...this.guidance.map((note) => note.text)].join("\n");
     const source = appSource(this.workspace.root);
@@ -1306,6 +1401,9 @@ No placeholders: where the brief does not give a detail, write realistic wording
         try {
           gaps = parseReview(await ModelRouter.generate(reviewPrompt(brief, source))) ?? [];
         } catch (error: any) {
+          // Game mode switched on mid-pass: that is not a verdict. The pass
+          // fails and is tried again once the build resumes.
+          if (error instanceof GameModeOnError) throw error;
           Logger.warn("Completeness review failed; passing on the checks alone", { error: error?.message });
           gaps = [];
         }
@@ -1449,6 +1547,29 @@ Rules that keep this build passing its checks (install, typecheck, build, tests)
       );
     }
     files = checked.files;
+
+    // The engine this build started from may grow (a new export, a tweak to a
+    // rule), but not be replaced: a 7B model "rewrote" game.ts as empty stubs.
+    for (const file of this.adoptedEngine) {
+      if (!(file in files)) continue;
+      let before = "";
+      try {
+        before = fs.readFileSync(path.join(this.workspace.root, file), "utf8");
+      } catch {
+        continue;
+      }
+      const problem = CodeGuard.engineRewriteProblem(before, files[file]);
+      if (problem) {
+        files[file] = before;
+        this.think(
+          this.currentIteration,
+          "decision",
+          `Kept the engine in ${file}`,
+          `The new version ${problem}. Add to the engine or adjust a rule; do not replace it.`,
+          [file]
+        );
+      }
+    }
 
     if (!this.config.workingDir || !fs.existsSync(path.join(this.workspace.root, "template.json"))) return files;
 

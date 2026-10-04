@@ -95,6 +95,18 @@ const hint = await AutoFix.missingModules(game, typecheck);
 assert.match(hint, /Create FILE: src\/lib\/gameLogic\.ts .*must export: loadGame, saveGame, Save\./, "one module to create, with every name the app uses");
 assert.match(hint, /Create FILE: src\/components\/Menu\.tsx .*Menu \(default export\)/, "a component is a .tsx with its default export");
 
+// A module that is there but lacks a name: say which file to add it to, and what it has.
+fs.writeFileSync(path.join(game, "src/engine.ts"), "export const step = () => 1;\nexport interface GameState { score: number }\n");
+const absentHint = await AutoFix.missingModules(game, "src/components/Save.tsx(2,21): error TS2305: Module '\"../engine\"' has no exported member 'saveGame'.");
+assert.match(absentHint, /src\/engine\.ts does not export saveGame\. Add it to src\/engine\.ts .*\(step, GameState\)/);
+fs.rmSync(path.join(game, "src/engine.ts"));
+
+// An engine the build started from can grow but not be replaced.
+const engineBefore = "export const step = (s: number) => {\n  const next = s + 1;\n  return next;\n};\nexport const launch = () => {\n  return 1;\n};\nexport type State = { a: number };\n";
+assert.equal(CodeGuard.engineRewriteProblem(engineBefore, `${engineBefore}export const saveGame = () => 1;\n`), null, "adding an export is fine");
+assert.match(CodeGuard.engineRewriteProblem(engineBefore, "export const step = (s: number) => {};\nexport type State = { a: number };\n") ?? "", /drops launch/);
+assert.match(CodeGuard.engineRewriteProblem(engineBefore, "export const step = (s: number) => {};\nexport const launch = () => {};\nexport type State = { a: number };\n") ?? "", /keeps only 3 of its 8 lines/);
+
 // Once the module exists, the import that points at the wrong folder is pointed at it.
 fs.mkdirSync(path.join(game, "src/lib"));
 fs.writeFileSync(path.join(game, "src/lib/gameLogic.ts"), "export const loadGame = () => null;\n");
@@ -156,6 +168,8 @@ const stub = { "src/App.tsx": 'export default () => <main><h2>Menu</h2><button>S
 const stubCoverage = coverage(gameBrief, stub);
 assert.deepEqual(stubCoverage.missing.map((item) => item.label), ["Home", "Pick a barber: Sipho"], "missing pages are named; a long item needs two of its words");
 assert.ok(stubCoverage.lines < stubCoverage.minLines, "a skeleton is too small to be the app");
+assert.equal(stubCoverage.minLines, 150, "a seven-item brief needs a full app");
+assert.equal(coverage("It must have:\n- Tip percentage\n", stub).minLines, 80, "a one-item brief needs less");
 assert.deepEqual(parseReview('Here you go: {"missing": ["Real gameplay: the bar fills on a timer"]}'), ["Real gameplay: the bar fills on a timer"]);
 assert.deepEqual(parseReview('{"missing": []}'), []);
 assert.equal(parseReview("Looks fine to me."), null, "an answer without the format is not a verdict");

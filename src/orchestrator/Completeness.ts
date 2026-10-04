@@ -113,13 +113,17 @@ export interface CompletenessResult {
 }
 
 /** The brief's pages and must-haves that never appear in the app, and how much app there is. */
-export const coverage = (brief: string, source: Record<string, string>, minLines = 150): CompletenessResult => {
+export const coverage = (brief: string, source: Record<string, string>, minLines?: number): CompletenessResult => {
   const text = Object.values(source).join("\n").toLowerCase();
+  const requirements = requirementsFromBrief(brief);
   // One word must be there; for a longer item ("Pick a barber: Sipho"), two of its words.
-  const missing = requirementsFromBrief(brief).filter(
+  const missing = requirements.filter(
     (requirement) => requirement.stems.filter((s) => text.includes(s)).length < Math.min(2, requirement.stems.length)
   );
-  return { missing, lines: substantialLines(source), minLines };
+  // How much app a brief needs grows with what it lists: a tip calculator is
+  // finished well before a game with six screens is.
+  const needed = minLines ?? Math.min(150, Math.max(80, 60 + 15 * requirements.length));
+  return { missing, lines: substantialLines(source), minLines: needed };
 };
 
 /** The prompt for the reviewer: the brief and the code, and a strict answer format. */

@@ -110,6 +110,21 @@ const topLevelKeys = (source: string, name: string): Set<string> => {
 
 export const CodeGuard = {
   /**
+   * A tested engine a build started from (src/game.ts from our catalogue) may
+   * gain exports and have rules adjusted, but a new version that drops any of
+   * its exports or throws away most of its code is a replacement, not an
+   * edit — seen: game.ts "rewritten" as empty stubs. Why, or null when fine.
+   */
+  engineRewriteProblem(before: string, after: string): string | null {
+    const kept = exportedNames(after);
+    const lost = [...exportedNames(before)].filter((name) => !kept.has(name));
+    if (lost.length > 0) return `drops ${lost.slice(0, 6).join(", ")}${lost.length > 6 ? ` and ${lost.length - 6} more` : ""}`;
+    const code = (text: string) => text.split(/\r?\n/).filter((line) => line.trim() && !/^\s*(\/\/|\/?\*)/.test(line)).length;
+    if (code(after) < code(before) * 0.6) return `keeps only ${code(after)} of its ${code(before)} lines of code`;
+    return null;
+  },
+
+  /**
    * A template's content module (src/content.ts) is data the pages read by
    * name. Tailoring it means changing values; a small model tends to rewrite
    * its shape instead (seen: one `site` object replaced by separate `business`

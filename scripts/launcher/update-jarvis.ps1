@@ -56,9 +56,28 @@ try {
     Remove-Item $flag -ErrorAction SilentlyContinue
 }
 
+# His database changes, as his own updater on the laptop runs them. Both are
+# idempotent and only add (tables, columns, indexes), so running them on every
+# update is safe; a failure is logged, not fatal, and his doctor says what is
+# still missing.
+foreach ($migration in @("scripts\migrate-jarvis-hybrid.mjs", "scripts\migrate-jarvis-ops.mjs")) {
+    if (Test-Path (Join-Path $jarvisDir $migration)) {
+        & cmd.exe /c "node $migration >> `"$jarvisLog`" 2>&1"
+        if ($LASTEXITCODE -ne 0) { Write-Host "  $migration did not finish; see data\jarvis.log." -ForegroundColor Yellow }
+    }
+}
+if (Test-Path (Join-Path $jarvisDir "scripts\jarvis-doctor.mjs")) {
+    & cmd.exe /c "node scripts\jarvis-doctor.mjs >> `"$jarvisLog`" 2>&1"
+}
+
 # Start him here rather than waiting for the watchdog, so the update ends with him up.
 Start-Process -FilePath "cmd.exe" -ArgumentList "/c npx next start -p 3005 -H 127.0.0.1 >> `"$jarvisLog`" 2>&1" `
     -WorkingDirectory $jarvisDir -WindowStyle Hidden | Out-Null
 Start-Process -FilePath "cmd.exe" -ArgumentList "/c node --env-file=.env scripts/jarvis-node-agent.mjs >> `"$jarvisLog`" 2>&1" `
     -WorkingDirectory $jarvisDir -WindowStyle Hidden | Out-Null
+# The peer bridge runs from this checkout's script: stop it so the launcher's
+# watchdog starts the new one on its next round.
+Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like "*jarvis-peer-bridge*" } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Write-Host "Jarvis is now at $(git rev-parse --short HEAD) and starting." -ForegroundColor Green

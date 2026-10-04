@@ -35,6 +35,7 @@
     "test:game-mode": "tsx scripts/game-mode-smoketest.ts",
     "test:builder-guards": "tsx scripts/builder-guards-smoketest.ts",
     "test:research-chat": "tsx scripts/research-chat-smoketest.ts",
+    "test:exemplars": "tsx scripts/exemplar-memory-smoketest.ts",
     "key:agent": "tsx scripts/mint-agent-key.ts",
     "ecosystem:scan": "tsx scripts/scan-ecosystem.ts",
     "verify:templates": "tsx scripts/verify-templates.ts"
