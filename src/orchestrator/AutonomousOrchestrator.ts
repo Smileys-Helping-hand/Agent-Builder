@@ -350,7 +350,19 @@ export class AutonomousOrchestrator extends EventEmitter {
       // Phase 1: Generate/Update Build
       iteration.status = "running";
       const buildContext = this.getBuildContext(iterationNum);
-      const generatedCode = await this.generateCode(buildContext);
+      // While the app does not even compile, a pass only fixes: generating new
+      // code first added fresh errors faster than the repairs cleared the old
+      // ones, and a build went round at 20 for pass after pass.
+      const lastBlocker = this.iterations[this.iterations.length - 1]?.verification?.blockingCheck?.name;
+      const fixFirst =
+        this.config.workingDir !== undefined &&
+        this.isStarter() &&
+        !this.starterStillPlaceholder() &&
+        (lastBlocker === "install" || lastBlocker === "typecheck" || lastBlocker === "build");
+      if (fixFirst) {
+        this.think(iterationNum, "decision", "Fixing before adding", `The app does not pass ${lastBlocker} yet, so this pass repairs what is there before writing anything new.`);
+      }
+      const generatedCode = fixFirst ? { files: {}, artifacts: [] } : await this.generateCode(buildContext);
       iteration.artifacts.push(...generatedCode.artifacts);
 
       let currentFiles = this.guardFiles(generatedCode.files);
@@ -358,7 +370,7 @@ export class AutonomousOrchestrator extends EventEmitter {
       if (nothingWritten && this.config.workingDir && this.isStarter() && !this.starterStillPlaceholder() && this.iterations.length > 0) {
         // The app is already there from an earlier pass: an empty answer is a
         // pass without new code, not a failed one. Check and repair what exists.
-        this.think(iterationNum, "decision", "No new code this pass", "The model returned no files, so this pass checks and repairs the app as it stands.");
+        if (!fixFirst) this.think(iterationNum, "decision", "No new code this pass", "The model returned no files, so this pass checks and repairs the app as it stands.");
       } else if ((!this.config.workingDir || this.isStarter()) && nothingWritten) {
         // Nothing to write means nothing to verify; scoring an empty folder (or
         // an untouched starter, which passes its checks as it is) only burns a
