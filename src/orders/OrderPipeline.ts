@@ -31,6 +31,7 @@ import { OrderStore, type Order } from "./OrderStore.js";
 import { OrderReceipts } from "./OrderReceipts.js";
 import { SiteClient, type SiteOrder } from "./SiteClient.js";
 import { readPublicUrl } from "../utils/PublicUrl.js";
+import { shareableBuildPreview } from "../server/previews.js";
 import { GameMode } from "../utils/GameMode.js";
 
 const INTAKE_EVERY_MS = 5 * 60 * 1000;
@@ -641,10 +642,17 @@ export const OrderPipeline = {
         return;
       }
 
+      // The address the customer will open. The site cannot reach this PC, so
+      // without one their dashboard shows a finished build and nothing to look
+      // at; it is only null when the tunnel is down or the build produced
+      // nothing servable.
+      const previewUrl = shareableBuildPreview(record.buildId, readPublicUrl());
+
       OrderStore.update(order.id, {
         status: wasMaintained ? "maintained" : "review",
         qualityScore: record.qualityScore,
-        deliverablePath: record.outputDir
+        deliverablePath: record.outputDir,
+        ...(previewUrl ? { deliverableUrl: previewUrl } : {})
       });
       OrderStore.note(
         order.id,
@@ -661,14 +669,19 @@ export const OrderPipeline = {
           [
             `The build for ${order.customerName} finished at quality ${Math.round(record.qualityScore)}.`,
             `It is in ${record.outputDir}.`,
-            "Nothing has been sent to the customer — it is waiting for someone to look at it."
+            previewUrl
+              ? `The customer can open it at ${previewUrl}`
+              : "There is no public address for it, so the customer has nothing to open: check the tunnel is up."
           ].join("\n")
         );
         if (order.externalId) {
           void SiteClient.reportProgress(order.externalId, {
             status: "in-progress",
-            message: "A first version is finished and being checked.",
-            qualityScore: record.qualityScore
+            message: previewUrl
+              ? "A first version is finished and ready to look at."
+              : "A first version is finished and being checked.",
+            qualityScore: record.qualityScore,
+            previewUrl
           });
         }
       }
