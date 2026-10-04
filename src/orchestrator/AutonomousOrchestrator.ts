@@ -769,26 +769,50 @@ error) and the specific change needed to fix it. Do not write code.`;
         ? `\n${this.adoptedEngine.join(", ")} is a tested engine: do not rewrite it. A function it lacks (saving, loading, a new rule) goes in a new module such as src/lib/storage.ts, imported from there.\n`
         : "");
 
-    const prompt = `You are repairing a generated application that failed an automated check.
+    // The brief without its research notes: a repair needs to know what the app
+    // is for, not what the research engine read last week.
+    const description = this.config.description.split(/\n(?:What our research confirmed|This is going to a real customer)/i)[0].trim();
+    const promptWith = (listing: string) => `You are repairing a generated application that failed an automated check.
 
 Project: ${this.config.projectName}
-Description: ${this.config.description}
+Description: ${description}
 
 Failing check: ${failing.name}
 Error output:
 ${errorOutput}
 ${critique ? `\nA senior engineer's diagnosis of the root cause:\n${critique}\n` : ""}${builtInHint}${lessonsSection}
 Current files:
-${fileListing}
+${listing}
 
 Fix the problem. Start with ONE line beginning "CAUSE:" that says what was wrong
 and what you are changing. Then return ONLY the corrected file(s) as FILE:
 blocks, in the same format as the files above. Only include files you are
 changing — omit anything unchanged. No other prose.`;
+    let prompt = promptWith(fileListing);
+    if (AutonomousOrchestrator.promptTooBig(prompt)) {
+      // Too big to leave room for the answer — the "no usable fix" repairs.
+      // Show only the first files the error names, in full, and nothing else.
+      const slim = focus
+        .slice(0, 2)
+        .map((filePath) => `FILE: ${filePath}\n\`\`\`\n${(shownFiles[filePath] ?? "").slice(0, 12_000)}\n\`\`\``)
+        .join("\n\n");
+      prompt = promptWith(slim);
+    }
 
     try {
       const response = await ModelRouter.generate(prompt);
-      const patched = this.parseGeneratedCode(response);
+      let patched = this.parseGeneratedCode(response);
+      if (Object.keys(patched).length === 0 && named.length === 1) {
+        // The fix came back as one fenced block with no FILE: line. The error
+        // names one file, so that is the file it means — if the block is a
+        // whole module (it imports or exports) that parses.
+        const blocks = Array.from(response.matchAll(/```[\w-]*\n([\s\S]*?)```/g)).map((match) => match[1]);
+        const [code] = blocks;
+        if (blocks.length === 1 && /\b(import|export)\b/.test(code) && CodeGuard.syntaxErrors(named[0], code).length === 0) {
+          patched = { [named[0]]: code };
+          Logger.log(`Iteration ${iterationNum} repair attempt ${attempt}: took the one code block as ${named[0]}`);
+        }
+      }
       if (Object.keys(patched).length === 0) {
         Logger.warn(`Iteration ${iterationNum} repair attempt ${attempt}: model returned no FILE blocks`);
         this.think(iterationNum, "repair", `Repair ${attempt} for ${failing.name}: no usable fix`, this.narrative(response) || "The model answered without any files.");
