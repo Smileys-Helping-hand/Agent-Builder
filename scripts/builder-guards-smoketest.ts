@@ -13,7 +13,7 @@ import { CodeGuard } from "../src/orchestrator/CodeGuard.js";
 import { AutoFix } from "../src/orchestrator/AutoFix.js";
 import { Verifier } from "../src/orchestrator/Verifier.js";
 import { applyFacts, readFacts, sampleFactsLeft } from "../src/orchestrator/Tailoring.js";
-import { coverage, parseReview, requirementsFromBrief } from "../src/orchestrator/Completeness.js";
+import { coverage, engineUse, parseReview, requirementsFromBrief, stubs } from "../src/orchestrator/Completeness.js";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "ab-guards-"));
 fs.mkdirSync(path.join(root, "src"), { recursive: true });
@@ -139,6 +139,16 @@ assert.match(fs.readFileSync(path.join(clash, "src/App.tsx"), "utf8"), /import \
 assert.deepEqual(await AutoFix.splitNameClashes(clash), []);
 assert.deepEqual(await AutoFix.fixDefaultImports(clash), [], "default-import fix is idempotent");
 
+// game.ts beside Game.tsx: one name to Windows. The logic moves out of the way.
+const caseClash = fs.mkdtempSync(path.join(os.tmpdir(), "ab-case-"));
+fs.mkdirSync(path.join(caseClash, "src"));
+fs.writeFileSync(path.join(caseClash, "src/game.ts"), "export const step = () => 1;\n");
+fs.writeFileSync(path.join(caseClash, "src/Game.tsx"), "export default function Game() { return null; }\n");
+fs.writeFileSync(path.join(caseClash, "src/App.tsx"), 'import { step } from "./game";\nimport Game from "./Game";\n');
+assert.match(await AutoFix.nameClashes(caseClash), /src\/game\.ts and src\/Game\.tsx|src\/Game\.tsx and src\/game\.ts/, "a clash that differs only in case is named");
+assert.deepEqual(await AutoFix.splitNameClashes(caseClash), ["src/game.ts moved to src/game.logic.ts: it shared its name with src/Game.tsx, so the screen could never be imported"]);
+assert.match(fs.readFileSync(path.join(caseClash, "src/App.tsx"), "utf8"), /import \{ step \} from "\.\/game\.logic";\nimport Game from "\.\/Game";/);
+
 // A component used without being imported gets its import.
 fs.writeFileSync(path.join(clash, "src/Save.tsx"), "export default function Save() {\n  return <p>Save</p>;\n}\n");
 fs.writeFileSync(path.join(clash, "src/Load.tsx"), "export const Load = () => <p>Load</p>;\n");
@@ -170,6 +180,22 @@ assert.deepEqual(stubCoverage.missing.map((item) => item.label), ["Home", "Pick 
 assert.ok(stubCoverage.lines < stubCoverage.minLines, "a skeleton is too small to be the app");
 assert.equal(stubCoverage.minLines, 150, "a seven-item brief needs a full app");
 assert.equal(coverage("It must have:\n- Tip percentage\n", stub).minLines, 80, "a one-item brief needs less");
+// The fakes a real build shipped at "100": found without asking a model.
+const shipped = {
+  "src/App.tsx": "const render = () => {\n  ctx.clearRect(0, 0, w, h);\n  // Render game logic here\n  requestAnimationFrame(render);\n};\nexport default () => <button onClick={() => {}}>Save</button>;\nimport { newGame } from './game';\nconst s = newGame(cfg);\n",
+  "src/lib/progression.ts": "export const getProgressionState = (gameState: GameState): GameState => {\n  return gameState;\n};\n",
+  "src/game.ts": "export const newGame = (c: Cfg) => ({});\nexport function step(s: State, dt: number) { return []; }\nexport const launch = (s: State) => s;\nexport const movePaddle = (s: State, x: number) => s;\n"
+};
+const fakes = stubs(shipped);
+assert.ok(fakes.some((f) => /App\.tsx has a placeholder comment "\/\/ Render game logic here"/.test(f)), "placeholder comment");
+assert.ok(fakes.some((f) => /getProgressionState\(\) only returns what it is given/.test(f)), "identity function");
+assert.ok(fakes.some((f) => /does nothing/.test(f)), "empty handler");
+assert.deepEqual(stubs({ "src/a.ts": "// Score goes up by ten for each brick.\nexport const add = (a: number) => a + 10;\n" }), [], "an ordinary comment and a real function are fine");
+const use = engineUse(shipped, ["src/game.ts"])[0];
+assert.deepEqual(use.used, ["newGame"]);
+assert.deepEqual(use.unused, ["step", "launch", "movePaddle"], "an engine imported and never driven is caught");
+assert.equal(coverage("x", shipped, undefined, ["src/game.ts"]).lines < coverage("x", shipped).lines, true, "the engine's own lines are not the app's");
+
 assert.deepEqual(parseReview('Here you go: {"missing": ["Real gameplay: the bar fills on a timer"]}'), ["Real gameplay: the bar fills on a timer"]);
 assert.deepEqual(parseReview('{"missing": []}'), []);
 assert.equal(parseReview("Looks fine to me."), null, "an answer without the format is not a verdict");

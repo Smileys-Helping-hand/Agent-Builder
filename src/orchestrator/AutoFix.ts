@@ -140,7 +140,9 @@ export const AutoFix = {
     const known = new Set(all);
     for (const ts of all.filter((file) => /\.ts$/.test(file) && !file.endsWith(".d.ts") && !TEST_FILE.test(file))) {
       const bare = ts.slice(0, -3);
-      if (!known.has(`${bare}.tsx`) || known.has(`${bare}.logic.ts`)) continue;
+      // game.ts beside Game.tsx clashes too: Windows resolves names without regard to case.
+      const twin = all.find((file) => file.toLowerCase() === `${bare}.tsx`.toLowerCase());
+      if (!twin || known.has(`${bare}.logic.ts`)) continue;
       const logic = exportsOf(await fs.readFile(path.join(root, ts), "utf8"));
       const target = `${bare}.logic.ts`;
       for (const rel of all.filter((file) => SOURCE_FILE.test(file) && file !== ts)) {
@@ -159,7 +161,7 @@ export const AutoFix = {
       await fs.rename(path.join(root, ts), path.join(root, target));
       known.delete(ts);
       known.add(target);
-      notes.push(`${ts} moved to ${target}: it shared its name with ${bare}.tsx, so the screen could never be imported`);
+      notes.push(`${ts} moved to ${target}: it shared its name with ${twin}, so the screen could never be imported`);
     }
     return notes;
   },
@@ -329,7 +331,8 @@ export const AutoFix = {
     const groups = new Map<string, string[]>();
     for (const file of (await listFiles(path.join(root, "src"))).map((full) => posix(path.relative(root, full)))) {
       if (!SOURCE_FILE.test(file) || file.endsWith(".d.ts")) continue;
-      const bare = file.replace(/\.(t|j)sx?$/, "");
+      // Lower-cased: on Windows (and macOS) Game.tsx and game.ts are one name to the import resolver.
+      const bare = file.replace(/\.(t|j)sx?$/, "").toLowerCase();
       groups.set(bare, [...(groups.get(bare) ?? []), file]);
     }
     const clashes = Array.from(groups.values()).filter((files) => files.length > 1);

@@ -1,7 +1,7 @@
 import { EventEmitter } from "events";
 import { CodeGuard } from "./CodeGuard.js";
 import { AutoFix } from "./AutoFix.js";
-import { appSource, coverage, parseReview, reviewPrompt } from "./Completeness.js";
+import { appSource, coverage, engineUse, parseReview, reviewPrompt, stubs } from "./Completeness.js";
 import { applyFacts, readFacts, sampleFactsLeft } from "./Tailoring.js";
 import { ExemplarMemory, type Exemplar } from "../learning/ExemplarMemory.js";
 import { GameModeOnError } from "../utils/GameMode.js";
@@ -1229,7 +1229,14 @@ ${lines}
     if (this.exemplar === undefined) this.chooseExemplar(1);
     if (!this.exemplar) return;
     const files = ExemplarMemory.engineFiles(this.exemplar, path.resolve(process.env.TEMPLATES_DIR ?? "templates/sites"));
-    const fresh = Object.fromEntries(Object.entries(files).filter(([file]) => !fs.existsSync(path.join(this.workspace.root, file))));
+    // In src/engine/, not beside the screens: the engine is game.ts and the
+    // model names its screen Game.tsx, which on Windows is the same file name
+    // ("./Game" finds game.ts) — a build went round in circles on it.
+    const fresh = Object.fromEntries(
+      Object.entries(files)
+        .map(([file, text]) => [file.replace(/^src\//, "src/engine/"), text] as const)
+        .filter(([file]) => !fs.existsSync(path.join(this.workspace.root, file)))
+    );
     if (Object.keys(fresh).length === 0) return;
     await this.workspace.writeFiles(fresh, `Head start: the engine from ${this.exemplar.title}`);
     this.adoptedEngine = Object.keys(fresh);
@@ -1381,9 +1388,22 @@ No placeholders: where the brief does not give a detail, write realistic wording
     const started = Date.now();
     const brief = [this.config.description, ...this.guidance.map((note) => note.text)].join("\n");
     const source = appSource(this.workspace.root);
-    const { missing, lines, minLines } = coverage(brief, source);
+    const { missing, lines, minLines } = coverage(brief, source, undefined, this.adoptedEngine);
     const reasons: string[] = [];
     const todo: string[] = [];
+    // What only looks finished, found without a model: the local reviewer
+    // passed a game whose canvas loop said "// Render game logic here".
+    const fakes = stubs(source);
+    if (fakes.length > 0) {
+      reasons.push(`parts of it are not real yet: ${fakes.join("; ")}`);
+      todo.push(...fakes.map((fake) => `make this real: ${fake}`));
+    }
+    for (const engine of engineUse(source, this.adoptedEngine)) {
+      if (engine.used.length < Math.ceil((engine.used.length + engine.unused.length) / 2)) {
+        reasons.push(`the app barely uses the engine in ${engine.file}: it never calls ${engine.unused.join(", ")}`);
+        todo.push(`drive the game with the engine in ${engine.file}: call ${engine.unused.join(", ")} from the app (the game loop, the controls, starting a level) so it really plays`);
+      }
+    }
     if (missing.length > 0) {
       reasons.push(`the brief asks for ${missing.map((item) => `"${item.label}"`).join(", ")}, and nothing in the app's code has ${missing.length === 1 ? "it" : "them"}`);
     }
