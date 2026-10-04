@@ -49,6 +49,31 @@ const packageName = (specifier: string): string | null => {
   return specifier.startsWith("@") ? (parts.length >= 2 ? `${parts[0]}/${parts[1]}` : null) : parts[0];
 };
 
+/**
+ * Packages that only run on a server (native code, the file system, a
+ * database), with what a browser app uses instead. A small model reaches for
+ * `canvas` to draw a game; the browser has <canvas> built in.
+ */
+export const SERVER_ONLY = new Map<string, string>([
+  ["canvas", "the browser's own <canvas> element (canvasRef.current.getContext('2d'))"],
+  ["node-canvas", "the browser's own <canvas> element"],
+  ["sharp", "an <img> or <canvas> in the page"],
+  ["sqlite3", "localStorage (or IndexedDB) in the browser"],
+  ["better-sqlite3", "localStorage (or IndexedDB) in the browser"],
+  ["fs-extra", "localStorage in the browser; there is no file system"],
+  ["express", "nothing: this app runs in the browser and has no server"],
+  ["cors", "nothing: this app runs in the browser and has no server"],
+  ["body-parser", "nothing: this app runs in the browser and has no server"],
+  ["mongoose", "localStorage in the browser"],
+  ["pg", "localStorage in the browser"],
+  ["mysql2", "localStorage in the browser"],
+  ["bcrypt", "the browser's crypto.subtle"],
+  ["puppeteer", "nothing: tests use Vitest and Testing Library"],
+  ["node-fetch", "the browser's built-in fetch"],
+  ["dotenv", "import.meta.env (Vite)"],
+  ["nodemailer", "a mailto: link or a form the site owner receives"]
+]);
+
 const RESOLVE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".d.ts"];
 const posix = (value: string) => value.replace(/\\/g, "/");
 /** Relative import specifiers in a file: `from "./x"`, `import("./x")`, `import "./x.css"`. */
@@ -318,7 +343,19 @@ export const AutoFix = {
       })
     );
     const absentText = exportsLines.length ? `\nThese imports ask for names their module does not export:\n${exportsLines.join("\n")}\n` : "";
-    return missing + absentText + (await AutoFix.nameClashes(root));
+
+    // An import of a server-only package: it was left out on purpose, so say what to use instead.
+    const serverOnly = new Set<string>();
+    for (const match of errorOutput.matchAll(/error TS2307: Cannot find module '([^.'][^']*)'/g)) {
+      const name = packageName(match[1]);
+      if (name && SERVER_ONLY.has(name)) serverOnly.add(name);
+    }
+    const serverText = serverOnly.size
+      ? `\nThese packages only run on a server and are not installed. Remove the imports and use, instead:\n${Array.from(serverOnly)
+          .map((name) => `- ${name}: ${SERVER_ONLY.get(name)}`)
+          .join("\n")}\n`
+      : "";
+    return missing + absentText + serverText + (await AutoFix.nameClashes(root));
   },
 
   /**
@@ -401,15 +438,36 @@ export const AutoFix = {
       }
     }
 
+    // A browser app (Vite) cannot use a server-only package: `canvas` is a
+    // native Node library, and adding it made `npm install` fail for the whole
+    // app (it compiles C++). Never add one, and take out any the model wrote
+    // into package.json itself; the repair is told the browser's own way.
+    const browser = Boolean(devDeps.vite || deps.vite);
+    let changed = false;
+    if (browser) {
+      for (const name of Array.from(missing.keys())) if (SERVER_ONLY.has(name)) missing.delete(name);
+      for (const table of [deps, devDeps]) {
+        for (const name of Object.keys(table)) {
+          if (SERVER_ONLY.has(name)) {
+            delete table[name];
+            changed = true;
+            notes.push(`package.json: removed ${name} (a server-only package; it cannot run in the browser)`);
+          }
+        }
+      }
+    }
     if (missing.size > 0) {
       for (const [name, kind] of missing) {
         if (kind === "dev") devDeps[name] = "latest";
         else deps[name] = "latest";
       }
+      notes.push(`package.json: added ${Array.from(missing.keys()).join(", ")} (imported but not installed)`);
+      changed = true;
+    }
+    if (changed) {
       pkg.dependencies = deps;
       pkg.devDependencies = devDeps;
       await fs.writeFile(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
-      notes.push(`package.json: added ${Array.from(missing.keys()).join(", ")} (imported but not installed)`);
     }
     return notes;
   }

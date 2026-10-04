@@ -77,6 +77,19 @@ assert.equal(CodeGuard.templateShapeProblem(content, content.replace('menu: [{ t
 assert.match(CodeGuard.templateShapeProblem(content, `export const business = { name: "x" };\nexport const menu = [];\n`) ?? "", /no longer exports site/, "a rewritten shape is caught");
 assert.match(CodeGuard.templateShapeProblem(content, content.replace('  menu: [{ title: "Start", dishes: [] }],\n', "")) ?? "", /site lost menu/, "a dropped key is caught");
 
+// A browser app never gets a server-only package: `canvas` broke npm install for a whole game.
+const browserApp = fs.mkdtempSync(path.join(os.tmpdir(), "ab-browser-"));
+fs.mkdirSync(path.join(browserApp, "src"));
+fs.writeFileSync(path.join(browserApp, "package.json"), JSON.stringify({ name: "g", dependencies: { react: "^18", express: "latest" }, devDependencies: { vite: "^5" } }));
+fs.writeFileSync(path.join(browserApp, "src/Game.tsx"), "import { createCanvas } from 'canvas';\nimport confetti from 'canvas-confetti';\nexport default () => null;\n");
+const browserNotes = await AutoFix.run(browserApp);
+const browserPkg = JSON.parse(fs.readFileSync(path.join(browserApp, "package.json"), "utf8"));
+assert.equal(browserPkg.dependencies.canvas, undefined, "canvas is not added");
+assert.equal(browserPkg.dependencies.express, undefined, "a server package the model added is taken out");
+assert.equal(browserPkg.dependencies["canvas-confetti"], "latest", "a browser package still is");
+assert.ok(browserNotes.some((note) => /removed express/.test(note)));
+assert.match(await AutoFix.missingModules(browserApp, "src/Game.tsx(1,30): error TS2307: Cannot find module 'canvas' or its corresponding type declarations."), /canvas: the browser's own <canvas> element/);
+
 // Running it again changes nothing.
 assert.deepEqual(await AutoFix.run(root), [], "fixes are idempotent");
 
