@@ -764,7 +764,10 @@ error) and the specific change needed to fix it. Do not write code.`;
         : "";
     const builtInHint =
       (lessons.some((lesson) => /require\.main|import\.meta\.url/.test(lesson.lesson)) ? "" : eagerExecutionHint) +
-      (await AutoFix.missingModules(this.workspace.root, failing.output).catch(() => ""));
+      (await AutoFix.missingModules(this.workspace.root, failing.output).catch(() => "")) +
+      (this.adoptedEngine.length
+        ? `\n${this.adoptedEngine.join(", ")} is a tested engine: do not rewrite it. A function it lacks (saving, loading, a new rule) goes in a new module such as src/lib/storage.ts, imported from there.\n`
+        : "");
 
     const prompt = `You are repairing a generated application that failed an automated check.
 
@@ -1580,12 +1583,14 @@ Rules that keep this build passing its checks (install, typecheck, build, tests)
       }
       const problem = CodeGuard.engineRewriteProblem(before, files[file]);
       if (problem) {
-        files[file] = before;
+        // Keep what it was adding (the saveGame the app imports), not what it lost.
+        const salvage = CodeGuard.mergeEngineAdditions(file, before, files[file]);
+        files[file] = salvage?.merged ?? before;
         this.think(
           this.currentIteration,
           "decision",
           `Kept the engine in ${file}`,
-          `The new version ${problem}. Add to the engine or adjust a rule; do not replace it.`,
+          `The new version ${problem}.${salvage ? ` Its new ${salvage.added.join(", ")} ${salvage.added.length === 1 ? "was" : "were"} added to the engine as it was.` : ""} Add to the engine or adjust a rule; do not replace it.`,
           [file]
         );
       }

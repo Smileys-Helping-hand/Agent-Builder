@@ -107,6 +107,14 @@ assert.equal(CodeGuard.engineRewriteProblem(engineBefore, `${engineBefore}export
 assert.match(CodeGuard.engineRewriteProblem(engineBefore, "export const step = (s: number) => {};\nexport type State = { a: number };\n") ?? "", /drops launch/);
 assert.match(CodeGuard.engineRewriteProblem(engineBefore, "export const step = (s: number) => {};\nexport const launch = () => {};\nexport type State = { a: number };\n") ?? "", /keeps only 3 of its 8 lines/);
 
+// A truncated engine rewrite that adds saveGame: the addition is kept, the engine is not lost.
+const truncated = "export const step = (s: number) => s + 1;\nexport const saveGame = (s: State): void => {\n  localStorage.setItem('game', JSON.stringify(s));\n};\nexport function loadGame(): State | null {\n  return null;\n}\n";
+const salvage = CodeGuard.mergeEngineAdditions("src/engine/game.ts", engineBefore, truncated);
+assert.deepEqual(salvage?.added, ["saveGame", "loadGame"]);
+assert.ok(salvage!.merged.startsWith(engineBefore.trimEnd()), "the engine is kept whole");
+assert.match(salvage!.merged, /export const saveGame[\s\S]*export function loadGame/);
+assert.equal(CodeGuard.mergeEngineAdditions("src/engine/game.ts", engineBefore, "export const step = () => 0;\n"), null, "nothing new: nothing to keep");
+
 // Once the module exists, the import that points at the wrong folder is pointed at it.
 fs.mkdirSync(path.join(game, "src/lib"));
 fs.writeFileSync(path.join(game, "src/lib/gameLogic.ts"), "export const loadGame = () => null;\n");

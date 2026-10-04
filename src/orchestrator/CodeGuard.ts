@@ -125,6 +125,44 @@ export const CodeGuard = {
   },
 
   /**
+   * What a refused engine rewrite was trying to add: its new top-level
+   * exported declarations (a saveGame the app imports), appended to the
+   * engine as it was. A 7B model adding one function rewrites the whole file
+   * and loses half of it; the addition is worth keeping, the loss is not.
+   * Null when the new version adds nothing, or does not parse.
+   */
+  mergeEngineAdditions(filePath: string, before: string, after: string): { merged: string; added: string[] } | null {
+    const typescript = loadTs();
+    if (!typescript) return null;
+    const had = exportedNames(before);
+    let file: import("typescript").SourceFile;
+    try {
+      file = typescript.createSourceFile(filePath, after, typescript.ScriptTarget.ES2022, true);
+    } catch {
+      return null;
+    }
+    const additions: string[] = [];
+    const added: string[] = [];
+    for (const statement of file.statements) {
+      const exported = (typescript.getCombinedModifierFlags(statement as any) & typescript.ModifierFlags.Export) !== 0;
+      if (!exported) continue;
+      const names: string[] = [];
+      if (typescript.isVariableStatement(statement)) {
+        for (const declaration of statement.declarationList.declarations) if (typescript.isIdentifier(declaration.name)) names.push(declaration.name.text);
+      } else if ((typescript.isFunctionDeclaration(statement) || typescript.isClassDeclaration(statement) || typescript.isInterfaceDeclaration(statement) || typescript.isTypeAliasDeclaration(statement) || typescript.isEnumDeclaration(statement)) && statement.name) {
+        names.push(statement.name.text);
+      }
+      const fresh = names.filter((name) => !had.has(name));
+      if (fresh.length === 0 || fresh.length !== names.length) continue;
+      additions.push(statement.getText(file));
+      added.push(...fresh);
+    }
+    if (additions.length === 0) return null;
+    const merged = `${before.trimEnd()}\n\n${additions.join("\n\n")}\n`;
+    return this.syntaxErrors(filePath, merged).length === 0 ? { merged, added } : null;
+  },
+
+  /**
    * A template's content module (src/content.ts) is data the pages read by
    * name. Tailoring it means changing values; a small model tends to rewrite
    * its shape instead (seen: one `site` object replaced by separate `business`
