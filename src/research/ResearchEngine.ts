@@ -45,6 +45,8 @@ const MAX_FINDINGS_PER_SOURCE = 8;
 const MAX_FOLLOW_UPS_PER_SOURCE = 3;
 
 type Extraction = {
+  /** The model's own 1-2 sentence take, shown live as what it is thinking. */
+  thinking?: unknown;
   relevant?: boolean;
   findings?: Array<{ claim?: unknown; confidence?: unknown }>;
   contradictions?: Array<{ knownFinding?: unknown; sourceSays?: unknown }>;
@@ -540,14 +542,19 @@ Rules:
 - followUpQuestions: 1-3 specific questions this source raises but does not answer.
 - contradictions: only when the source clearly conflicts with a known finding; quote that finding exactly.
 
+- thinking: 1-2 plain sentences, in the first person, on what this source adds to the topic and how far you trust it.
+
 Reply with ONLY this JSON:
-{"relevant": true, "findings": [{"claim": "...", "confidence": 0.8}], "contradictions": [{"knownFinding": "...", "sourceSays": "..."}], "followUpQuestions": ["..."]}
-If the source is not relevant to the topic, reply {"relevant": false, "findings": [], "contradictions": [], "followUpQuestions": []}`
+{"thinking": "...", "relevant": true, "findings": [{"claim": "...", "confidence": 0.8}], "contradictions": [{"knownFinding": "...", "sourceSays": "..."}], "followUpQuestions": ["..."]}
+If the source is not relevant to the topic, reply {"thinking": "...", "relevant": false, "findings": [], "contradictions": [], "followUpQuestions": []}`
     );
 
     if (!extraction) {
       ResearchStore.logActivity(topic.id, cycle, "error", `Could not parse the model's reading of "${truncate(source.title, 80)}"`);
       return outcome;
+    }
+    if (typeof extraction.thinking === "string" && extraction.thinking.trim().length > 10) {
+      ResearchStore.logActivity(topic.id, cycle, "thought", `On "${truncate(source.title, 60)}": ${truncate(extraction.thinking.trim(), 400)}`);
     }
     if (extraction.relevant === false) {
       ResearchStore.logActivity(topic.id, cycle, "source", `Read "${truncate(source.title, 80)}" (${result.provider}): not relevant`);
@@ -612,7 +619,7 @@ If the source is not relevant to the topic, reply {"relevant": false, "findings"
   private async broaden(topic: ResearchTopic, cycle: number): Promise<number> {
     const known = ResearchStore.strongestClaims(topic.id, 20);
     const explored = ResearchStore.listQuestions(topic.id, 25, "explored").map((question) => question.text);
-    const reply = await generateJson<{ questions?: unknown[] }>(
+    const reply = await generateJson<{ thinking?: unknown; questions?: unknown[] }>(
       `You direct an open-ended research effort whose job is to keep finding NEW information.
 
 Topic: ${topic.title}
@@ -628,8 +635,14 @@ Propose 4 NEW research questions that would uncover information not covered abov
 recent developments, opposing views or failure cases, real-world applications, adjacent fields, and questions that test
 whether a known finding actually holds. Each must be specific enough to search for.
 
-Reply with ONLY this JSON: {"questions": ["...", "...", "...", "..."]}`
+Also give "thinking": 1-2 plain sentences, in the first person, on where the gaps in what is known are and why
+these angles fill them.
+
+Reply with ONLY this JSON: {"thinking": "...", "questions": ["...", "...", "...", "..."]}`
     );
+    if (typeof reply?.thinking === "string" && reply.thinking.trim().length > 10) {
+      ResearchStore.logActivity(topic.id, cycle, "thought", truncate(reply.thinking.trim(), 400));
+    }
 
     let added = 0;
     for (const question of reply?.questions ?? []) {

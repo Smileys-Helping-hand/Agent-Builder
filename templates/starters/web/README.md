@@ -15,6 +15,8 @@ Built with Agent Builder.
   are available without importing them. The test environment is jsdom, so `document` and `window` exist, but a
   `<canvas>` has no drawing context there: test the logic, not the drawing.
 - To check a component renders, use `renderAt(<Component />)` from `src/lib/testing.tsx`: it returns the HTML string.
+- Or test it like a user would with Testing Library (installed and set up): `render`, `screen` and `fireEvent` from
+  `@testing-library/react`, `userEvent` from `@testing-library/user-event`, and matchers such as `toBeInTheDocument()`.
 - Do not change `vite.config.ts`, `tsconfig.json`, `index.html` or `src/main.tsx`, and do not add build or test
   tools (Jest, Babel, Webpack): the setup already works. Only add npm packages that run in a browser.
 - For drawing and games use the browser's own `<canvas>`, `requestAnimationFrame` and keyboard/pointer events.

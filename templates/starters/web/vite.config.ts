@@ -55,6 +55,9 @@ export default defineConfig({
     // A browser-like document, and describe/it/test/expect without importing
     // them: generated tests are usually written that way.
     environment: "jsdom",
-    globals: true
+    globals: true,
+    // Testing Library's matchers (toBeInTheDocument, toHaveTextContent…),
+    // which generated component tests nearly always use.
+    setupFiles: ["./src/lib/setup-tests.ts"]
   }
 });

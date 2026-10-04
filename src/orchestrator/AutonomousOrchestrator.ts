@@ -1,14 +1,19 @@
 import { EventEmitter } from "events";
+import { CodeGuard } from "./CodeGuard.js";
+import { AutoFix } from "./AutoFix.js";
+import { appSource, coverage, parseReview, reviewPrompt } from "./Completeness.js";
+import { applyFacts, readFacts, sampleFactsLeft } from "./Tailoring.js";
 import fs from "fs";
 import path from "path";
-import { ModelRouter } from "../tools/ModelRouter.js";
+import { ModelRouter, getProviderFromEnv, ollamaOptions } from "../tools/ModelRouter.js";
 import { Logger } from "../utils/Logger.js";
 import { QualityAnalyzer } from "./QualityAnalyzer.js";
 import { ImprovementEngine, type ImprovementPlan, type ImprovementSuggestion } from "./ImprovementEngine.js";
 import { HardwareScaler } from "../utils/HardwareScaler.js";
 import { PackagingAgent } from "../agents/PackagingAgent.js";
 import { Workspace } from "./Workspace.js";
-import { Verifier, type VerificationReport } from "./Verifier.js";
+import { Verifier, type CheckResult, type VerificationReport } from "./Verifier.js";
+import { Executor } from "./Executor.js";
 import { createPatch } from "diff";
 import { LessonMemory, type Lesson } from "../learning/LessonMemory.js";
 import { ResearchStore } from "../research/ResearchStore.js";
@@ -189,6 +194,9 @@ export class AutonomousOrchestrator extends EventEmitter {
         throw new Error("Ollama is not running and could not be started. Start it (ollama serve), then try again.");
       }
 
+      // A template order starts with the customer's name already in.
+      await this.prefillTailoring().catch((error: any) => Logger.warn("Could not pre-fill the template", { error: error?.message }));
+
       // Optimize for current hardware
       if (this.config.hardwareOptimization) {
         await this.hardwareScaler.optimize();
@@ -340,7 +348,12 @@ export class AutonomousOrchestrator extends EventEmitter {
       iteration.artifacts.push(...generatedCode.artifacts);
 
       let currentFiles = this.guardFiles(generatedCode.files);
-      if ((!this.config.workingDir || this.isStarter()) && Object.keys(currentFiles).length === 0) {
+      const nothingWritten = Object.keys(currentFiles).length === 0;
+      if (nothingWritten && this.config.workingDir && this.isStarter() && !this.starterStillPlaceholder() && this.iterations.length > 0) {
+        // The app is already there from an earlier pass: an empty answer is a
+        // pass without new code, not a failed one. Check and repair what exists.
+        this.think(iterationNum, "decision", "No new code this pass", "The model returned no files, so this pass checks and repairs the app as it stands.");
+      } else if ((!this.config.workingDir || this.isStarter()) && nothingWritten) {
         // Nothing to write means nothing to verify; scoring an empty folder (or
         // an untouched starter, which passes its checks as it is) only burns a
         // pass. Failing it lets the loop retry, and stop if it persists.
@@ -371,6 +384,8 @@ export class AutonomousOrchestrator extends EventEmitter {
       let verification = await this.verifyAndReport(iterationNum, "After writing the code");
       const profileSettings = this.resolveProfile();
       let repairAttempt = 0;
+      let emptyRepairs = 0;
+      let featureBase: { head: string; files: Record<string, string>; verification: VerificationReport; fixesLeft: number } | null = null;
 
       while (!verification.passed && repairAttempt < profileSettings.maxRepairAttempts) {
         repairAttempt += 1;
@@ -401,12 +416,19 @@ export class AutonomousOrchestrator extends EventEmitter {
         }
 
         const filesBeforeRepair = currentFiles;
+        const verificationBeforeRepair = verification;
+        const headBeforeRepair = await this.workspace.getHead();
         const repaired = await this.repairFiles(currentFiles, verification, iterationNum, repairAttempt, critique, repairLessons);
         if (!repaired) {
           LessonMemory.recordOutcome(repairLessonIds, false);
-          Logger.warn(`Iteration ${iterationNum}: repair attempt ${repairAttempt} produced no usable patch, stopping repair`);
-          break;
+          // One empty answer is often just the model losing the format; two in
+          // a row means this pass has nothing more to give.
+          emptyRepairs += 1;
+          Logger.warn(`Iteration ${iterationNum}: repair attempt ${repairAttempt} produced no usable patch${emptyRepairs >= 2 ? ", stopping repair" : ", trying again"}`);
+          if (emptyRepairs >= 2) break;
+          continue;
         }
+        emptyRepairs = 0;
 
         currentFiles = this.guardFiles(repaired);
         const repairWrite = await this.workspace.writeFiles(
@@ -419,6 +441,53 @@ export class AutonomousOrchestrator extends EventEmitter {
 
         verification = await this.verifyAndReport(iterationNum, `After repair ${repairAttempt}`);
 
+        // Building a missing feature nearly always breaks something on the way
+        // (a type, an import). Undoing it at once threw away every new feature,
+        // so the app never grew: it gets two attempts to fix what it broke, and
+        // is undone only if it still leaves the app worse.
+        if (featureBase) {
+          if (verification.score >= featureBase.verification.score) {
+            featureBase = null;
+          } else if (--featureBase.fixesLeft <= 0) {
+            await this.workspace.resetTo(featureBase.head);
+            this.think(iterationNum, "decision", "Undid the change", `It still left the app worse (score ${verification.score}, was ${featureBase.verification.score}) after trying to fix it; back to the working version.`);
+            currentFiles = featureBase.files;
+            verification = featureBase.verification;
+            featureBase = null;
+          }
+          continue;
+        }
+        // The same for a failing test: making the code do what the test expects
+        // often breaks a type on the way, and undoing it at once left the test
+        // failing for good.
+        const grace = failingBefore?.name === "completeness" ? 2 : failingBefore?.name === "test" ? 1 : 0;
+        if (headBeforeRepair && grace > 0 && verification.score < verificationBeforeRepair.score && repairAttempt < profileSettings.maxRepairAttempts) {
+          featureBase = { head: headBeforeRepair, files: filesBeforeRepair, verification: verificationBeforeRepair, fixesLeft: grace };
+          this.think(
+            iterationNum,
+            "decision",
+            failingBefore?.name === "completeness" ? "New feature in; fixing what it broke" : "Test fix in; fixing what it broke",
+            `That change broke the ${verification.blockingCheck?.name ?? "checks"}; the next ${grace === 1 ? "attempt fixes" : "attempts fix"} that before deciding whether to keep it.`
+          );
+          continue;
+        }
+
+        // A repair that made things worse is undone, so the next attempt starts
+        // from the better version instead of digging deeper.
+        if (headBeforeRepair && verification.score < verificationBeforeRepair.score) {
+          await this.workspace.resetTo(headBeforeRepair);
+          this.think(
+            iterationNum,
+            "decision",
+            `Undid repair ${repairAttempt}`,
+            `It took the score from ${verificationBeforeRepair.score} to ${verification.score}; the next attempt starts from the better version.`
+          );
+          currentFiles = filesBeforeRepair;
+          verification = verificationBeforeRepair;
+          LessonMemory.recordOutcome(repairLessonIds, false);
+          continue;
+        }
+
         // Learn from the attempt: the question is whether the check that was blocking now passes.
         const blockerCleared =
           failingBefore !== undefined &&
@@ -430,6 +499,15 @@ export class AutonomousOrchestrator extends EventEmitter {
             await this.learnFromFix(signature, failingBefore, filesBeforeRepair, currentFiles, iterationNum);
           }
         }
+      }
+
+      if (featureBase) {
+        // Out of attempts with a half-built feature: keep the working version.
+        await this.workspace.resetTo(featureBase.head);
+        this.think(iterationNum, "decision", "Undid the change", "This pass ran out of attempts before it worked; back to the working version.");
+        currentFiles = featureBase.files;
+        verification = featureBase.verification;
+        featureBase = null;
       }
 
       iteration.verification = verification;
@@ -454,8 +532,14 @@ export class AutonomousOrchestrator extends EventEmitter {
       iteration.metrics = analysis.metrics;
       iteration.qualityScore = verification.score;
 
-      // Phase 3: Generate Improvements
-      if (iteration.qualityScore < this.config.qualityThreshold) {
+      // Phase 3: polish — only once every check passes. "Improving" code that does
+      // not build yet only adds noise; it is the next pass's repairs that a
+      // failing build needs. (Improvements on failing code used to overwrite
+      // working files with the model's prose and lock a build at 26.)
+      if (iteration.qualityScore < this.config.qualityThreshold && verification.passed) {
+        const scoreBeforePolish = verification.score;
+        const filesBeforePolish = currentFiles;
+        const headBeforePolish = await this.workspace.getHead();
         iteration.status = "improving";
         this.emit("iteration-status", { iteration: iterationNum, status: "improving" });
 
@@ -479,11 +563,23 @@ export class AutonomousOrchestrator extends EventEmitter {
         // Apply improvements and persist the result — this used to be a no-op.
         currentFiles = await this.applyImprovements(improvements, currentFiles, iterationNum);
 
-        // Improvements can break something that was passing — re-verify before finalizing.
+        // Improvements can break something that was passing — re-verify, and keep
+        // them only if nothing got worse.
         const postImprovementVerification = await this.verifyAndReport(iterationNum, "After the improvements");
-        iteration.verification = postImprovementVerification;
-        iteration.objectiveScore = postImprovementVerification.score;
-        iteration.qualityScore = postImprovementVerification.score;
+        if (headBeforePolish && (postImprovementVerification.score < scoreBeforePolish || !postImprovementVerification.passed)) {
+          await this.workspace.resetTo(headBeforePolish);
+          currentFiles = filesBeforePolish;
+          this.think(
+            iterationNum,
+            "decision",
+            "Undid the polish",
+            `The improvements took the score from ${scoreBeforePolish} to ${postImprovementVerification.score}, so the working version stays.`
+          );
+        } else {
+          iteration.verification = postImprovementVerification;
+          iteration.objectiveScore = postImprovementVerification.score;
+          iteration.qualityScore = postImprovementVerification.score;
+        }
       }
 
       // Ratchet: never let the workspace end an iteration worse than its best-known state.
@@ -542,8 +638,7 @@ export class AutonomousOrchestrator extends EventEmitter {
   }
 
   private isOllamaProvider(): boolean {
-    const provider = (process.env.MODEL_PROVIDER ?? process.env.AI_PROVIDER ?? process.env.LLM_PROVIDER ?? "ollama").toLowerCase();
-    return provider === "ollama";
+    return getProviderFromEnv() === "ollama";
   }
 
   /**
@@ -599,18 +694,40 @@ error) and the specific change needed to fix it. Do not write code.`;
     const failing = verification.blockingCheck;
     if (!failing) return null;
 
-    const MAX_FILE_CHARS = 4000;
     // Changing an existing project, the error is often in a file this build has
     // not touched; show the model that file too, not only its own changes.
     const shownFiles = this.config.workingDir
       ? { ...ProjectSnapshot.mentionedFiles(this.workspace.root, failing.output), ...files }
       : files;
-    const fileListing = Object.entries(shownFiles)
-      .map(([filePath, content]) => {
-        const body = content.length > MAX_FILE_CHARS ? `${content.slice(0, MAX_FILE_CHARS)}\n…(truncated)` : content;
+    // The files the error names are shown whole: a file cut off half way came
+    // back cut off, and broke worse. Everything else is an outline (its path and
+    // what it exports), which is all a fix needs to know about it.
+    const named = Object.keys(shownFiles).filter((file) => failing.output.includes(file) || failing.output.includes(file.replace(/\//g, "\\")));
+    const focus = named.length > 0 ? named : Object.keys(shownFiles).filter((file) => /\.(t|j)sx?$/.test(file)).slice(0, 4);
+    const MAX_FOCUS_CHARS = 16000;
+    const fileListing = [
+      ...focus.map((filePath) => {
+        const content = shownFiles[filePath] ?? "";
+        const body = content.length > MAX_FOCUS_CHARS ? `${content.slice(0, MAX_FOCUS_CHARS)}\n…(truncated)` : content;
         return `FILE: ${filePath}\n\`\`\`\n${body}\n\`\`\``;
-      })
-      .join("\n\n");
+      }),
+      ...(Object.keys(shownFiles).length > focus.length
+        ? [
+            `Other files in the project (not shown in full):\n${Object.entries(shownFiles)
+              .filter(([filePath]) => !focus.includes(filePath))
+              .map(([filePath, content]) => {
+                const exports = Array.from(content.matchAll(/export\s+(?:default\s+)?(?:async\s+)?(?:function|const|class|interface|type|enum)\s+(\w+)/g))
+                  .map((match) => match[1])
+                  .slice(0, 8);
+                return `- ${filePath}${exports.length ? ` (exports ${exports.join(", ")})` : ""}`;
+              })
+              .join("\n")}`
+          ]
+        : [])
+    ].join("\n\n");
+    // The first distinct error lines are what matter; a broken file can produce hundreds.
+    const errorLines = Array.from(new Set(failing.output.split(/\r?\n/).map((line) => line.trimEnd()).filter(Boolean)));
+    const errorOutput = errorLines.length > 60 ? `${errorLines.slice(0, 60).join("\n")}\n…(${errorLines.length - 60} more lines)` : errorLines.join("\n");
 
     // Heuristic for a failure pattern seen repeatedly in practice: both the
     // model and a bigger critique model tend to diagnose a *symptom* (a
@@ -639,7 +756,9 @@ error) and the specific change needed to fix it. Do not write code.`;
       lessons.length > 0
         ? `\nLessons learned from earlier builds that match this failure (apply any that fit):\n${LessonMemory.formatForPrompt(lessons)}\n`
         : "";
-    const builtInHint = lessons.some((lesson) => /require\.main|import\.meta\.url/.test(lesson.lesson)) ? "" : eagerExecutionHint;
+    const builtInHint =
+      (lessons.some((lesson) => /require\.main|import\.meta\.url/.test(lesson.lesson)) ? "" : eagerExecutionHint) +
+      (await AutoFix.missingModules(this.workspace.root, failing.output).catch(() => ""));
 
     const prompt = `You are repairing a generated application that failed an automated check.
 
@@ -648,7 +767,7 @@ Description: ${this.config.description}
 
 Failing check: ${failing.name}
 Error output:
-${failing.output}
+${errorOutput}
 ${critique ? `\nA senior engineer's diagnosis of the root cause:\n${critique}\n` : ""}${builtInHint}${lessonsSection}
 Current files:
 ${fileListing}
@@ -693,11 +812,21 @@ changing — omit anything unchanged. No other prose.`;
       (lessons.length > 0
         ? `Lessons learned from earlier builds on this machine — apply them:\n${LessonMemory.formatForPrompt(lessons)}\n\n`
         : "") + this.researchPreamble(context.iteration);
-    if (this.config.workingDir) {
-      const focus = [this.config.description, ...this.guidance.map((note) => note.text)].join(" ");
-      context.existing = await ProjectSnapshot.describe(this.workspace.root, focus);
+    // The prompt and the answer share the model's window. A project that grows
+    // pass by pass used to push the prompt to the edge of it, leaving no room
+    // for the files: the model then answered in prose or stopped mid-file, and
+    // three such passes failed the build. Show less of the project instead.
+    const focus = [this.config.description, ...this.guidance.map((note) => note.text)].join(" ");
+    const promptFor = async (budget: number) => {
+      if (this.config.workingDir) context.existing = await ProjectSnapshot.describe(this.workspace.root, focus, budget);
+      return lessonPreamble + (context.existing ? this.existingProjectPrompt(context) : this.buildSystemPrompt(context));
+    };
+    let snapshotBudget = 24_000;
+    let systemPrompt = await promptFor(snapshotBudget);
+    while (this.config.workingDir && AutonomousOrchestrator.promptTooBig(systemPrompt) && snapshotBudget > 6_000) {
+      snapshotBudget = Math.round(snapshotBudget * 0.6);
+      systemPrompt = await promptFor(snapshotBudget);
     }
-    const systemPrompt = lessonPreamble + (context.existing ? this.existingProjectPrompt(context) : this.buildSystemPrompt(context));
     if (lessons.length > 0) {
       this.think(
         context.iteration,
@@ -714,8 +843,13 @@ changing — omit anything unchanged. No other prose.`;
     // One retry with the same prompt is cheap insurance against burning a
     // whole iteration's repair budget on an empty project.
     if (Object.keys(files).length === 0) {
-      Logger.warn("generateCode: model response had no parseable FILE: blocks, retrying once");
-      response = await ModelRouter.generate(systemPrompt);
+      // Retry with less of the project shown and the format restated at the end,
+      // where a small model is most likely to follow it.
+      Logger.warn("generateCode: model response had no parseable FILE: blocks, retrying with a shorter prompt");
+      if (this.config.workingDir) systemPrompt = await promptFor(Math.min(snapshotBudget, 9_000));
+      response = await ModelRouter.generate(
+        `${systemPrompt}\n\nIMPORTANT: your answer must contain at least one file, written exactly as\nFILE: path/to/file.ext\n\`\`\`\nthe whole file\n\`\`\``
+      );
       files = this.parseGeneratedCode(response);
     }
 
@@ -889,6 +1023,10 @@ Answer with, in this order: FILE: src/App.tsx (the whole screen: layout, control
 state and wiring, importing your modules); then each module it imports (put the
 logic — rules, calculations — in .ts files); then a test file for that logic whose
 expectations match exactly what your code does; then FILE: src/styles.css.
+Build every page/screen and every must-have the brief lists, each one really
+working (real state, rules and data, saved where the brief says) and reachable
+from the app's navigation. This goes to a customer as a finished app: no stubs,
+no "coming soon", no buttons that do nothing, no fake progress on a timer.
 `
       : `You are a senior engineer continuing work on an existing project. Change it
 to do what is asked. Keep its structure, language, framework, libraries and code
@@ -902,7 +1040,8 @@ What to do:
 ${this.config.description}
 
 ${context.existing}
-${previous ? `\nThe last pass scored ${previous.qualityScore}. Issues found then:\n${(previous.improvements ?? []).join("\n") || "none"}\n` : ""}
+${previous ? `\nThe last pass scored ${previous.qualityScore}.${this.lastBlocker(previous)}${(previous.improvements ?? []).length ? ` Issues found then:\n${(previous.improvements ?? []).join("\n")}` : ""}\n` : ""}
+${this.environmentRules()}
 ${this.guidanceBlock(context.iteration)}Return ONLY the files you create or change, each one complete (never a fragment
 or a diff), as FILE: path/relative/to/project followed immediately by a fenced
 code block on the next line. Omit every file you are not changing. Do not
@@ -957,6 +1096,77 @@ ${lines}
     }
   }
 
+  /**
+   * The template's own sample content for `file`: from the catalogue copy whose
+   * template.json has the same name, so a build continued from one that was
+   * already tailored is still compared with the sample and not with itself.
+   * Falls back to the build folder's first commit.
+   */
+  private async templateOriginal(file: string): Promise<string> {
+    try {
+      const name = (JSON.parse(fs.readFileSync(path.join(this.workspace.root, "template.json"), "utf8")) as { name?: string }).name;
+      const sites = path.resolve(process.env.TEMPLATES_DIR ?? "templates/sites");
+      for (const id of name && fs.existsSync(sites) ? fs.readdirSync(sites) : []) {
+        const meta = path.join(sites, id, "template.json");
+        if (!fs.existsSync(meta)) continue;
+        if ((JSON.parse(fs.readFileSync(meta, "utf8")) as { name?: string }).name !== name) continue;
+        const sample = path.join(sites, id, file);
+        if (fs.existsSync(sample)) return fs.readFileSync(sample, "utf8");
+      }
+    } catch {
+      // Fall through to the first commit.
+    }
+    const first = await Executor.run("git", ["rev-list", "--max-parents=0", "HEAD"], { cwd: this.workspace.root });
+    return first.exitCode === 0
+      ? (await Executor.run("git", ["show", `${first.stdout.trim().split(/\s+/)[0]}:${file}`], { cwd: this.workspace.root })).stdout
+      : "";
+  }
+
+  /**
+   * Whether a prompt leaves too little of a local model's window for the answer
+   * (roughly 3.3 characters a token for code and English). Hosted models have
+   * windows far larger than any prompt here.
+   */
+  static promptTooBig(prompt: string): boolean {
+    if (getProviderFromEnv() !== "ollama") return false;
+    const { num_ctx } = ollamaOptions();
+    return prompt.length / 3.3 > num_ctx - 6_000;
+  }
+
+  private kitCache: Set<string> | null = null;
+
+  /**
+   * The template's own src/lib files (its kit), read from the catalogue copy
+   * with the same template.json name — not from the build folder, where the
+   * model's own new files sit beside them and must stay editable.
+   */
+  private kitFiles(): Set<string> {
+    if (this.kitCache) return this.kitCache;
+    const kit = new Set<string>();
+    try {
+      const name = (JSON.parse(fs.readFileSync(path.join(this.workspace.root, "template.json"), "utf8")) as { name?: string }).name;
+      const roots = [path.resolve(process.env.TEMPLATES_DIR ?? "templates/sites"), path.resolve("templates/starters")];
+      for (const root of roots) {
+        for (const id of name && fs.existsSync(root) ? fs.readdirSync(root) : []) {
+          const meta = path.join(root, id, "template.json");
+          if (!fs.existsSync(meta) || (JSON.parse(fs.readFileSync(meta, "utf8")) as { name?: string }).name !== name) continue;
+          const walk = (dir: string) => {
+            for (const entry of fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }) : []) {
+              const full = path.join(dir, entry.name);
+              if (entry.isDirectory()) walk(full);
+              else kit.add(path.relative(path.join(root, id), full).split(path.sep).join("/"));
+            }
+          };
+          walk(path.join(root, id, "src", "lib"));
+        }
+      }
+    } catch {
+      // No template.json, or an unreadable one: nothing is locked as kit.
+    }
+    this.kitCache = kit;
+    return kit;
+  }
+
   /** Whether this build started from the web starter (templates/starters/web) rather than a real project or template. */
   private isStarter(): boolean {
     try {
@@ -965,6 +1175,239 @@ ${lines}
     } catch {
       return false;
     }
+  }
+
+  /**
+   * A head start on tailoring a template, done without the model: the
+   * customer's business name (orders from the site carry "Business: …") in
+   * place of the template's invented one, everywhere it appears in the content
+   * module, and the preview ribbon off. The model still has to rewrite the rest
+   * of the wording for the tailoring check to pass.
+   */
+  private async prefillTailoring(): Promise<void> {
+    if (!this.config.workingDir || !fs.existsSync(path.join(this.workspace.root, "template.json")) || this.isStarter()) return;
+    const file = ["src/content.ts", "src/content.tsx", "src/content.js"].find((name) => fs.existsSync(path.join(this.workspace.root, name)));
+    if (!file) return;
+    const full = path.join(this.workspace.root, file);
+    const before = fs.readFileSync(full, "utf8");
+    const facts = readFacts(this.config.description);
+    const { source, changed } = applyFacts(before.replace(/\bdemo\s*:\s*true\b/, "demo: false"), facts);
+    if (source === before) return;
+    await this.workspace.writeFiles({ [file]: source }, "Head start: the customer's name and contact details, preview ribbon off");
+    const given = [
+      changed.includes("name") && `the business name "${facts.business}"`,
+      changed.includes("email") && `email ${facts.email}`,
+      changed.includes("phone") && `phone ${facts.phone}`,
+      changed.includes("whatsapp") && `WhatsApp ${facts.whatsapp ?? facts.phone}`
+    ].filter(Boolean);
+    this.think(
+      1,
+      "decision",
+      "Put the customer's details in",
+      given.length
+        ? `Copied the customer's own details from the brief into ${file} (${given.join(", ")}) in place of the template's samples, and turned the template-preview ribbon off.`
+        : `Turned the template-preview ribbon off in ${file}.`,
+      [file]
+    );
+  }
+
+  /** Why the last content edit was refused by the shape guard, for the tailoring check to pass on. */
+  private lastShapeRefusal: string | null = null;
+
+  /**
+   * A template build is only done once it is the customer's: the template's
+   * sample content passes every check (it is a working site), so without this a
+   * build that changed nothing scored 100 and handed over "Salt & Ember". Null
+   * when this is not a template build.
+   */
+  private async tailoringCheck(): Promise<CheckResult | null> {
+    if (!this.config.workingDir || !fs.existsSync(path.join(this.workspace.root, "template.json")) || this.isStarter()) return null;
+    const file = ["src/content.ts", "src/content.tsx", "src/content.js"].find((name) => fs.existsSync(path.join(this.workspace.root, name)));
+    if (!file) return null;
+    const started = Date.now();
+    const now = fs.readFileSync(path.join(this.workspace.root, file), "utf8");
+    const original = await this.templateOriginal(file);
+    const reasons: string[] = [];
+    // Text the visitor reads: string values of four characters or more.
+    const strings = (source: string) =>
+      new Set(Array.from(source.matchAll(/(["'`])((?:\\.|(?!\1)[^\\\n]){4,}?)\1/g)).map((m) => m[2]).filter((value) => /[A-Za-z]{3}/.test(value) && !/^(\.|\/|#|https?:|[a-z-]+\/)/.test(value)));
+    const businessName = (source: string) => /business\s*:\s*\{[\s\S]*?\bname\s*:\s*(["'`])([^"'`]+)\1/.exec(source)?.[2] ?? null;
+    if (original && original.trim() === now.trim()) {
+      reasons.push(`${file} is exactly the template's sample content`);
+    } else if (original) {
+      const sample = strings(original);
+      const current = strings(now);
+      const replaced = sample.size ? [...sample].filter((value) => !current.has(value)).length / sample.size : 1;
+      const sampleName = businessName(original);
+      if (sampleName && businessName(now) === sampleName) reasons.push(`the business is still called "${sampleName}" (the template's sample)`);
+      if (replaced < 0.3) reasons.push(`only ${Math.round(replaced * 100)}% of the sample wording has been replaced; the rest still describes the template's invented business`);
+      reasons.push(...sampleFactsLeft(original, now, readFacts(this.config.description)));
+    }
+    if (/\bdemo\s*:\s*true\b/.test(now)) reasons.push(`${file} still has demo: true (the "template preview" ribbon)`);
+    // Placeholders are worse than the sample: a customer could never be handed "Customer's Phone".
+    const placeholders = [...strings(now)].filter((value) =>
+      /^(the )?(customer|client)['’]?s?\b|^(your|my) .{0,40}\b(here|goes here)$|lorem ipsum|placeholder|\bTBD\b|\bTODO\b|^(insert|enter) |^\[[^\]]+\]$|^<[^>]+>$|@example\.(com|org)|example\.(com|org)/i.test(value)
+    );
+    const leftoverNotes = (now.match(/\/\/[^\n]*\b(replace with|fill in|change this|update this|todo)\b/gi) ?? []).length;
+    if (leftoverNotes >= 2) reasons.push(`it still has ${leftoverNotes} "replace with …" notes in it; remove them once the values are filled in`);
+    if (placeholders.length >= 2) {
+      reasons.push(`it has placeholder text instead of real wording (${placeholders.slice(0, 4).map((value) => `"${value}"`).join(", ")})`);
+    }
+    const passed = reasons.length === 0;
+    if (passed) this.lastShapeRefusal = null;
+    return {
+      name: "tailoring",
+      applicable: true,
+      passed,
+      durationMs: Date.now() - started,
+      output: passed
+        ? `${file} is tailored for the customer.`
+        : `Not tailored yet: ${reasons.join("; ")}.${this.lastShapeRefusal ? ` Note: ${this.lastShapeRefusal}.` : ""}
+Fix: write ${file} out in full with the customer's business name, wording, prices and details in place of the sample
+values, set demo: false, and keep every export and every key exactly as they are (change values, not the shape).
+No placeholders: where the brief does not give a detail, write realistic wording that fits their business.`
+    };
+  }
+
+  /** How many times the reviewer has held a build back, and its verdict on the code it last read. */
+  private reviewHolds = 0;
+  private lastReview: { head: string; missing: string[] } | null = null;
+  /** After this many holds the reviewer's word is advice, so a build cannot circle forever on its opinion. */
+  private static readonly MAX_REVIEW_HOLDS = 3;
+
+  /**
+   * A new app (a prompt build on the starter, or one from scratch) is only done
+   * once it does what the brief asked: every page and must-have in it, enough
+   * code to be an app, and nothing the reviewer finds missing or faked. Null for
+   * template orders (tailoring covers those) and for projects the user owns.
+   */
+  private async completenessCheck(iteration: number, report: VerificationReport): Promise<CheckResult | null> {
+    if (this.config.workingDir && !this.isStarter()) return null;
+    const started = Date.now();
+    const brief = [this.config.description, ...this.guidance.map((note) => note.text)].join("\n");
+    const source = appSource(this.workspace.root);
+    const { missing, lines, minLines } = coverage(brief, source);
+    const reasons: string[] = [];
+    const todo: string[] = [];
+    if (missing.length > 0) {
+      reasons.push(`the brief asks for ${missing.map((item) => `"${item.label}"`).join(", ")}, and nothing in the app's code has ${missing.length === 1 ? "it" : "them"}`);
+    }
+    if (lines < minLines) {
+      reasons.push(`there are only ${lines} lines of app code (tests aside); a finished app for this brief needs much more than a skeleton`);
+    }
+
+    // The reviewer reads the code only once everything else passes: there is
+    // no point asking whether a game is fun while it does not compile.
+    const othersPass = report.checks.every((check) => !check.applicable || check.passed || check.name === "completeness");
+    if (reasons.length === 0 && othersPass && this.reviewHolds < AutonomousOrchestrator.MAX_REVIEW_HOLDS) {
+      const head = (await this.workspace.getHead().catch(() => "")) ?? "";
+      let gaps = this.lastReview && head && this.lastReview.head === head ? this.lastReview.missing : null;
+      if (!gaps) {
+        try {
+          gaps = parseReview(await ModelRouter.generate(reviewPrompt(brief, source))) ?? [];
+        } catch (error: any) {
+          Logger.warn("Completeness review failed; passing on the checks alone", { error: error?.message });
+          gaps = [];
+        }
+        this.lastReview = { head, missing: gaps };
+        if (gaps.length > 0) {
+          this.reviewHolds += 1;
+          this.think(iteration, "critique", "Reviewed against the brief: not finished yet", gaps.map((gap) => `• ${gap}`).join("\n"));
+        } else {
+          this.think(iteration, "check", "Reviewed against the brief: everything asked for is there", "");
+        }
+      }
+      if (gaps.length > 0) reasons.push(`a review against the brief found these missing or only faked: ${gaps.join("; ")}`);
+      todo.push(...gaps);
+    }
+
+    // A small model asked for everything at once writes a little of each; asked
+    // for one thing, it builds that thing properly. So: one at a time.
+    todo.unshift(...missing.map((item) => `"${item.label}" from the brief, as a real, working part of the app`));
+    if (lines < minLines && todo.length === 0) {
+      todo.push("the app's main feature, done properly: real rules, states and feedback (levels, rewards, winning and losing for a game; validation and saved records for a booking app), not a counter or a list");
+    }
+    const passed = reasons.length === 0;
+    return {
+      name: "completeness",
+      applicable: true,
+      passed,
+      durationMs: Date.now() - started,
+      output: passed
+        ? "The app has every page and feature the brief lists."
+        : `Not finished: ${reasons.join("; ")}.
+Next, build this ONE thing, completely, and keep everything else as it is: ${todo[0] ?? "what is missing"}.
+Give it its own file (a component in src/<Name>.tsx, its logic in src/lib/<name>.ts), make it reachable from
+src/App.tsx, and add a test for its logic. No placeholders, hard-coded values or buttons that do nothing.`
+    };
+  }
+
+  /** What stopped the last pass, so the next one goes straight at it. */
+  private lastBlocker(previous: BuildIteration): string {
+    const blocker = previous.verification?.blockingCheck;
+    if (!blocker || previous.verification?.passed) return "";
+    const lines = Array.from(new Set(blocker.output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))).slice(0, 15);
+    return ` It failed the ${blocker.name} check — fix this first:\n${lines.join("\n")}\n`;
+  }
+
+  /**
+   * The rules that keep a starter or template build green, read from the
+   * project itself: exactly which packages are installed, and how its tests
+   * run. Most failed builds came from a small model reaching for things that
+   * are not there (react-router, Jest globals, a UI kit, component tests with no
+   * testing library), so it is told plainly what it has to work with.
+   */
+  private environmentRules(): string {
+    if (!fs.existsSync(path.join(this.workspace.root, "template.json"))) return "";
+    let pkg: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> } = {};
+    try {
+      pkg = JSON.parse(fs.readFileSync(path.join(this.workspace.root, "package.json"), "utf8"));
+    } catch {
+      return "";
+    }
+    const runtime = Object.keys(pkg.dependencies ?? {});
+    const dev = Object.keys(pkg.devDependencies ?? {});
+    const config = ["vite.config.ts", "vite.config.js", "vitest.config.ts"]
+      .map((name) => {
+        try {
+          return fs.readFileSync(path.join(this.workspace.root, name), "utf8");
+        } catch {
+          return "";
+        }
+      })
+      .join("\n");
+    const globals = /globals\s*:\s*true/.test(config);
+    const dom = dev.includes("jsdom") || dev.includes("happy-dom");
+    const testingLibrary = dev.some((name) => name.startsWith("@testing-library/"));
+    const tailoring = this.isStarter()
+      ? ""
+      : `
+This is a finished, working template. Tailor it for the customer by changing the VALUES in src/content.ts:
+names, wording, prices, menu items, hours, contact details, colours, images. Keep that file's exports and every
+key exactly as they are (same names, same nesting, same types); add or remove list items freely. Only touch other
+files for a feature the customer asked for that the template does not have, and keep src/lib/ as it is.
+Set demo: false. Write src/content.ts out in full.
+Never write placeholders ("Customer's Business Name", "Your phone here", "Lorem ipsum", "TBD"): the customer sees
+every word. Use what the brief says; where it does not say, write realistic, specific wording that fits their
+business and location, in the same style and length as the sample it replaces.
+`;
+    return `${tailoring}
+Rules that keep this build passing its checks (install, typecheck, build, tests):
+- Installed packages: ${runtime.join(", ") || "none"} (dev: ${dev.join(", ")}). Import ONLY these and relative files.
+  Do not add react-router, axios, a UI or CSS library, or anything else: plain React, fetch and CSS do it.
+  Several screens? Keep the current screen in React state (or the URL hash), not a router.
+- TypeScript is strict: type every prop, state and function parameter; no implicit any; no unused imports.
+- A file that contains JSX must end in .tsx. Never give two files the same name with different
+  extensions (Game.ts and Game.tsx): put shared types in src/types.ts.
+- Tests run with Vitest${globals ? " (describe/it/expect are global)" : `: import { describe, it, expect } from "vitest" in every test file`}.
+  Never use jest.*; use vi.* from "vitest".${
+      dom && testingLibrary
+        ? ""
+        : `\n  There is no ${dom ? "" : "browser environment or "}testing library installed: test the logic (plain .ts modules), not React components.`
+    }
+- Every import must point at a file you write or that already exists, with the exact exported name.
+- Write every file complete. No placeholders, TODOs or "rest of the code here".
+`;
   }
 
   /**
@@ -985,9 +1428,61 @@ ${lines}
    * not restricted here.
    */
   private guardFiles(files: Record<string, string>): Record<string, string> {
+    // Every build: the model's answer must be code, and must not break a file that worked.
+    const checked = CodeGuard.guard(files, this.workspace.root);
+    if (checked.cleaned.length > 0) {
+      this.think(
+        this.currentIteration,
+        "decision",
+        "Took the code out of the model's explanation",
+        `The answer for ${checked.cleaned.join(", ")} came wrapped in prose or a markdown fence; only the code was kept.`,
+        checked.cleaned
+      );
+    }
+    if (checked.refused.length > 0) {
+      this.think(
+        this.currentIteration,
+        "decision",
+        "Kept the working version of some files",
+        checked.refused.map((item) => `• ${item.file}: the new version would not even parse (${item.why}), so the last working one stays.`).join("\n"),
+        checked.refused.map((item) => item.file)
+      );
+    }
+    files = checked.files;
+
     if (!this.config.workingDir || !fs.existsSync(path.join(this.workspace.root, "template.json"))) return files;
 
-    const locked = /^(package-lock\.json|tsconfig(\.[\w-]+)?\.json|vite\.config\.[cm]?[jt]s|index\.html|template\.json|src\/main\.tsx|src\/lib\/.+|src\/styles\/base\.css)$/;
+    // A template's content module must keep its shape: the pages read it by name.
+    if (!this.isStarter()) {
+      for (const file of Object.keys(files)) {
+        if (!/^src\/content\.(t|j)sx?$/.test(file)) continue;
+        let before = "";
+        try {
+          before = fs.readFileSync(path.join(this.workspace.root, file), "utf8");
+        } catch {
+          continue;
+        }
+        const problem = CodeGuard.templateShapeProblem(before, files[file]);
+        if (problem) {
+          files[file] = before;
+          this.lastShapeRefusal = `your last ${file} was refused: ${problem}`;
+          this.think(
+            this.currentIteration,
+            "decision",
+            "Kept the template's content structure",
+            `The new ${file} would break every page that reads it (${problem}). Tailoring means changing the values inside it, not its shape.`,
+            [file]
+          );
+        }
+      }
+    }
+
+    const locked = /^(package-lock\.json|tsconfig(\.[\w-]+)?\.json|vite\.config\.[cm]?[jt]s|index\.html|template\.json|src\/main\.tsx|src\/styles\/base\.css)$/;
+    // The kit in src/lib is the template's; a new file there is the app's own
+    // (src/lib/usePersistentState.ts). Refusing those left every import of them
+    // broken, and no repair could ever fix it.
+    const kitFiles = this.kitFiles();
+    const kit = (file: string) => kitFiles.has(file);
     const foreign = /^(jest|vitest|babel|webpack|rollup)\.config\.[\w.]+$|^\.babelrc$/;
     const kept: Record<string, string> = {};
     const refused: string[] = [];
@@ -998,7 +1493,7 @@ ${lines}
         const merged = this.mergePackageJson(content);
         if (merged) kept[file] = merged;
         else refused.push(file);
-      } else if (locked.test(file) || foreign.test(file)) {
+      } else if (locked.test(file) || kit(file) || foreign.test(file)) {
         refused.push(file);
       } else {
         kept[file] = content;
@@ -1101,7 +1596,12 @@ ${lines}
     // rewrote its package.json and added a vitest config, and applying the
     // build then carried both into the project nobody asked to change. A copy
     // of one of our own builds or templates already has its runner.
-    const report = await Verifier.verify(this.workspace, { scaffoldTests: !this.config.workingDir });
+    const fromOurTemplate = fs.existsSync(path.join(this.workspace.root, "template.json"));
+    let report = await Verifier.verify(this.workspace, { scaffoldTests: !this.config.workingDir, autofix: !this.config.workingDir || fromOurTemplate });
+    const tailoring = await this.tailoringCheck();
+    if (tailoring) report = Verifier.withCheck(report, tailoring);
+    const completeness = await this.completenessCheck(iteration, report);
+    if (completeness) report = Verifier.withCheck(report, completeness);
     const line = report.checks
       .filter((check) => check.applicable)
       .map((check) => `${check.name} ${check.passed ? "✓" : "✗"}`)

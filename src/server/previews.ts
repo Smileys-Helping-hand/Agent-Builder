@@ -298,6 +298,20 @@ const describe = (kind: Kind, id: string, root: string | null, reason: string | 
   ...extra
 });
 
+/**
+ * A link anyone can open to click through what a build made — for a customer
+ * to run through their site before handover. It is the same tokened preview
+ * the app shows, on this builder's public address (the tunnel), and opens that
+ * one build and nothing else. Null when there is nothing built yet or no
+ * public address.
+ */
+export const shareableBuildPreview = (buildId: string, publicUrl: string | null): string | null => {
+  const build = BuildService.view(buildId);
+  if (!build || !publicUrl) return null;
+  if (!servable(build.outputDir).root) return null;
+  return `${publicUrl.replace(/\/+$/, "")}/preview/build/${encodeURIComponent(buildId)}/${tokenFor("build", buildId)}/`;
+};
+
 export const registerPreviewRoutes = (app: Express) => {
   app.get("/api/previews/template/:id", authenticateAgent("read"), (req: Request, res: Response) => {
     const id = req.params.id;

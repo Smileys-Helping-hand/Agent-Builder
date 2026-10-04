@@ -10,6 +10,7 @@ import { OrdersModeSwitch } from "./mode";
 import { TemplateStudio } from "./templates";
 import { OrdersLog } from "./log";
 import { PreviewPane } from "../preview";
+import { ReviewPanel } from "./review";
 
 /**
  * What each state means, in the customer's terms rather than the code's.
@@ -302,17 +303,18 @@ export default function Orders() {
                         ) : null}
 
                         {/* Finished work can be looked at right here, not only downloaded. */}
-                        {!building && order.buildId && ["review", "delivered", "maintained"].includes(order.status) ? (
+                        {/* Ready to check: the whole review, open by default; afterwards it stays to hand. */}
+                        {!building && order.buildId && order.status === "review" ? (
+                          <details open style={{ marginTop: 10 }}>
+                            <summary style={{ cursor: "pointer", fontWeight: 700 }}>Review before handover</summary>
+                            <ReviewPanel order={order} onChanged={() => Promise.all([orders.refresh(), pipeline.refresh()])} />
+                          </details>
+                        ) : null}
+                        {!building && order.buildId && ["delivered", "maintained"].includes(order.status) ? (
                           <details style={{ marginTop: 10 }}>
                             <summary style={{ cursor: "pointer", fontWeight: 600 }}>Preview what was built</summary>
                             <PreviewPane kind="build" id={order.buildId} height={460} title={`${order.title} preview`} />
                           </details>
-                        ) : null}
-
-                        {order.status === "review" ? (
-                          <Banner kind="info">
-                            Finished and waiting for you. Look at it in {order.deliverablePath ?? "the build folder"}, then hand it over.
-                          </Banner>
                         ) : null}
 
                         <div className="btn-row" style={{ marginTop: 11 }}>

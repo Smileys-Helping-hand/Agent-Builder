@@ -21,7 +21,10 @@ import { OrderStore, ORDER_STATUSES, type OrderStatus } from "../orders/OrderSto
 import { Packager } from "../orders/Packager.js";
 import { SiteClient } from "../orders/SiteClient.js";
 import { Logger } from "../utils/Logger.js";
+import { GameMode } from "../utils/GameMode.js";
 import { signLink, verifyLink } from "../utils/SignedLinks.js";
+import { readPublicUrl } from "../utils/PublicUrl.js";
+import { shareableBuildPreview } from "./previews.js";
 
 /** The build as a list needs it, without its thought feed and logs. */
 const summarise = (buildId: string) => {
@@ -376,6 +379,9 @@ export const registerOrderRoutes = (app: Express) => {
   });
 
   app.post("/api/orders/:id/build", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    if (GameMode.isOn()) {
+      return res.status(409).json({ error: "Game mode is on: switch it off to build. The order waits in the queue until then." });
+    }
     const result = await OrderPipeline.startBuild(req.params.id, (req as AgentRequest).actor ?? "user");
     if (!result) {
       return res.status(409).json({ error: "That order cannot be built right now — it may already be building." });
@@ -393,8 +399,40 @@ export const registerOrderRoutes = (app: Express) => {
   });
 
   /** Hand it over. Deliberately a person's decision, never the pipeline's. */
+  /**
+   * Send the customer a link to click through the built site before handover.
+   * Their dashboard on the site shows it and they are emailed that the first
+   * version is ready to look at. POST /api/orders/:id/share-preview
+   */
+  app.post("/api/orders/:id/share-preview", authenticateAgent("execute"), (req: Request, res: Response) => {
+    const order = OrderStore.get(req.params.id);
+    if (!order) return res.status(404).json({ error: "Unknown order." });
+    if (!order.buildId) return res.status(409).json({ error: "Nothing has been built for this order yet." });
+    const previewUrl = shareableBuildPreview(order.buildId, readPublicUrl());
+    if (!previewUrl) {
+      return res.status(409).json({
+        error: readPublicUrl()
+          ? "The build has no site to show yet: it needs a passing build first."
+          : "This PC has no public address right now (the tunnel is down), so the customer could not open it."
+      });
+    }
+    if (order.externalId) {
+      void SiteClient.reportProgress(order.externalId, {
+        status: "in-progress",
+        message: "Your first version is ready to look at. Click through it and tell us what to change.",
+        qualityScore: order.qualityScore,
+        previewUrl
+      });
+    }
+    OrderStore.note(order.id, "shared", `Preview shared with ${order.customerName}: ${previewUrl}`);
+    res.json({ previewUrl, sentToSite: Boolean(order.externalId) });
+  });
+
   app.post("/api/orders/:id/deliver", authenticateAgent("execute"), (req: Request, res: Response) => {
-    const url = typeof req.body?.url === "string" ? req.body.url.trim() : null;
+    const given = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+    // No address given: hand over the live preview, so the customer has something to open.
+    const existing = OrderStore.get(req.params.id);
+    const url = given || existing?.deliverableUrl || (existing?.buildId ? shareableBuildPreview(existing.buildId, readPublicUrl()) : null);
     const order = OrderPipeline.deliver(req.params.id, url || null, (req as AgentRequest).actor ?? "user");
     if (!order) return res.status(404).json({ error: "Unknown order." });
     res.json({ order });

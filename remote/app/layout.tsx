@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { ActivityProvider } from "./activity";
 import { BuilderVersionProvider } from "./builder-version";
+import { GameModeProvider } from "./game-mode";
 import { Nav } from "./nav";
 import { ToastHost } from "./ui";
 
@@ -27,10 +28,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <ToastHost>
           <BuilderVersionProvider>
-            <ActivityProvider>
-              {children}
-              <Nav />
-            </ActivityProvider>
+            <GameModeProvider>
+              <ActivityProvider>
+                {children}
+                <Nav />
+              </ActivityProvider>
+            </GameModeProvider>
           </BuilderVersionProvider>
         </ToastHost>
         <script

@@ -22,6 +22,7 @@ import { BuildService, buildEvents, type BuildRecord } from "../orchestrator/Bui
 import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
 import { JarvisClient } from "../integrations/JarvisClient.js";
 import { Logger } from "../utils/Logger.js";
+import { GameMode } from "../utils/GameMode.js";
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const run = promisify(execFile);
@@ -127,6 +128,7 @@ export const registerAutonomousRoutes = (app: Express) => {
    * Body: { projectName, description, targetPlatforms?, profile?, ... }
    */
   app.post("/api/autonomous/start", authenticateAgent("execute"), (req: Request, res: Response) => {
+    if (GameMode.isOn()) return res.status(409).json({ error: "Game mode is on: the graphics card is free for you. Switch it off to build or research again." });
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
       const projectName = typeof body.projectName === "string" ? body.projectName.trim() : "";
