@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 
 import { CodeGuard } from "../src/orchestrator/CodeGuard.js";
 import { AutonomousOrchestrator } from "../src/orchestrator/AutonomousOrchestrator.js";
@@ -441,6 +442,35 @@ assert.equal(
   ].join("\n")
 );
 assert.deepEqual(await AutoFix.dedupeImports(dup), [], "nothing left to remove");
+
+// A spelling fix never swaps in a browser global: an undefined TOP is not `top` (window.top).
+const globalsDir = fs.mkdtempSync(path.join(os.tmpdir(), "ab-globals-"));
+fs.mkdirSync(path.join(globalsDir, "src"));
+fs.writeFileSync(path.join(globalsDir, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", noEmit: true, lib: ["ES2020", "DOM"] }, include: ["src"] }));
+fs.writeFileSync(path.join(globalsDir, "src/a.ts"), "const score = 1;\nexport const y = TOP + 10;\nexport const z = scroe + 1;\n");
+TypeFixer.run(globalsDir);
+const globalsText = fs.readFileSync(path.join(globalsDir, "src/a.ts"), "utf8");
+assert.match(globalsText, /TOP \+ 10/,`not changed to a browser global: ${globalsText}`);
+assert.match(globalsText, /score \+ 1/, "a typo of the project's own name is still fixed");
+
+// A continued build gets back what a pass took out of the engine it started from.
+const engineRepo = fs.mkdtempSync(path.join(os.tmpdir(), "ab-engine-"));
+fs.mkdirSync(path.join(engineRepo, "src", "engine"), { recursive: true });
+const gitIn = (...args: string[]) => execFileSync("git", args, { cwd: engineRepo, stdio: "ignore" });
+gitIn("init", "-q");
+gitIn("config", "user.email", "t@t");
+gitIn("config", "user.name", "t");
+const engineFile = path.join(engineRepo, "src/engine/game.ts");
+fs.writeFileSync(engineFile, 'export type GameEvent = "brick" | "wall";\nexport interface GameState { score: number }\nexport function step(state: GameState): GameEvent[] { return []; }\n');
+gitIn("add", "-A");
+gitIn("commit", "-q", "-m", "Head start: the engine from Arcade Promo Game");
+assert.equal(CodeGuard.restoreEngine(engineRepo, "src/engine/game.ts"), null, "an intact engine is left alone");
+fs.writeFileSync(engineFile, "export interface GameState { score: number }\nexport function step(state: GameState): any[] { return []; }\nexport function saveGame(state: GameState): void {}\n");
+const restoredEngine = CodeGuard.restoreEngine(engineRepo, "src/engine/game.ts");
+assert.equal(restoredEngine?.problem, "had lost GameEvent");
+assert.match(restoredEngine!.text, /export type GameEvent/, "the lost export is back");
+assert.match(restoredEngine!.text, /export function saveGame/, "what it added is kept");
+assert.equal(CodeGuard.headStart(engineRepo, "src/engine/other.ts"), null, "a file that was not a head start is not ours to restore");
 
 // "..." for "the rest" in a test is a syntax error; it becomes a partial match.
 const dots = fs.mkdtempSync(path.join(os.tmpdir(), "ab-dots-"));

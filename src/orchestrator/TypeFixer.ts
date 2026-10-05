@@ -178,6 +178,23 @@ export const TypeFixer = {
     const format = ts.getDefaultFormatCodeSettings();
     const preferences: import("typescript").UserPreferences = { quotePreference: "double", importModuleSpecifierPreference: "relative" };
 
+    /** Whether `name`, as seen from `position`, is only declared by TypeScript's own libraries (window, document…). */
+    const declaredOnlyInLibraries = (fileName: string, position: number, name: string): boolean => {
+      const program = service.getProgram();
+      const sourceFile = program?.getSourceFile(fileName);
+      if (!program || !sourceFile) return false;
+      let node: import("typescript").Node = sourceFile;
+      const visit = (child: import("typescript").Node) => {
+        if (position >= child.getStart(sourceFile) && position < child.getEnd()) {
+          node = child;
+          ts.forEachChild(child, visit);
+        }
+      };
+      ts.forEachChild(sourceFile, visit);
+      const symbol = program.getTypeChecker().getSymbolsInScope(node, ts.SymbolFlags.Value | ts.SymbolFlags.Type).find((candidate) => candidate.name === name);
+      return Boolean(symbol?.declarations?.length && symbol.declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile));
+    };
+
     const notes: string[] = [];
     const changed = new Set<string>();
     for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -247,6 +264,9 @@ export const TypeFixer = {
             // "Did you mean handleStep?" for handleSave compiles and wires the
             // Save button to the wrong thing. Only a typo is a typo.
             const suggested = candidate.changes[0]?.textChanges[0]?.newText ?? "";
+            // Nor is a browser global: an undefined TOP became `top` (window.top), and
+            // `top + 10` stopped compiling for a new reason.
+            if (declaredOnlyInLibraries(fileName, start, suggested)) return false;
             return written.toLowerCase() === suggested.toLowerCase() || editDistance(written, suggested) <= 2;
           });
           if (fix) {

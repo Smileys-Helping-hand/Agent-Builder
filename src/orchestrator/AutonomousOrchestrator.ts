@@ -203,6 +203,8 @@ export class AutonomousOrchestrator extends EventEmitter {
       await this.prefillTailoring().catch((error: any) => Logger.warn("Could not pre-fill the template", { error: error?.message }));
       // A new app close to one of our catalogue engines starts with that engine.
       await this.adoptExemplarEngine().catch((error: any) => Logger.warn("Could not start from the example's engine", { error: error?.message }));
+      // A project carried on keeps the engine it started from, and gets back what a pass took out of it.
+      await this.protectEngine().catch((error: any) => Logger.warn("Could not check the engine", { error: error?.message }));
 
       // Optimize for current hardware
       if (this.config.hardwareOptimization) {
@@ -1277,6 +1279,44 @@ ${lines}
    * there and rebuilt it as a broken stub. Tested code in the project beats a
    * description of it.
    */
+  /**
+   * The engine guard used to know only an engine adopted in this build. A
+   * continued build (Continue, self-heal, every restart) never adopted one, so
+   * nothing stopped a pass rewriting it — one dropped GameEvent and broke the
+   * app's imports. Every engine file from the project's head start is guarded
+   * here too, and one an earlier pass rewrote gets back what it lost.
+   */
+  private async protectEngine(): Promise<void> {
+    if (!this.config.workingDir) return;
+    let names: string[];
+    try {
+      names = fs.readdirSync(path.join(this.workspace.root, "src", "engine")).filter((name) => /\.(t|j)sx?$/.test(name) && !/\.(test|spec)\./.test(name));
+    } catch {
+      return;
+    }
+    const restored: Record<string, string> = {};
+    const notes: string[] = [];
+    for (const name of names) {
+      const file = `src/engine/${name}`;
+      if (CodeGuard.headStart(this.workspace.root, file) === null) continue;
+      if (!this.adoptedEngine.includes(file)) this.adoptedEngine.push(file);
+      const fix = CodeGuard.restoreEngine(this.workspace.root, file);
+      if (fix) {
+        restored[file] = fix.text;
+        notes.push(`${file} ${fix.problem}`);
+      }
+    }
+    if (notes.length === 0) return;
+    await this.workspace.writeFiles(restored, "Restored the engine this project started from");
+    this.think(
+      1,
+      "decision",
+      `Restored the engine in ${Object.keys(restored).join(", ")}`,
+      `An earlier pass rewrote it: ${notes.join("; ")}. What it lost is back, and what it added is kept. Add to the engine; do not replace it.`,
+      Object.keys(restored)
+    );
+  }
+
   private async adoptExemplarEngine(): Promise<void> {
     if (!this.config.workingDir || !this.isStarter() || !this.starterStillPlaceholder()) return;
     if (this.exemplar === undefined) this.chooseExemplar(1);
