@@ -182,7 +182,13 @@ export const TypeFixer = {
     const changed = new Set<string>();
     for (let round = 0; round < MAX_ROUNDS; round++) {
       const edits = new Map<string, Edit[]>();
-      const add = (file: string, edit: Edit) => edits.set(file, [...(edits.get(file) ?? []), edit]);
+      // One fix per change: DEFAULT_SETTINGS used four times offers "add the
+      // import" four times, and applying each wrote the import four times over.
+      const add = (file: string, edit: Edit) => {
+        const list = edits.get(file) ?? [];
+        if (list.some((other) => other.start === edit.start && other.end === edit.end && other.text === edit.text)) return;
+        edits.set(file, [...list, edit]);
+      };
 
       for (const fileName of parsed.fileNames.filter(ours)) {
         const text = textOf(fileName) ?? "";

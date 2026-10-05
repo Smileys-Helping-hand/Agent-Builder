@@ -576,8 +576,49 @@ export const AutoFix = {
     return notes;
   },
 
+  /**
+   * The same name imported twice ("Duplicate identifier 'DEFAULT_SETTINGS'"),
+   * by the model or by an earlier fix: the first import of a name stays,
+   * later ones go, and an import left with nothing in it goes too.
+   */
+  async dedupeImports(root: string): Promise<string[]> {
+    const notes: string[] = [];
+    const statement = /^import\s+(type\s+)?(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(\{[^}]*\})?\s*from\s+(["'])([^"']+)\4;?[ \t]*\r?\n?/gm;
+    for (const file of (await listFiles(path.join(root, "src"))).filter((name) => SOURCE_FILE.test(name) && !name.endsWith(".d.ts"))) {
+      const text = await fs.readFile(file, "utf8");
+      const seen = new Set<string>();
+      let dropped = 0;
+      const fixed = text.replace(statement, (whole, typeOnly: string | undefined, defaultName: string | undefined, braces: string | undefined, quote: string, specifier: string) => {
+        if (!defaultName && !braces) return whole;
+        const keepDefault = defaultName && !seen.has(defaultName) ? defaultName : null;
+        if (defaultName && !keepDefault) dropped++;
+        if (keepDefault) seen.add(keepDefault);
+        const names = braceNames(braces).length > 0 ? (braces ?? "").slice(1, -1).split(",").map((part) => part.trim()).filter(Boolean) : [];
+        const keptNames = names.filter((part) => {
+          const local = part.split(/\s+as\s+/).pop()!.replace(/^type\s+/, "").trim();
+          if (seen.has(local)) {
+            dropped++;
+            return false;
+          }
+          seen.add(local);
+          return true;
+        });
+        if (keepDefault === defaultName && keptNames.length === names.length) return whole;
+        if (!keepDefault && keptNames.length === 0) return "";
+        const newline = /\r?\n$/.exec(whole)?.[0] ?? "";
+        const parts = [keepDefault, keptNames.length > 0 ? `{ ${keptNames.join(", ")} }` : null].filter(Boolean).join(", ");
+        return `import ${typeOnly ?? ""}${parts} from ${quote}${specifier}${quote};${newline}`;
+      });
+      if (dropped === 0) continue;
+      await fs.writeFile(file, fixed, "utf8");
+      notes.push(`${posix(path.relative(root, file))}: removed ${dropped} name(s) imported a second time`);
+    }
+    return notes;
+  },
+
   async run(root: string): Promise<string[]> {
     const notes: string[] = [
+      ...(await AutoFix.dedupeImports(root)),
       ...(await AutoFix.splitNameClashes(root)),
       ...(await AutoFix.fixImportPaths(root)),
       ...(await AutoFix.fixDefaultImports(root)),
