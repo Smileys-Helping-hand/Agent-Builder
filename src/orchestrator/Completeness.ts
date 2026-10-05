@@ -112,14 +112,69 @@ export interface CompletenessResult {
   minLines: number;
 }
 
+/**
+ * Code that only looks finished, found without asking a model — the local
+ * reviewer signed off on all of these in one real build:
+ *  - a placeholder comment ("// Render game logic here", "// TODO", "// implement …");
+ *  - a function that only hands back its input (`getProgression = (s) => s`);
+ *  - a click handler that does nothing (`onClick={() => {}}`).
+ * Each is named with its file, so the fix can go straight at it.
+ */
+export const stubs = (source: Record<string, string>): string[] => {
+  const found: string[] = [];
+  for (const [file, text] of Object.entries(source)) {
+    for (const match of text.matchAll(/\/\/[ \t]*([^\n]*)/g)) {
+      const comment = match[1].trim();
+      if (/\b(todo|fixme|implement(ation)?\b(?! detail)|placeholder|stub)\b|\b(goes|go|logic|code|content|stuff|something)\s+here\b/i.test(comment) && comment.length < 120) {
+        found.push(`${file} has a placeholder comment "// ${comment}" where code should be`);
+        break;
+      }
+    }
+    for (const match of text.matchAll(/(?:const|let)\s+(\w+)\s*=\s*\(\s*(\w+)\s*(?::[^)]*)?\)\s*(?::[^=]+)?=>\s*(?:\{\s*return\s+\2\s*;?\s*\}|\2\s*[;\n])/g)) {
+      found.push(`${file}: ${match[1]}() only returns what it is given`);
+    }
+    for (const match of text.matchAll(/function\s+(\w+)\s*\(\s*(\w+)[^)]*\)\s*(?::[^{]+)?\{\s*return\s+\2\s*;?\s*\}/g)) {
+      found.push(`${file}: ${match[1]}() only returns what it is given`);
+    }
+    if (/on[A-Z]\w*=\{\s*\(\s*\)\s*=>\s*\{\s*\}\s*\}/.test(text)) found.push(`${file} has a button or handler that does nothing ({() => {}})`);
+  }
+  return found.slice(0, 6);
+};
+
+/**
+ * Whether the app uses the engine it started from: the share of the engine's
+ * exported functions the rest of the app calls. An engine imported for a type
+ * and never driven (no step(), no launch()) is a game that does not play.
+ */
+export const engineUse = (source: Record<string, string>, engineFiles: string[]): { file: string; used: string[]; unused: string[] }[] =>
+  engineFiles
+    .filter((file) => file in source)
+    .map((file) => {
+      const functions = Array.from(
+        source[file].matchAll(/export\s+(?:async\s+)?(?:function\s+(\w+)|const\s+(\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*(?::[^=]+)?=>)/g)
+      ).map((m) => m[1] ?? m[2]);
+      const others = Object.entries(source)
+        .filter(([name]) => name !== file)
+        .map(([, text]) => text)
+        .join("\n");
+      const used = functions.filter((name) => new RegExp(`\\b${name}\\s*\\(`).test(others));
+      return { file, used, unused: functions.filter((name) => !used.includes(name)) };
+    });
+
 /** The brief's pages and must-haves that never appear in the app, and how much app there is. */
-export const coverage = (brief: string, source: Record<string, string>, minLines = 150): CompletenessResult => {
+export const coverage = (brief: string, source: Record<string, string>, minLines?: number, engineFiles: string[] = []): CompletenessResult => {
   const text = Object.values(source).join("\n").toLowerCase();
+  // An engine the build started from is ours, not the app: the app around it must stand on its own.
+  const own = Object.fromEntries(Object.entries(source).filter(([file]) => !engineFiles.includes(file)));
+  const requirements = requirementsFromBrief(brief);
   // One word must be there; for a longer item ("Pick a barber: Sipho"), two of its words.
-  const missing = requirementsFromBrief(brief).filter(
+  const missing = requirements.filter(
     (requirement) => requirement.stems.filter((s) => text.includes(s)).length < Math.min(2, requirement.stems.length)
   );
-  return { missing, lines: substantialLines(source), minLines };
+  // How much app a brief needs grows with what it lists: a tip calculator is
+  // finished well before a game with six screens is.
+  const needed = minLines ?? Math.min(150, Math.max(80, 60 + 15 * requirements.length));
+  return { missing, lines: substantialLines(own), minLines: needed };
 };
 
 /** The prompt for the reviewer: the brief and the code, and a strict answer format. */
@@ -143,9 +198,13 @@ The app's code:
 ${files}
 
 List only the things the brief clearly asks for that this code does NOT really do. A stub, a hard-coded
-value, a button that does nothing, or something that only looks like the feature counts as not done (for
-example, a progress bar that fills on a timer is not a game). Do not list style preferences, nice-to-haves
-or things the brief does not ask for.
+value, a button that does nothing, or something that only looks like the feature counts as not done. Check
+each of these, and list every one you find:
+- a game whose loop or canvas never moves or draws anything (a progress bar on a timer is not a game either);
+- a screen that is only a heading and a Back button (a "Save" or "Load" screen that saves or loads nothing);
+- a function that just returns its input, or a feature shown as a number nobody can change;
+- data that is never saved where the brief says, or never read back.
+Do not list style preferences, nice-to-haves or things the brief does not ask for.
 
 Answer with JSON only, nothing else:
 {"missing": ["short description of each missing thing"]}

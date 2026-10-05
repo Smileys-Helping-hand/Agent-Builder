@@ -7,8 +7,9 @@ import { isLive, useActivity } from "../activity";
 import { Banner, Busy, CopyButton, Freshness, Header, Icon, Meter, Skeleton, ago, duration, useRemote, useToast } from "../ui";
 import { QUICK_STEERS, WritingPane } from "./writing";
 import { PreviewPane } from "../preview";
+import { DownloadBuild } from "./download";
 import { LiveEditor } from "../live-editor";
-import { BuildProgress, CHECK_LABEL, Checks, StateBadge, Stepper, bestPass, describe, latestPass } from "./parts";
+import { BuildProgress, CHECK_LABEL, Checks, StateBadge, Stepper, bestPass, describe, latestPass, projectKey } from "./parts";
 
 const EVENT_TONE: Partial<Record<BuildEvent["kind"], string>> = {
   error: "bad",
@@ -201,6 +202,38 @@ const PROFILES: Array<{ id: BuildProfile; label: string }> = [
   { id: "deep", label: "Deep" }
 ];
 
+/**
+ * The project's runs: every time it was built or carried on, newest first,
+ * each opening its own passes, thinking and logs. The card on the Build page
+ * stands for the whole project; this is where its history lives.
+ */
+const ProjectRuns = ({ build, runs, onOpen }: { build: Build; runs: Build[]; onOpen: (id: string) => void }) => {
+  const mine = runs.filter((run) => projectKey(run) === projectKey(build)).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  if (mine.length < 2) return null;
+  return (
+    <>
+      <div className="section-title">Runs of this project · {mine.length}</div>
+      <div className="card project-runs">
+        {mine.map((run, index) => {
+          const score = Math.round(run.bestScore ?? run.qualityScore ?? 0);
+          const current = run.buildId === build.buildId;
+          return (
+            <button key={run.buildId} className={`project-run ${current ? "on" : ""}`} disabled={current} onClick={() => onOpen(run.buildId)}>
+              <span className="project-run-n">Run {mine.length - index}</span>
+              <span className="project-run-when">{new Date(run.startedAt).toLocaleString()}</span>
+              <span className="muted">
+                {run.iterations} pass{run.iterations === 1 ? "" : "es"} · {isLive(run) ? "building now" : run.state}
+              </span>
+              <span className={`project-run-score ${score >= (run.qualityThreshold ?? 90) ? "good" : ""}`}>{score}</span>
+              {current ? <small className="muted">viewing</small> : <span className="chev">{Icon.back}</span>}
+            </button>
+          );
+        })}
+      </div>
+    </>
+  );
+};
+
 export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => void; onOpen: (id: string) => void }) => {
   const toast = useToast();
   const activity = useActivity();
@@ -361,6 +394,9 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
 
         {detail.error && detail.data ? <Banner kind="error">{detail.error}</Banner> : null}
 
+        {/* ---------- every run of this project ---------- */}
+        <ProjectRuns build={build} runs={activity.builds} onOpen={onOpen} />
+
         {/* On a wide screen the preview sits beside everything else, so you
             can watch what it is making and what it is thinking at once. */}
         <div className="detail-grid">
@@ -377,6 +413,10 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
               frameRef={previewFrame}
             />
             <div className="btn-row" style={{ marginTop: 10 }}>
+              <a className="btn small" href={`/try/?kind=build&id=${encodeURIComponent(build.buildId)}&name=${encodeURIComponent(build.projectName)}`}>
+                {Icon.play} Try it
+              </a>
+              <DownloadBuild id={build.buildId} />
               <button className={`btn small ${editing ? "accent" : ""}`} onClick={() => setEditing(!editing)} aria-pressed={editing}>
                 {Icon.wrench} {editing ? "Close the live editor" : "Edit it live"}
               </button>

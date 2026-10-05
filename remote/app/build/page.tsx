@@ -7,7 +7,7 @@ import { api, type BuildProfile, type StarterChoice } from "@/lib/api";
 import { isLive, useActivity } from "../activity";
 import { Banner, Busy, Freshness, Header, Icon, NotConnected, Skeleton, useConnected, usePersistentState, useToast } from "../ui";
 import { BuildDetail } from "./detail";
-import { BuildCard, needsLook, works } from "./parts";
+import { BuildCard, groupBuilds, needsLook, works } from "./parts";
 
 const PROFILES: Array<{ id: BuildProfile; label: string; hint: string }> = [
   { id: "fast", label: "Fast", hint: "Up to 8 passes, one repair each. Good for a rough first look." },
@@ -76,26 +76,28 @@ export default function BuildPage() {
   const list = activity.builds;
   const live = activity.live;
 
+  // One card per project, not per run: a project's runs (and their logs) are inside it.
+  const projects = useMemo(() => groupBuilds(list), [list]);
   const counts = useMemo(
     () => ({
-      all: list.length,
-      live: live.length,
-      works: list.filter(works).length,
-      look: list.filter(needsLook).length
+      all: projects.length,
+      live: projects.filter((group) => isLive(group.latest)).length,
+      works: projects.filter((group) => works(group.latest)).length,
+      look: projects.filter((group) => needsLook(group.latest)).length
     }),
-    [list, live]
+    [projects]
   );
 
   const shown = useMemo(() => {
     const term = search.trim().toLowerCase();
-    return list
-      .filter((build) =>
-        filter === "live" ? isLive(build) : filter === "works" ? works(build) : filter === "look" ? needsLook(build) : true
+    return projects
+      .filter(({ latest }) =>
+        filter === "live" ? isLive(latest) : filter === "works" ? works(latest) : filter === "look" ? needsLook(latest) : true
       )
-      .filter((build) => !term || `${build.projectName} ${build.description}`.toLowerCase().includes(term))
-      // Live builds first, then newest.
-      .sort((a, b) => Number(isLive(b)) - Number(isLive(a)) || b.startedAt.localeCompare(a.startedAt));
-  }, [list, filter, search]);
+      .filter(({ runs }) => !term || runs.some((build) => `${build.projectName} ${build.description}`.toLowerCase().includes(term)))
+      // Building now first, then the most recently worked on.
+      .sort((a, b) => Number(isLive(b.latest)) - Number(isLive(a.latest)) || b.latest.startedAt.localeCompare(a.latest.startedAt));
+  }, [projects, filter, search]);
 
   if (connected === false) return <NotConnected />;
   if (openId) return <BuildDetail id={openId} onBack={() => open(null)} onOpen={open} />;
@@ -132,7 +134,7 @@ export default function BuildPage() {
     <>
       <Header
         title="Build"
-        sub={live.length ? `${live.length} building now · ${list.length} in all` : list.length ? `${list.length} builds` : "Describe it and it gets built"}
+        sub={live.length ? `${live.length} building now · ${projects.length} projects` : projects.length ? `${projects.length} projects · ${list.length} runs` : "Describe it and it gets built"}
         state={activity.error && !activity.fresh ? "down" : live.length > 0 ? "busy" : "up"}
       />
 
@@ -262,12 +264,12 @@ export default function BuildPage() {
                 </button>
               ))}
             </div>
-            {list.length > 6 ? (
+            {projects.length > 6 ? (
               <input
                 className="search"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Find a build"
+                placeholder="Find a project"
                 style={{ marginTop: 10 }}
               />
             ) : null}
@@ -277,8 +279,8 @@ export default function BuildPage() {
         {activity.loading && list.length === 0 ? <Skeleton rows={2} /> : null}
 
         <div className="build-grid">
-          {shown.map((build) => (
-            <BuildCard key={build.buildId} build={build} onOpen={() => open(build.buildId)} />
+          {shown.map((group) => (
+            <BuildCard key={group.key} build={group.latest} runs={group.runs.length} best={group.best} onOpen={() => open(group.latest.buildId)} />
           ))}
         </div>
 

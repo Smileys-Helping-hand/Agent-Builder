@@ -16,6 +16,7 @@ import path from "node:path";
 
 import { AutonomousOrchestrator, type BuildProfile } from "../src/orchestrator/AutonomousOrchestrator.js";
 import { copyForBuild } from "../src/ecosystem/ProjectBuilds.js";
+import { ExemplarMemory } from "../src/learning/ExemplarMemory.js";
 import type { CheckResult } from "../src/orchestrator/Verifier.js";
 
 const argv = process.argv.slice(2);
@@ -35,6 +36,8 @@ if (!brief) {
 
 const source = flag("from") ? path.resolve(flag("from")!) : template ? path.resolve("templates/sites", template) : has("starter") ? path.resolve("templates/starters/web") : null;
 const workingDir = source ? (await copyForBuild(source, name, "try")).workDir : undefined;
+// Worked examples, as the server seeds them at boot.
+ExemplarMemory.seedFromTemplates(path.resolve("templates/sites"));
 const started = Date.now();
 
 const orchestrator = new AutonomousOrchestrator({
@@ -54,7 +57,7 @@ const minutes = () => ((Date.now() - started) / 60000).toFixed(1);
 orchestrator.on("iteration-status", (info) => console.log(`  [${minutes()}m] pass ${info.iteration}: ${info.status}${info.attempt ? ` ${info.attempt}` : ""}`));
 orchestrator.on("thought", (thought) => {
   const review = /^Reviewed/.test(thought?.title ?? "");
-  if (thought?.kind === "decision" || thought?.kind === "repair" || review) {
+  if (thought?.kind === "decision" || thought?.kind === "repair" || review || /^(Following a worked example|Remembered this app|Planned [0-9]+ files)/.test(thought?.title ?? "")) {
     console.log(`  [${minutes()}m] ${thought.title}${review && thought.text ? `\n${thought.text}` : ""}`);
   }
 });

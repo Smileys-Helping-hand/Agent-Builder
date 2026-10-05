@@ -91,12 +91,30 @@ export const Packager = {
 
     // Build it, so there is something to open without a developer's tools.
     let hasBuiltSite = false;
+    let checked = true;
     const pkgPath = path.join(sourceDir, "package.json");
-    const pkg = fs.existsSync(pkgPath) ? (JSON.parse(fs.readFileSync(pkgPath, "utf8")) as { scripts?: Record<string, string> }) : null;
+    const pkg = fs.existsSync(pkgPath)
+      ? (JSON.parse(fs.readFileSync(pkgPath, "utf8")) as { scripts?: Record<string, string>; dependencies?: Record<string, string>; devDependencies?: Record<string, string> })
+      : null;
     if (pkg?.scripts?.build) {
       try {
         if (!fs.existsSync(path.join(sourceDir, "node_modules"))) await npm(["install", "--no-audit", "--no-fund"], sourceDir, 600_000);
-        await npm(["run", "build"], sourceDir, 600_000);
+        try {
+          await npm(["run", "build"], sourceDir, 600_000);
+        } catch (error) {
+          // The build script type-checks first; a leftover type error stopped
+          // it while the app itself runs. A Vite app is built anyway (types
+          // dropped, not checked), so the download still opens.
+          const vite = pkg.dependencies?.vite ?? pkg.devDependencies?.vite;
+          if (!vite) throw error;
+          await run(process.platform === "win32" ? "npx.cmd" : "npx", ["vite", "build", "--base", "./"], {
+            cwd: sourceDir,
+            windowsHide: true,
+            timeout: 600_000,
+            shell: process.platform === "win32"
+          });
+          checked = false;
+        }
         const dist = path.join(sourceDir, "dist");
         const files = fs.existsSync(dist) ? fs.readdirSync(dist) : [];
         if (files.length === 1 && files[0] === "index.html") {
@@ -125,6 +143,9 @@ export const Packager = {
           : hasBuiltSite
             ? "The built site is in the website folder. Upload that folder to any web host to see it."
             : "This package holds the source code only; it did not build. See source/README.md.",
+        ...(hasBuiltSite && !checked
+          ? ["", "Note: this version still fails its type check, so it was built without it. It runs; the code may still need tidying."]
+          : []),
         "",
         "To put it online: upload the website file (or the website folder) to any web host —",
         "Vercel, Netlify, Amplify, cPanel. It needs no server-side setup.",
@@ -136,7 +157,11 @@ export const Packager = {
     );
 
     // bsdtar ships with Windows 10+ and writes zip when the name ends in .zip.
-    await run("tar", ["-a", "-c", "-f", zipPath, "-C", staging, "."], { windowsHide: true, timeout: 300_000 });
+    // Windows' own tar, by path: Git's GNU tar, when it comes first on PATH,
+    // reads "E:\…" as a remote host ("Cannot connect to E: resolve failed").
+    const systemTar = process.platform === "win32" ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : null;
+    const tar = systemTar && fs.existsSync(systemTar) ? systemTar : "tar";
+    await run(tar, ["-a", "-c", "-f", zipPath, "-C", staging, "."], { windowsHide: true, timeout: 300_000 });
     fs.rmSync(staging, { recursive: true, force: true });
     if (hasBuiltSite) fs.writeFileSync(`${zipPath}.site`, "");
 

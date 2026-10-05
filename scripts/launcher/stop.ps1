@@ -18,6 +18,15 @@ Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
         Write-Host "  Builder stopped" -ForegroundColor Gray
     }
 
+# The Jarvis bridge belongs to the builder (Jarvis himself is left running).
+Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
+    Where-Object { $_.CommandLine -like "*jarvis-peer-bridge*" } |
+    ForEach-Object {
+        Stop-Process -Id $_.ProcessId -Force
+        $stopped++
+        Write-Host "  Jarvis bridge stopped" -ForegroundColor Gray
+    }
+
 # The packaged sidecar, if the desktop app was running.
 Get-Process -Name "agent-builder-api" | ForEach-Object {
     Stop-Process -Id $_.Id -Force

@@ -122,9 +122,19 @@ const rebase = (html: string, root: string, requested: string): string => {
   );
 };
 
+/**
+ * The pane frames the site sandboxed without same-origin, so it can never read
+ * this app's storage (where the builder key lives). In such a frame touching
+ * localStorage throws — and nearly every app we build saves to it, so it
+ * crashed before drawing anything: the blank preview. This gives the page its
+ * own storage for as long as it is open instead, before any of its scripts
+ * run. Outside a sandbox (opened in its own tab) it does nothing.
+ */
+const STORAGE_SHIM = `<script data-agent-builder-storage>(function(){try{window.localStorage.getItem("__ab");return}catch(e){}function make(){var d={};return{getItem:function(k){return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null},setItem:function(k,v){d[String(k)]=String(v)},removeItem:function(k){delete d[k]},clear:function(){d={}},key:function(i){return Object.keys(d)[i]||null},get length(){return Object.keys(d).length}}}try{Object.defineProperty(window,"localStorage",{value:make(),configurable:true});Object.defineProperty(window,"sessionStorage",{value:make(),configurable:true})}catch(e){}})();</script>`;
+
 /** The error reporter goes first in <head>; the live editor's hands at the end of <body>. */
 const withReporter = (html: string): string => {
-  const reported = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (head) => `${head}${REPORTER}`) : `${REPORTER}${html}`;
+  const reported = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (head) => `${head}${STORAGE_SHIM}${REPORTER}`) : `${STORAGE_SHIM}${REPORTER}${html}`;
   return /<\/body>/i.test(reported) ? reported.replace(/<\/body>(?![\s\S]*<\/body>)/i, `${EDITOR_SCRIPT}</body>`) : `${reported}${EDITOR_SCRIPT}`;
 };
 

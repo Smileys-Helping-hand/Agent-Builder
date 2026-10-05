@@ -50,7 +50,7 @@ function Test-GameMode {
     try { return [bool]((Get-Content $gameModeFile -Raw | ConvertFrom-Json).on) } catch { return $false }
 }
 
-$started = @{ api = $null; ollama = $null; tunnel = $null; jarvis = $null; jarvisAgent = $null }
+$started = @{ api = $null; ollama = $null; tunnel = $null; jarvis = $null; jarvisAgent = $null; jarvisBridge = $null }
 
 function Write-Step($text) {
     if (-not $Quiet) { Write-Host "  $text" -ForegroundColor Gray }
@@ -276,6 +276,37 @@ if ($hasJarvis) {
     Write-Step "Jarvis is not set up on this PC (no build in $jarvisDir) - skipping."
 }
 
+# The peer bridge: how Jarvis learns from the builder. Every 30 seconds it
+# sends him what the builder knows (research, lessons, projects, open issues)
+# and brings back what he asks for and what he knows about you
+# (data/jarvis-digest.md). It runs from the builder's folder, so it reads the
+# builder's .env (JARVIS_CLOUD_URL, JARVIS_PEER_KEY, AGENT_BUILDER_AGENT_KEY).
+$bridgeScript = Join-Path $jarvisDir "scripts\jarvis-peer-bridge.mjs"
+$bridgeLog = Join-Path $dataDir "jarvis-bridge.log"
+$envFile = Join-Path $repo ".env"
+$hasBridge = (Test-Path $bridgeScript) -and (Test-Path $envFile) -and (Select-String -Path $envFile -Pattern "^AGENT_BUILDER_AGENT_KEY=." -Quiet)
+
+function Get-JarvisBridge {
+    Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like "*jarvis-peer-bridge*" }
+}
+
+function Start-JarvisBridge {
+    Get-JarvisBridge | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Add-Content -Path $bridgeLog -Value ("`n==== started {0} ====" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss")) -Encoding ascii
+    $process = Start-Process -FilePath "cmd.exe" `
+        -ArgumentList "/c node `"$bridgeScript`" >> `"$bridgeLog`" 2>&1" `
+        -WorkingDirectory $repo -WindowStyle Hidden -PassThru
+    return $process.Id
+}
+
+if ($hasBridge) {
+    $started.jarvisBridge = Start-JarvisBridge
+    Write-Good "Jarvis bridge running (he learns from the builder)"
+} elseif (Test-Path $bridgeScript) {
+    Write-Step "Jarvis bridge not configured (no AGENT_BUILDER_AGENT_KEY in .env) - skipping."
+}
+
 # --- 3. a way in from outside -------------------------------------------------
 $address = "http://127.0.0.1:4000"
 $cloudflared = Get-Command cloudflared -ErrorAction SilentlyContinue
@@ -448,6 +479,12 @@ try {
             }
         }
 
+        # The bridge is one small process; if it has gone, start it again.
+        if ($hasBridge -and -not $jarvisUpdating -and -not (Get-JarvisBridge)) {
+            Write-LauncherLog "Jarvis bridge not running; starting it"
+            $started.jarvisBridge = Start-JarvisBridge
+        }
+
         # The model server: builds, repairs and research all need it.
         # Not while game mode is on: then it is off on purpose.
         if ($ollamaExe -and -not (Test-GameMode)) {
@@ -469,7 +506,7 @@ try {
     Write-LauncherLog "Launcher stopping everything it started"
     if (-not $Daemon) {
         if (-not $Quiet) { Write-Host "  Stopping..." -ForegroundColor Gray }
-        foreach ($id in @($started.tunnel, $started.api, $started.ollama, $started.jarvis, $started.jarvisAgent)) {
+        foreach ($id in @($started.tunnel, $started.api, $started.ollama, $started.jarvis, $started.jarvisAgent, $started.jarvisBridge)) {
             if ($id) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
         }
         # The builder runs under a cmd wrapper, so stop the node process it spawned.
@@ -477,6 +514,7 @@ try {
             Where-Object { $_.CommandLine -like "*src/server/server.ts*" } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
         if ($hasJarvis) { Stop-JarvisProcesses }
+        Get-JarvisBridge | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
         Remove-Item $urlFile -ErrorAction SilentlyContinue
         Remove-Item $pidFile -ErrorAction SilentlyContinue
         if (-not $Quiet) { Write-Host "  Stopped." -ForegroundColor Gray }

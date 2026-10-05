@@ -6,11 +6,12 @@ import { usePathname } from "next/navigation";
 import { useActivity } from "./activity";
 import { Icon } from "./ui";
 
-// Six is the most that stays legible across the bottom of a phone. Research,
-// Feed, Settings and Help live one tap deeper, under Control.
+// Eight is the most that stays legible across the bottom of a phone. Feed,
+// Settings and Help live one tap deeper, under Control.
 const items = [
   { href: "/", label: "Home", icon: Icon.power },
   { href: "/build", label: "Build", icon: Icon.sparkle },
+  { href: "/try", label: "Try it", icon: Icon.play },
   { href: "/prompt", label: "Prompt", icon: Icon.code },
   { href: "/orders", label: "Orders", icon: Icon.list },
   { href: "/projects", label: "Projects", icon: Icon.folder },

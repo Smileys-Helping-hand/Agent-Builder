@@ -110,6 +110,128 @@ const topLevelKeys = (source: string, name: string): Set<string> => {
 
 export const CodeGuard = {
   /**
+   * What a module exports, as short signatures another file can be written
+   * against: `newGame(settings: GameSettings): GameState`, `interface Brick
+   * { x: number; … }`, `const DEFAULT_SETTINGS: GameSettings`. Bodies left out.
+   */
+  exportSignatures(source: string): string[] {
+    const ts = loadTs();
+    if (!ts) return Array.from(exportedNames(source));
+    const file = ts.createSourceFile("module.tsx", source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+    const text = (node: import("typescript").Node | undefined) =>
+      node
+        ? node
+            .getText(file)
+            .replace(/\/\*[\s\S]*?\*\//g, "")
+            .replace(/\/\/[^\n]*/g, "")
+            .replace(/\s+/g, " ")
+            .trim()
+        : "";
+    const out: string[] = [];
+    for (const statement of file.statements) {
+      const modifiers = ts.canHaveModifiers(statement) ? ts.getModifiers(statement) ?? [] : [];
+      if (!modifiers.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)) continue;
+      const isDefault = modifiers.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword);
+      if (ts.isFunctionDeclaration(statement)) {
+        const params = statement.parameters.map((p) => text(p)).join(", ");
+        out.push(`${isDefault ? "default " : ""}${statement.name?.text ?? "function"}(${params})${statement.type ? `: ${text(statement.type)}` : ""}`);
+      } else if (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement) || ts.isEnumDeclaration(statement)) {
+        const full = text(statement).replace(/^export\s+/, "");
+        out.push(full.length > 220 ? `${full.slice(0, 217)}…` : full);
+      } else if (ts.isVariableStatement(statement)) {
+        for (const declaration of statement.declarationList.declarations) {
+          const name = text(declaration.name);
+          const init = declaration.initializer;
+          if (init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init))) {
+            out.push(`${name}(${init.parameters.map((p) => text(p)).join(", ")})${init.type ? `: ${text(init.type)}` : ""}`);
+          } else {
+            out.push(`const ${name}${declaration.type ? `: ${text(declaration.type)}` : ""}`);
+          }
+        }
+      } else if (ts.isClassDeclaration(statement)) {
+        out.push(`${isDefault ? "default " : ""}class ${statement.name?.text ?? ""}`);
+      }
+    }
+    // `export default Menu`: show Menu's own signature, props included —
+    // wrong props were the model's commonest seam error between files.
+    for (const statement of file.statements) {
+      if (!ts.isExportAssignment(statement) || !ts.isIdentifier(statement.expression)) continue;
+      const name = statement.expression.text;
+      let signature = `default ${name}`;
+      for (const other of file.statements) {
+        if (ts.isFunctionDeclaration(other) && other.name?.text === name) {
+          signature = `default ${name}(${other.parameters.map((p) => text(p)).join(", ")})`;
+        }
+        if (ts.isVariableStatement(other)) {
+          for (const declaration of other.declarationList.declarations) {
+            const init = declaration.initializer;
+            if (text(declaration.name) === name && init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init))) {
+              signature = `default ${name}(${init.parameters.map((p) => text(p)).join(", ")})`;
+            } else if (text(declaration.name) === name && declaration.type) {
+              signature = `default ${name}: ${text(declaration.type)}`;
+            }
+          }
+        }
+      }
+      out.push(signature);
+    }
+    return out.slice(0, 24);
+  },
+
+  /**
+   * A tested engine a build started from (src/game.ts from our catalogue) may
+   * gain exports and have rules adjusted, but a new version that drops any of
+   * its exports or throws away most of its code is a replacement, not an
+   * edit — seen: game.ts "rewritten" as empty stubs. Why, or null when fine.
+   */
+  engineRewriteProblem(before: string, after: string): string | null {
+    const kept = exportedNames(after);
+    const lost = [...exportedNames(before)].filter((name) => !kept.has(name));
+    if (lost.length > 0) return `drops ${lost.slice(0, 6).join(", ")}${lost.length > 6 ? ` and ${lost.length - 6} more` : ""}`;
+    const code = (text: string) => text.split(/\r?\n/).filter((line) => line.trim() && !/^\s*(\/\/|\/?\*)/.test(line)).length;
+    if (code(after) < code(before) * 0.6) return `keeps only ${code(after)} of its ${code(before)} lines of code`;
+    return null;
+  },
+
+  /**
+   * What a refused engine rewrite was trying to add: its new top-level
+   * exported declarations (a saveGame the app imports), appended to the
+   * engine as it was. A 7B model adding one function rewrites the whole file
+   * and loses half of it; the addition is worth keeping, the loss is not.
+   * Null when the new version adds nothing, or does not parse.
+   */
+  mergeEngineAdditions(filePath: string, before: string, after: string): { merged: string; added: string[] } | null {
+    const typescript = loadTs();
+    if (!typescript) return null;
+    const had = exportedNames(before);
+    let file: import("typescript").SourceFile;
+    try {
+      file = typescript.createSourceFile(filePath, after, typescript.ScriptTarget.ES2022, true);
+    } catch {
+      return null;
+    }
+    const additions: string[] = [];
+    const added: string[] = [];
+    for (const statement of file.statements) {
+      const exported = (typescript.getCombinedModifierFlags(statement as any) & typescript.ModifierFlags.Export) !== 0;
+      if (!exported) continue;
+      const names: string[] = [];
+      if (typescript.isVariableStatement(statement)) {
+        for (const declaration of statement.declarationList.declarations) if (typescript.isIdentifier(declaration.name)) names.push(declaration.name.text);
+      } else if ((typescript.isFunctionDeclaration(statement) || typescript.isClassDeclaration(statement) || typescript.isInterfaceDeclaration(statement) || typescript.isTypeAliasDeclaration(statement) || typescript.isEnumDeclaration(statement)) && statement.name) {
+        names.push(statement.name.text);
+      }
+      const fresh = names.filter((name) => !had.has(name));
+      if (fresh.length === 0 || fresh.length !== names.length) continue;
+      additions.push(statement.getText(file));
+      added.push(...fresh);
+    }
+    if (additions.length === 0) return null;
+    const merged = `${before.trimEnd()}\n\n${additions.join("\n\n")}\n`;
+    return this.syntaxErrors(filePath, merged).length === 0 ? { merged, added } : null;
+  },
+
+  /**
    * A template's content module (src/content.ts) is data the pages read by
    * name. Tailoring it means changing values; a small model tends to rewrite
    * its shape instead (seen: one `site` object replaced by separate `business`

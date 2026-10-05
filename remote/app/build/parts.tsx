@@ -116,7 +116,8 @@ export const CHECK_LABEL: Record<string, string> = {
   test: "Tests",
   lint: "Lint",
   tailoring: "Tailored",
-  completeness: "Complete"
+  completeness: "Complete",
+  runs: "Runs"
 };
 
 export type Tone = "good" | "warn" | "bad" | "busy" | "muted";
@@ -153,6 +154,34 @@ export const needsLook = (build: Build): boolean => {
 };
 
 export const works = (build: Build): boolean => build.state === "completed" && build.passed !== false;
+
+/**
+ * Which project a build belongs to: a customer order is one project however
+ * many times it is built; otherwise builds with the same name are runs of the
+ * same project. One card per project, its runs inside.
+ */
+export const projectKey = (build: Build): string => (build.orderId ? `order:${build.orderId}` : `name:${build.projectName.trim().toLowerCase()}`);
+
+export interface ProjectGroup {
+  key: string;
+  /** The run the card shows: the one building now, else the newest. */
+  latest: Build;
+  /** Every run, newest first. */
+  runs: Build[];
+  /** Best score any run reached. */
+  best: number;
+}
+
+export const groupBuilds = (builds: Build[]): ProjectGroup[] => {
+  const groups = new Map<string, Build[]>();
+  for (const build of builds) groups.set(projectKey(build), [...(groups.get(projectKey(build)) ?? []), build]);
+  return Array.from(groups, ([key, runs]) => {
+    const sorted = [...runs].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    const latest = sorted.find(isLive) ?? sorted[0];
+    const best = Math.max(...sorted.map((run) => run.bestScore ?? run.qualityScore ?? 0));
+    return { key, latest, runs: sorted, best };
+  });
+};
 
 export const StateBadge = ({ build }: { build: Build }) => {
   const { label, tone } = describe(build);
@@ -206,15 +235,17 @@ export const Stepper = ({ stage, attempt }: { stage?: string | null; attempt?: n
 };
 
 /** A build in a list: what it is, where it stands, and how good it is so far. */
-export const BuildCard = ({ build, onOpen }: { build: Build; onOpen: () => void }) => {
+export const BuildCard = ({ build, onOpen, runs = 1, best }: { build: Build; onOpen: () => void; runs?: number; best?: number }) => {
   const live = isLive(build);
   const pass = latestPass(build);
   const score = live ? build.qualityScore : build.bestScore ?? build.qualityScore;
-  const where = live
-    ? `Pass ${build.iterations || 1}${build.maxIterations ? ` of up to ${build.maxIterations}` : ""} · ${
-        STAGE_LABEL[build.stage ?? "starting"] ?? build.stage
-      }`
-    : `${build.iterations} pass${build.iterations === 1 ? "" : "es"} · ${build.finishedAt ? `ended ${ago(build.finishedAt)}` : `started ${ago(build.startedAt)}`}`;
+  const runsNote = runs > 1 ? ` · ${runs} runs${best !== undefined && best > score ? `, best ${Math.round(best)}` : ""}` : "";
+  const where =
+    (live
+      ? `Pass ${build.iterations || 1}${build.maxIterations ? ` of up to ${build.maxIterations}` : ""} · ${
+          STAGE_LABEL[build.stage ?? "starting"] ?? build.stage
+        }`
+      : `${build.iterations} pass${build.iterations === 1 ? "" : "es"} · ${build.finishedAt ? `ended ${ago(build.finishedAt)}` : `started ${ago(build.startedAt)}`}`) + runsNote;
 
   return (
     <button className={`card build-card ${live ? "live" : ""}`} onClick={onOpen}>

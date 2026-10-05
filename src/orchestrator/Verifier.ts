@@ -11,12 +11,16 @@ import path from "path";
 import { Executor } from "./Executor.js";
 import { Workspace } from "./Workspace.js";
 import { AutoFix } from "./AutoFix.js";
+import { TypeFixer } from "./TypeFixer.js";
+import { findBrowser, renderPage } from "./SiteAudit.js";
+import { pathToFileURL } from "url";
 import { CodeGuard } from "./CodeGuard.js";
 import { Logger } from "../utils/Logger.js";
 
 /** "tailoring": a template build still showing the template's sample content (added by the orchestrator). */
 /** "completeness": a new app that compiles but leaves out what its brief asked for (added by the orchestrator). */
-export type CheckName = "install" | "typecheck" | "build" | "test" | "lint" | "tailoring" | "completeness";
+/** "runs": the built app opened in a real browser loads without errors and shows something. */
+export type CheckName = "install" | "typecheck" | "build" | "test" | "lint" | "tailoring" | "completeness" | "runs";
 
 export type CheckResult = {
   name: CheckName;
@@ -61,6 +65,9 @@ const skip = (name: CheckName, reason: string): CheckResult => ({
 });
 
 export class Verifier {
+  /** What the type fixer changed in each folder's last verify, so the build can say so. */
+  static typeFixes = new Map<string, string[]>();
+
   /**
    * Ensure the workspace has a runnable test setup regardless of what the
    * model generated (or forgot to). Only fills gaps — never overwrites a
@@ -244,6 +251,16 @@ export class Verifier {
     const pkg = (await readJson(path.join(root, "package.json"))) ?? {};
 
     const hasTsconfig = await exists(path.join(root, "tsconfig.json"));
+    // Type errors with a mechanical fix are fixed by TypeScript itself, now that
+    // the packages (and so the types) are installed. Same rule as above: only
+    // on what we generated.
+    if (hasTsconfig && (options.autofix ?? options.scaffoldTests !== false)) {
+      const typeFixes = TypeFixer.run(root);
+      if (typeFixes.length) Logger.log("Fixed type errors without the model", { fixes: typeFixes });
+      this.typeFixes.set(root, typeFixes);
+    } else {
+      this.typeFixes.delete(root);
+    }
     if (hasTsconfig) {
       const result = await Executor.run("npx", ["tsc", "--noEmit"], { cwd: root, timeoutMs: CHECK_TIMEOUT_MS });
       checks.push({
@@ -267,6 +284,16 @@ export class Verifier {
         durationMs: result.durationMs,
         output: trim(`${result.stdout}\n${result.stderr}`)
       });
+      // The build script runs the strict type check first, so one leftover
+      // type error meant no dist/ and a blank preview — while the app itself
+      // runs fine (Vite drops types, it does not check them). Build it anyway
+      // for the preview pane, so there is always something to try. The check
+      // above still fails; this changes nothing about the score.
+      const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) } as Record<string, string>;
+      if (result.exitCode !== 0 && deps.vite && (options.autofix ?? options.scaffoldTests !== false)) {
+        const preview = await Executor.run("npx", ["vite", "build", "--base", "./"], { cwd: root, timeoutMs: CHECK_TIMEOUT_MS });
+        if (preview.exitCode === 0) Logger.log("Built a preview despite the failing checks", { root });
+      }
     } else {
       checks.push(skip("build", "no build script"));
     }
@@ -305,13 +332,52 @@ export class Verifier {
     return this.score(checks);
   }
 
+  /**
+   * Whether the built app actually runs: open dist/index.html in headless
+   * Chrome/Edge (as a double-click would — our builds are one file that works
+   * from disk), let it load, and fail on script errors or a blank page. The
+   * other checks say the code is well-typed and its tests pass; only this says
+   * a person opening it sees an app. Null when there is no browser or no build
+   * to open: then nothing is claimed either way.
+   */
+  static async runsCheck(root: string, builtSince = 0): Promise<CheckResult | null> {
+    const page = path.join(root, "dist", "index.html");
+    const browser = findBrowser();
+    if (!browser || !(await exists(page))) return null;
+    // A dist/ left from an earlier pass is not this code: say nothing rather than vouch for it.
+    if ((await fs.stat(page)).mtimeMs < builtSince) return null;
+    const started = Date.now();
+    const rendered = await renderPage(browser, pathToFileURL(page).href);
+    if (!rendered) return null;
+    // What a visitor would read: the body's text, without scripts and styles.
+    const body = /<body[^>]*>([\s\S]*)<\/body>/i.exec(rendered.dom)?.[1] ?? rendered.dom;
+    const text = body
+      .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&[a-z#0-9]+;/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    // A missing favicon is not the app failing.
+    const errors = rendered.errors.filter((error) => !/favicon/i.test(error));
+    const reasons: string[] = [];
+    if (errors.length > 0) reasons.push(`it throws while loading:\n${errors.slice(0, 8).join("\n")}`);
+    if (text.length < 15) reasons.push("the page is blank: nothing is drawn once it has loaded (an error before the first screen, or a screen that renders nothing)");
+    return {
+      name: "runs",
+      applicable: true,
+      passed: reasons.length === 0,
+      durationMs: Date.now() - started,
+      output: reasons.length === 0 ? `Opened in a browser: it loads and shows "${text.slice(0, 80)}…".` : `Opened in a browser, ${reasons.join("; and ")}`
+    };
+  }
+
   /** The same report with one more check, scored again. */
   static withCheck(report: VerificationReport, check: CheckResult): VerificationReport {
     return this.score([...report.checks.filter((existing) => existing.name !== check.name), check]);
   }
 
   private static score(checks: CheckResult[]): VerificationReport {
-    const weights: Record<CheckName, number> = { install: 25, typecheck: 20, build: 15, test: 35, lint: 5, tailoring: 30, completeness: 30 };
+    const weights: Record<CheckName, number> = { install: 25, typecheck: 20, build: 15, test: 35, lint: 5, tailoring: 30, completeness: 30, runs: 30 };
 
     const applicable = checks.filter((check) => check.applicable);
     const totalWeight = applicable.reduce((sum, check) => sum + weights[check.name], 0) || 1;

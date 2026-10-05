@@ -1,10 +1,13 @@
 import { EventEmitter } from "events";
 import { CodeGuard } from "./CodeGuard.js";
 import { AutoFix } from "./AutoFix.js";
-import { appSource, coverage, parseReview, reviewPrompt } from "./Completeness.js";
+import { appSource, coverage, engineUse, parseReview, reviewPrompt, stubs } from "./Completeness.js";
 import { applyFacts, readFacts, sampleFactsLeft } from "./Tailoring.js";
+import { ExemplarMemory, type Exemplar } from "../learning/ExemplarMemory.js";
+import { GameModeOnError } from "../utils/GameMode.js";
 import fs from "fs";
 import path from "path";
+import { execFileSync } from "child_process";
 import { ModelRouter, getProviderFromEnv, ollamaOptions } from "../tools/ModelRouter.js";
 import { Logger } from "../utils/Logger.js";
 import { QualityAnalyzer } from "./QualityAnalyzer.js";
@@ -196,6 +199,8 @@ export class AutonomousOrchestrator extends EventEmitter {
 
       // A template order starts with the customer's name already in.
       await this.prefillTailoring().catch((error: any) => Logger.warn("Could not pre-fill the template", { error: error?.message }));
+      // A new app close to one of our catalogue engines starts with that engine.
+      await this.adoptExemplarEngine().catch((error: any) => Logger.warn("Could not start from the example's engine", { error: error?.message }));
 
       // Optimize for current hardware
       if (this.config.hardwareOptimization) {
@@ -253,6 +258,7 @@ export class AutonomousOrchestrator extends EventEmitter {
             score: iteration.qualityScore,
             threshold: this.config.qualityThreshold
           });
+          this.rememberSuccess(iteration);
 
           // A score above threshold isn't the same as every applicable check
           // passing — e.g. a heavily-weighted install pass can clear a low
@@ -344,7 +350,19 @@ export class AutonomousOrchestrator extends EventEmitter {
       // Phase 1: Generate/Update Build
       iteration.status = "running";
       const buildContext = this.getBuildContext(iterationNum);
-      const generatedCode = await this.generateCode(buildContext);
+      // While the app does not even compile, a pass only fixes: generating new
+      // code first added fresh errors faster than the repairs cleared the old
+      // ones, and a build went round at 20 for pass after pass.
+      const lastBlocker = this.iterations[this.iterations.length - 1]?.verification?.blockingCheck?.name;
+      const fixFirst =
+        this.config.workingDir !== undefined &&
+        this.isStarter() &&
+        !this.starterStillPlaceholder() &&
+        (lastBlocker === "install" || lastBlocker === "typecheck" || lastBlocker === "build");
+      if (fixFirst) {
+        this.think(iterationNum, "decision", "Fixing before adding", `The app does not pass ${lastBlocker} yet, so this pass repairs what is there before writing anything new.`);
+      }
+      const generatedCode = fixFirst ? { files: {}, artifacts: [] } : await this.generateCode(buildContext);
       iteration.artifacts.push(...generatedCode.artifacts);
 
       let currentFiles = this.guardFiles(generatedCode.files);
@@ -352,7 +370,7 @@ export class AutonomousOrchestrator extends EventEmitter {
       if (nothingWritten && this.config.workingDir && this.isStarter() && !this.starterStillPlaceholder() && this.iterations.length > 0) {
         // The app is already there from an earlier pass: an empty answer is a
         // pass without new code, not a failed one. Check and repair what exists.
-        this.think(iterationNum, "decision", "No new code this pass", "The model returned no files, so this pass checks and repairs the app as it stands.");
+        if (!fixFirst) this.think(iterationNum, "decision", "No new code this pass", "The model returned no files, so this pass checks and repairs the app as it stands.");
       } else if ((!this.config.workingDir || this.isStarter()) && nothingWritten) {
         // Nothing to write means nothing to verify; scoring an empty folder (or
         // an untouched starter, which passes its checks as it is) only burns a
@@ -758,28 +776,56 @@ error) and the specific change needed to fix it. Do not write code.`;
         : "";
     const builtInHint =
       (lessons.some((lesson) => /require\.main|import\.meta\.url/.test(lesson.lesson)) ? "" : eagerExecutionHint) +
-      (await AutoFix.missingModules(this.workspace.root, failing.output).catch(() => ""));
+      (await AutoFix.missingModules(this.workspace.root, failing.output).catch(() => "")) +
+      (this.adoptedEngine.length
+        ? `\n${this.adoptedEngine.join(", ")} is a tested engine: do not rewrite it. A function it lacks (saving, loading, a new rule) goes in a new module such as src/lib/storage.ts, imported from there.\n`
+        : "") +
+      this.stuckTestHint(failing.name);
 
-    const prompt = `You are repairing a generated application that failed an automated check.
+    // The brief without its research notes: a repair needs to know what the app
+    // is for, not what the research engine read last week.
+    const description = this.config.description.split(/\n(?:What our research confirmed|This is going to a real customer)/i)[0].trim();
+    const promptWith = (listing: string) => `You are repairing a generated application that failed an automated check.
 
 Project: ${this.config.projectName}
-Description: ${this.config.description}
+Description: ${description}
 
 Failing check: ${failing.name}
 Error output:
 ${errorOutput}
 ${critique ? `\nA senior engineer's diagnosis of the root cause:\n${critique}\n` : ""}${builtInHint}${lessonsSection}
 Current files:
-${fileListing}
+${listing}
 
 Fix the problem. Start with ONE line beginning "CAUSE:" that says what was wrong
 and what you are changing. Then return ONLY the corrected file(s) as FILE:
 blocks, in the same format as the files above. Only include files you are
 changing — omit anything unchanged. No other prose.`;
+    let prompt = promptWith(fileListing);
+    if (AutonomousOrchestrator.promptTooBig(prompt)) {
+      // Too big to leave room for the answer — the "no usable fix" repairs.
+      // Show only the first files the error names, in full, and nothing else.
+      const slim = focus
+        .slice(0, 2)
+        .map((filePath) => `FILE: ${filePath}\n\`\`\`\n${(shownFiles[filePath] ?? "").slice(0, 12_000)}\n\`\`\``)
+        .join("\n\n");
+      prompt = promptWith(slim);
+    }
 
     try {
       const response = await ModelRouter.generate(prompt);
-      const patched = this.parseGeneratedCode(response);
+      let patched = this.parseGeneratedCode(response);
+      if (Object.keys(patched).length === 0 && named.length === 1) {
+        // The fix came back as one fenced block with no FILE: line. The error
+        // names one file, so that is the file it means — if the block is a
+        // whole module (it imports or exports) that parses.
+        const blocks = Array.from(response.matchAll(/```[\w-]*\n([\s\S]*?)```/g)).map((match) => match[1]);
+        const [code] = blocks;
+        if (blocks.length === 1 && /\b(import|export)\b/.test(code) && CodeGuard.syntaxErrors(named[0], code).length === 0) {
+          patched = { [named[0]]: code };
+          Logger.log(`Iteration ${iterationNum} repair attempt ${attempt}: took the one code block as ${named[0]}`);
+        }
+      }
       if (Object.keys(patched).length === 0) {
         Logger.warn(`Iteration ${iterationNum} repair attempt ${attempt}: model returned no FILE blocks`);
         this.think(iterationNum, "repair", `Repair ${attempt} for ${failing.name}: no usable fix`, this.narrative(response) || "The model answered without any files.");
@@ -811,7 +857,20 @@ changing — omit anything unchanged. No other prose.`;
     const lessonPreamble =
       (lessons.length > 0
         ? `Lessons learned from earlier builds on this machine — apply them:\n${LessonMemory.formatForPrompt(lessons)}\n\n`
-        : "") + this.researchPreamble(context.iteration);
+        : "") +
+      this.researchPreamble(context.iteration) +
+      this.exemplarPreamble(context.iteration);
+
+    // A new app is planned, then written one file at a time (see generatePlanned).
+    if (this.config.workingDir && this.isStarter() && this.starterStillPlaceholder()) {
+      const planned = await this.generatePlanned(context.iteration, lessonPreamble).catch((error: any) => {
+        if (error instanceof GameModeOnError) throw error;
+        Logger.warn("Planned generation failed; writing the app in one go instead", { error: error?.message });
+        return null;
+      });
+      if (planned) return planned;
+    }
+
     // The prompt and the answer share the model's window. A project that grows
     // pass by pass used to push the prompt to the edge of it, leaving no room
     // for the files: the model then answered in prose or stopped mid-file, and
@@ -1163,8 +1222,279 @@ ${lines}
     } catch {
       // No template.json, or an unreadable one: nothing is locked as kit.
     }
+    if (kit.size === 0 && fs.existsSync(path.join(this.workspace.root, "template.json"))) {
+      // A template the catalogue no longer has under that name: its kit is
+      // whatever src/lib held when this build folder was started.
+      try {
+        const git = (args: string[]) => execFileSync("git", args, { cwd: this.workspace.root, encoding: "utf8" }).trim();
+        const first = git(["rev-list", "--max-parents=0", "HEAD"]).split(/\s+/)[0];
+        for (const file of git(["ls-tree", "-r", "--name-only", first, "--", "src/lib"]).split(/\r?\n/)) if (file) kit.add(file);
+      } catch {
+        // No history to read: leave src/lib open rather than guess.
+      }
+    }
     this.kitCache = kit;
     return kit;
+  }
+
+  /** The worked example this build was shown, chosen once so every pass sees the same one (and the prompt cache holds). */
+  private exemplar: Exemplar | null | undefined = undefined;
+
+  /**
+   * A new app gets the closest app this builder made before (or a catalogue
+   * engine) as a worked example: what good looks like, which a small model
+   * otherwise never sees. Template orders and the user's own projects have
+   * their own code to follow.
+   */
+  private exemplarPreamble(iteration: number): string {
+    if (this.config.workingDir && !this.isStarter()) return "";
+    if (this.exemplar === undefined) this.chooseExemplar(iteration);
+    return this.exemplar ? `${ExemplarMemory.formatForPrompt(this.exemplar, this.adoptedEngine)}\n` : "";
+  }
+
+  private chooseExemplar(iteration: number): void {
+    try {
+      this.exemplar = ExemplarMemory.relevant(`${this.config.projectName}\n${this.config.description}`);
+    } catch (error: any) {
+      Logger.warn("Could not look up a worked example", { error: error?.message });
+      this.exemplar = null;
+    }
+    if (this.exemplar) {
+      ExemplarMemory.markUsed(this.exemplar.id);
+      this.think(iteration, "lesson", `Following a worked example: ${this.exemplar.title}`, "The closest app it knows how to build well. It shows the structure and depth to aim for; the content is this brief's.");
+    }
+  }
+
+  /** Engine files from the worked example that this build started with. */
+  private adoptedEngine: string[] = [];
+
+  /**
+   * A fresh app whose closest example is one of our catalogue engines starts
+   * with that engine in it. Shown the engine as an example, the model wrote a
+   * real brick-breaker around it — and then imported a game.ts that was not
+   * there and rebuilt it as a broken stub. Tested code in the project beats a
+   * description of it.
+   */
+  private async adoptExemplarEngine(): Promise<void> {
+    if (!this.config.workingDir || !this.isStarter() || !this.starterStillPlaceholder()) return;
+    if (this.exemplar === undefined) this.chooseExemplar(1);
+    if (!this.exemplar) return;
+    const files = ExemplarMemory.engineFiles(this.exemplar, path.resolve(process.env.TEMPLATES_DIR ?? "templates/sites"));
+    // In src/engine/, not beside the screens: the engine is game.ts and the
+    // model names its screen Game.tsx, which on Windows is the same file name
+    // ("./Game" finds game.ts) — a build went round in circles on it.
+    const fresh = Object.fromEntries(
+      Object.entries(files)
+        .map(([file, text]) => [file.replace(/^src\//, "src/engine/"), text] as const)
+        .filter(([file]) => !fs.existsSync(path.join(this.workspace.root, file)))
+    );
+    if (Object.keys(fresh).length === 0) return;
+    await this.workspace.writeFiles(fresh, `Head start: the engine from ${this.exemplar.title}`);
+    this.adoptedEngine = Object.keys(fresh);
+    this.think(
+      1,
+      "decision",
+      `Started from a tested engine: ${this.adoptedEngine.join(", ")}`,
+      `From our "${this.exemplar.title}". The app is built on it, so the rules (levels, scoring, winning and losing) work from the first pass.`,
+      this.adoptedEngine
+    );
+  }
+
+  /**
+   * A new app that passed every check is kept as a worked example for the
+   * next similar brief, and the example this build followed gets the credit.
+   */
+  private rememberSuccess(iteration: BuildIteration): void {
+    if (!iteration.verification?.passed || (this.config.workingDir && !this.isStarter())) return;
+    try {
+      if (this.exemplar) ExemplarMemory.recordOutcome(this.exemplar.id, true);
+      const id = ExemplarMemory.recordSuccess(this.workspace.root, this.config.projectName, this.config.description, iteration.qualityScore);
+      if (id !== null) {
+        this.think(iteration.iteration, "lesson", "Remembered this app as a worked example", "The next build with a similar brief starts from how this one was done.");
+      }
+    } catch (error: any) {
+      Logger.warn("Could not remember this build as a worked example", { error: error?.message });
+    }
+  }
+
+  /**
+   * A new app, planned and then written one file at a time.
+   *
+   * Asked for a whole app in one answer, a 7B model writes a little of
+   * everything and gets the seams wrong: an import of a function it never
+   * wrote, two different GameState types, props one screen passes and another
+   * does not take. One focused file at a time is what a small model does best,
+   * so: first a short plan (the files, what each is for, what each exports),
+   * then each file in its own call, which sees the plan and the actual code
+   * already written — so every import points at something real. Logic first,
+   * then screens, then App.tsx, then tests. Null when there is no usable plan.
+   */
+  private async generatePlanned(iteration: number, preamble: string): Promise<{ files: Record<string, string>; artifacts: string[] } | null> {
+    const brief = this.config.description.split(/\n(?:What our research confirmed|This is going to a real customer)/i)[0].trim();
+    const engine = this.adoptedEngine.map((file) => {
+      const text = fs.existsSync(path.join(this.workspace.root, file)) ? fs.readFileSync(path.join(this.workspace.root, file), "utf8") : "";
+      return { file, text, exports: CodeGuard.exportSignatures(text) };
+    });
+    const engineNote = engine.length
+      ? `\nAlready in the project (a tested engine — use it, do not plan to rewrite it):\n${engine.map((e) => `- ${e.file}: ${e.exports.join("; ")}`).join("\n")}\n`
+      : "";
+    const rules = this.environmentRules();
+
+    // 1. The plan: small, structured, cheap to retry.
+    const planPrompt = `${preamble}You are planning a new web app (React + TypeScript + Vite + Vitest, already set up).
+
+What to build:
+${brief}
+${engineNote}${rules}
+Plan the files. Logic (rules, state, saving) goes in plain .ts modules under src/lib/; each screen is a
+component under src/components/; src/App.tsx shows the screens and switches between them; tests go in
+src/lib/*.test.ts and test the logic. Every page and every must-have in the brief gets a real home.
+Between 4 and 9 files. Do not plan src/main.tsx, src/lib/testing.tsx or anything already in the project.
+Every component's exports give its props in full — App.tsx will pass exactly these and nothing else:
+  "default Menu(props: { onPlay: () => void; onBack: () => void })". A screen with no props: "default Home()".
+
+Answer with JSON only:
+{"files":[{"path":"src/lib/example.ts","purpose":"what it does, in one sentence","exports":["name(arg: Type): Return", "interface Name { field: Type }"]},{"path":"src/components/Example.tsx","purpose":"a screen","exports":["default Example(props: { onDone: () => void })"]}]}`;
+    let plan: Array<{ path: string; purpose: string; exports: string[] }> = [];
+    let answer = "";
+    for (let attempt = 0; attempt < 2 && plan.length === 0; attempt++) {
+      answer = await ModelRouter.generate(planPrompt);
+      plan = AutonomousOrchestrator.parsePlan(answer, new Set([...this.kitFiles(), ...this.adoptedEngine, "src/main.tsx"]));
+    }
+    // What the engine already exports is not planned again: a plan that
+    // rewrote newGame/step in its own gameLogic.ts gave the app two GameState
+    // types that never fit together. A file that would only duplicate the
+    // engine is dropped; a duplicated export is struck from the rest.
+    const engineNames = new Set(engine.flatMap((e) => e.exports.map((signature) => /(?:interface|type|const|class|default)?\s*([A-Za-z_$][\w$]*)/.exec(signature)?.[1] ?? "")));
+    const exportName = (signature: string) => /(?:interface|type|const|class|default)?\s*([A-Za-z_$][\w$]*)/.exec(signature.trim())?.[1] ?? "";
+    plan = plan
+      .map((file) => {
+        const dupes = file.exports.filter((signature) => engineNames.has(exportName(signature)));
+        return { file, dupes, keep: file.exports.filter((signature) => !engineNames.has(exportName(signature))) };
+      })
+      .filter(({ file, dupes, keep }) => !(dupes.length > 0 && dupes.length >= keep.length && !/\.tsx$/.test(file.path)))
+      .map(({ file, keep }) => ({ ...file, exports: keep }));
+    // Tests for the logic, when the plan forgot them.
+    const logic = plan.find((file) => /^src\/lib\/[^/]+\.ts$/.test(file.path) && !/\.test\./.test(file.path));
+    if (logic && !plan.some((file) => /\.test\.tsx?$/.test(file.path))) {
+      plan.push({ path: logic.path.replace(/\.ts$/, ".test.ts"), purpose: `tests for ${logic.path}: each exported function, with real expected values`, exports: [] });
+    }
+    if (plan.length > 0 && !plan.some((file) => file.path === "src/App.tsx")) {
+      // The screen switcher is what turns modules into an app; plan it if the model did not.
+      plan.push({ path: "src/App.tsx", purpose: "shows each screen and switches between them", exports: ["default App()"] });
+    }
+    if (plan.length < 2) {
+      Logger.warn("Planned generation: no usable plan", { answer: answer.slice(0, 600) });
+      return null;
+    }
+
+    // Logic first, then screens, App.tsx, and tests last: each file is written
+    // after the ones it is likely to import.
+    const rank = (file: string) => (/\.test\.tsx?$/.test(file) ? 3 : file === "src/App.tsx" ? 2 : /\.tsx$/.test(file) ? 1 : 0);
+    plan.sort((a, b) => rank(a.path) - rank(b.path));
+    const planText = plan.map((file) => `- ${file.path}: ${file.purpose}${file.exports.length ? `\n    exports: ${file.exports.join("; ")}` : ""}`).join("\n");
+    this.think(iteration, "plan", `Planned ${plan.length} files`, planText, plan.map((file) => file.path));
+
+    // 2. Each file in its own call. What stays the same comes first (so the
+    // model server's prompt cache holds); what changes per file comes last.
+    const written: Record<string, string> = {};
+    const fixed = `${preamble}You are writing one file of a new web app (React + TypeScript + Vite + Vitest, already set up).
+
+What to build:
+${brief}
+${engineNote}${rules}
+The plan for the whole app:
+${planText}
+`;
+    for (const [index, file] of plan.entries()) {
+      const others = Object.entries(written)
+        .map(([name, text]) => (text.length > 6000 ? `FILE: ${name} (exports: ${CodeGuard.exportSignatures(text).join("; ")})` : `FILE: ${name}\n\`\`\`\n${text}\n\`\`\``))
+        .join("\n\n");
+      const engineCode = engine.map((e) => `FILE: ${e.file} (already written; exports: ${e.exports.join("; ")})`).join("\n");
+      const prompt = `${fixed}
+Already written — import from these exactly as they are (names, props, types):
+${[engineCode, others].filter(Boolean).join("\n\n") || "(nothing yet)"}
+
+Now write ${file.path} (${file.purpose}), complete and working: real logic and real screens, no
+placeholders, no TODO comments, no buttons that do nothing. Import only from the files above, the
+installed packages, and files listed in the plan.${
+        file.exports.length
+          ? `\nIt must export exactly what the plan says, with the same names and props: ${file.exports.join("; ")}.`
+          : ""
+      }${
+        file.path === "src/App.tsx"
+          ? "\nRender each screen with exactly the props its signature above takes — no more, no fewer."
+          : ""
+      } Answer with exactly one file:
+FILE: ${file.path}
+\`\`\`
+…the whole file…
+\`\`\``;
+      let code: string | undefined;
+      for (let attempt = 0; attempt < 2 && !code; attempt++) {
+        const answer = await ModelRouter.generate(prompt);
+        const files = this.parseGeneratedCode(answer);
+        code = files[file.path] ?? (Object.keys(files).length === 1 ? Object.values(files)[0] : undefined);
+        if (!code) {
+          // One fenced block and no FILE: line is still this file.
+          const blocks = Array.from(answer.matchAll(/```[\w-]*\n([\s\S]*?)```/g)).map((match) => match[1]);
+          if (blocks.length === 1 && /\b(import|export)\b/.test(blocks[0])) code = blocks[0];
+        }
+      }
+      if (code) {
+        written[file.path] = code;
+        this.emit("iteration-status", { iteration, status: "writing", attempt: index + 1 });
+      } else {
+        Logger.warn(`Planned generation: no usable answer for ${file.path}`);
+      }
+    }
+    if (!written["src/App.tsx"]) return null;
+    this.think(iteration, "decision", `Wrote ${Object.keys(written).length} of ${plan.length} planned files, one at a time`, Object.keys(written).map((file) => `• ${file}`).join("\n"), Object.keys(written));
+    return { files: written, artifacts: Object.keys(written) };
+  }
+
+  /** The plan's files from the model's answer: JSON, under src/, nothing locked, no duplicates. */
+  static parsePlan(answer: string, locked: Set<string>): Array<{ path: string; purpose: string; exports: string[] }> {
+    const json = /\{[\s\S]*\}/.exec(answer)?.[0];
+    if (!json) return [];
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(json);
+    } catch {
+      return [];
+    }
+    const files = (parsed as { files?: unknown })?.files;
+    if (!Array.isArray(files)) return [];
+    const seen = new Set<string>();
+    const out: Array<{ path: string; purpose: string; exports: string[] }> = [];
+    for (const entry of files as Array<Record<string, unknown>>) {
+      const file = typeof entry?.path === "string" ? entry.path.replace(/\\/g, "/").replace(/^\.\//, "").trim() : "";
+      if (!/^src\/[\w./-]+\.(ts|tsx|css)$/.test(file) || file.includes("..") || locked.has(file) || seen.has(file.toLowerCase())) continue;
+      seen.add(file.toLowerCase());
+      out.push({
+        path: file,
+        purpose: typeof entry.purpose === "string" ? entry.purpose.slice(0, 200) : "",
+        exports: Array.isArray(entry.exports) ? entry.exports.filter((item): item is string => typeof item === "string").map((item) => item.slice(0, 160)).slice(0, 10) : []
+      });
+    }
+    return out.slice(0, 10);
+  }
+
+  /**
+   * A test that has failed pass after pass, on an app that otherwise works, is
+   * usually a test and an app the model wrote that disagree — and it cannot
+   * tell which is wrong, so it changes neither enough. Say plainly that the test
+   * is ours, not the customer's, and which way to settle it.
+   */
+  private stuckTestHint(failing: string): string {
+    if (failing !== "test" || !this.config.workingDir || !(this.isStarter() || fs.existsSync(path.join(this.workspace.root, "template.json")))) return "";
+    let streak = 0;
+    for (let i = this.iterations.length - 1; i >= 0 && this.iterations[i].verification?.blockingCheck?.name === "test"; i--) streak++;
+    if (streak < 2) return "";
+    return `\nThis test has failed for ${streak} passes in a row. It was written by this build, not by the customer. If it
+checks something the brief does not ask for, or checks it differently from how the app (correctly) does it, change
+the test to check what the app really does — keep it a real test with real expected values. If the brief does ask
+for it, make the app do it. Do one or the other completely; do not change both halfway.\n`;
   }
 
   /** Whether this build started from the web starter (templates/starters/web) rather than a real project or template. */
@@ -1282,13 +1612,29 @@ No placeholders: where the brief does not give a detail, write realistic wording
    * template orders (tailoring covers those) and for projects the user owns.
    */
   private async completenessCheck(iteration: number, report: VerificationReport): Promise<CheckResult | null> {
-    if (this.config.workingDir && !this.isStarter()) return null;
+    // Only apps on the web starter: its layout (src/, App.tsx) is what this
+    // measures. A CLI or API built from an empty folder has no src/ to count,
+    // and would fail it forever.
+    if (!this.config.workingDir || !this.isStarter()) return null;
     const started = Date.now();
     const brief = [this.config.description, ...this.guidance.map((note) => note.text)].join("\n");
     const source = appSource(this.workspace.root);
-    const { missing, lines, minLines } = coverage(brief, source);
+    const { missing, lines, minLines } = coverage(brief, source, undefined, this.adoptedEngine);
     const reasons: string[] = [];
     const todo: string[] = [];
+    // What only looks finished, found without a model: the local reviewer
+    // passed a game whose canvas loop said "// Render game logic here".
+    const fakes = stubs(source);
+    if (fakes.length > 0) {
+      reasons.push(`parts of it are not real yet: ${fakes.join("; ")}`);
+      todo.push(...fakes.map((fake) => `make this real: ${fake}`));
+    }
+    for (const engine of engineUse(source, this.adoptedEngine)) {
+      if (engine.used.length < Math.ceil((engine.used.length + engine.unused.length) / 2)) {
+        reasons.push(`the app barely uses the engine in ${engine.file}: it never calls ${engine.unused.join(", ")}`);
+        todo.push(`drive the game with the engine in ${engine.file}: call ${engine.unused.join(", ")} from the app (the game loop, the controls, starting a level) so it really plays`);
+      }
+    }
     if (missing.length > 0) {
       reasons.push(`the brief asks for ${missing.map((item) => `"${item.label}"`).join(", ")}, and nothing in the app's code has ${missing.length === 1 ? "it" : "them"}`);
     }
@@ -1306,6 +1652,9 @@ No placeholders: where the brief does not give a detail, write realistic wording
         try {
           gaps = parseReview(await ModelRouter.generate(reviewPrompt(brief, source))) ?? [];
         } catch (error: any) {
+          // Game mode switched on mid-pass: that is not a verdict. The pass
+          // fails and is tried again once the build resumes.
+          if (error instanceof GameModeOnError) throw error;
           Logger.warn("Completeness review failed; passing on the checks alone", { error: error?.message });
           gaps = [];
         }
@@ -1449,6 +1798,31 @@ Rules that keep this build passing its checks (install, typecheck, build, tests)
       );
     }
     files = checked.files;
+
+    // The engine this build started from may grow (a new export, a tweak to a
+    // rule), but not be replaced: a 7B model "rewrote" game.ts as empty stubs.
+    for (const file of this.adoptedEngine) {
+      if (!(file in files)) continue;
+      let before = "";
+      try {
+        before = fs.readFileSync(path.join(this.workspace.root, file), "utf8");
+      } catch {
+        continue;
+      }
+      const problem = CodeGuard.engineRewriteProblem(before, files[file]);
+      if (problem) {
+        // Keep what it was adding (the saveGame the app imports), not what it lost.
+        const salvage = CodeGuard.mergeEngineAdditions(file, before, files[file]);
+        files[file] = salvage?.merged ?? before;
+        this.think(
+          this.currentIteration,
+          "decision",
+          `Kept the engine in ${file}`,
+          `The new version ${problem}.${salvage ? ` Its new ${salvage.added.join(", ")} ${salvage.added.length === 1 ? "was" : "were"} added to the engine as it was.` : ""} Add to the engine or adjust a rule; do not replace it.`,
+          [file]
+        );
+      }
+    }
 
     if (!this.config.workingDir || !fs.existsSync(path.join(this.workspace.root, "template.json"))) return files;
 
@@ -1597,7 +1971,23 @@ Rules that keep this build passing its checks (install, typecheck, build, tests)
     // build then carried both into the project nobody asked to change. A copy
     // of one of our own builds or templates already has its runner.
     const fromOurTemplate = fs.existsSync(path.join(this.workspace.root, "template.json"));
+    const verifyStarted = Date.now();
     let report = await Verifier.verify(this.workspace, { scaffoldTests: !this.config.workingDir, autofix: !this.config.workingDir || fromOurTemplate });
+    // Our own apps (a template or the starter) are opened in a real browser:
+    // the one check that says a person would see a working app.
+    if (fromOurTemplate) {
+      const runs = await Verifier.runsCheck(this.workspace.root, verifyStarted).catch(() => null);
+      if (runs) report = Verifier.withCheck(report, runs);
+    }
+    const typeFixes = Verifier.typeFixes.get(this.workspace.root) ?? [];
+    if (typeFixes.length > 0) {
+      this.think(
+        iteration,
+        "decision",
+        `Fixed ${typeFixes.length} type error${typeFixes.length === 1 ? "" : "s"} without the model`,
+        typeFixes.map((fix) => `• ${fix}`).join("\n")
+      );
+    }
     const tailoring = await this.tailoringCheck();
     if (tailoring) report = Verifier.withCheck(report, tailoring);
     const completeness = await this.completenessCheck(iteration, report);

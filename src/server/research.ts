@@ -3,7 +3,9 @@ import { authenticate, authorizeRoles } from "./auth.js";
 import { authenticateAgent } from "./agentAuth.js";
 import { ResearchEngine } from "../research/ResearchEngine.js";
 import { ResearchStore } from "../research/ResearchStore.js";
+import path from "path";
 import { LessonMemory, type LessonScope } from "../learning/LessonMemory.js";
+import { ExemplarMemory } from "../learning/ExemplarMemory.js";
 import { LearningReports } from "../research/LearningReport.js";
 import { ResearchChat } from "../research/ResearchChat.js";
 import { SecondBrainClient } from "../integrations/SecondBrainClient.js";
@@ -16,6 +18,12 @@ export const registerResearchRoutes = (app: Express) => {
   const engine = ResearchEngine.getInstance();
 
   const seeded = LessonMemory.seed();
+  try {
+    // The catalogue's own engines are the first worked examples new builds follow.
+    ExemplarMemory.seedFromTemplates(path.resolve(process.env.TEMPLATES_DIR ?? "templates/sites"));
+  } catch (error) {
+    Logger.warn("Could not seed worked examples from the templates", { error: errorMessage(error) });
+  }
   SecondBrainClient.startSyncLoop();
   const resumed = engine.resumeAll();
 

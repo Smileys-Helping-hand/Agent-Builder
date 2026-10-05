@@ -10,10 +10,12 @@ import path from "node:path";
 import assert from "node:assert/strict";
 
 import { CodeGuard } from "../src/orchestrator/CodeGuard.js";
+import { AutonomousOrchestrator } from "../src/orchestrator/AutonomousOrchestrator.js";
 import { AutoFix } from "../src/orchestrator/AutoFix.js";
+import { TypeFixer } from "../src/orchestrator/TypeFixer.js";
 import { Verifier } from "../src/orchestrator/Verifier.js";
 import { applyFacts, readFacts, sampleFactsLeft } from "../src/orchestrator/Tailoring.js";
-import { coverage, parseReview, requirementsFromBrief } from "../src/orchestrator/Completeness.js";
+import { coverage, engineUse, parseReview, requirementsFromBrief, stubs } from "../src/orchestrator/Completeness.js";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "ab-guards-"));
 fs.mkdirSync(path.join(root, "src"), { recursive: true });
@@ -77,6 +79,19 @@ assert.equal(CodeGuard.templateShapeProblem(content, content.replace('menu: [{ t
 assert.match(CodeGuard.templateShapeProblem(content, `export const business = { name: "x" };\nexport const menu = [];\n`) ?? "", /no longer exports site/, "a rewritten shape is caught");
 assert.match(CodeGuard.templateShapeProblem(content, content.replace('  menu: [{ title: "Start", dishes: [] }],\n', "")) ?? "", /site lost menu/, "a dropped key is caught");
 
+// A browser app never gets a server-only package: `canvas` broke npm install for a whole game.
+const browserApp = fs.mkdtempSync(path.join(os.tmpdir(), "ab-browser-"));
+fs.mkdirSync(path.join(browserApp, "src"));
+fs.writeFileSync(path.join(browserApp, "package.json"), JSON.stringify({ name: "g", dependencies: { react: "^18", express: "latest" }, devDependencies: { vite: "^5" } }));
+fs.writeFileSync(path.join(browserApp, "src/Game.tsx"), "import { createCanvas } from 'canvas';\nimport confetti from 'canvas-confetti';\nexport default () => null;\n");
+const browserNotes = await AutoFix.run(browserApp);
+const browserPkg = JSON.parse(fs.readFileSync(path.join(browserApp, "package.json"), "utf8"));
+assert.equal(browserPkg.dependencies.canvas, undefined, "canvas is not added");
+assert.equal(browserPkg.dependencies.express, undefined, "a server package the model added is taken out");
+assert.equal(browserPkg.dependencies["canvas-confetti"], "latest", "a browser package still is");
+assert.ok(browserNotes.some((note) => /removed express/.test(note)));
+assert.match(await AutoFix.missingModules(browserApp, "src/Game.tsx(1,30): error TS2307: Cannot find module 'canvas' or its corresponding type declarations."), /canvas: the browser's own <canvas> element/);
+
 // Running it again changes nothing.
 assert.deepEqual(await AutoFix.run(root), [], "fixes are idempotent");
 
@@ -94,6 +109,39 @@ const typecheck = [
 const hint = await AutoFix.missingModules(game, typecheck);
 assert.match(hint, /Create FILE: src\/lib\/gameLogic\.ts .*must export: loadGame, saveGame, Save\./, "one module to create, with every name the app uses");
 assert.match(hint, /Create FILE: src\/components\/Menu\.tsx .*Menu \(default export\)/, "a component is a .tsx with its default export");
+
+// A module that is there but lacks a name: say which file to add it to, and what it has.
+fs.writeFileSync(path.join(game, "src/engine.ts"), "export const step = () => 1;\nexport interface GameState { score: number }\n");
+const absentHint = await AutoFix.missingModules(game, "src/components/Save.tsx(2,21): error TS2305: Module '\"../engine\"' has no exported member 'saveGame'.");
+assert.match(absentHint, /src\/engine\.ts does not export saveGame\. Add it to src\/engine\.ts .*\(step, GameState\)/);
+fs.rmSync(path.join(game, "src/engine.ts"));
+
+// The same type declared twice is named, with the engine's as the one to keep.
+fs.mkdirSync(path.join(game, "src/engine"), { recursive: true });
+fs.mkdirSync(path.join(game, "src/lib"), { recursive: true });
+fs.writeFileSync(path.join(game, "src/engine/game.ts"), "export interface GameState { score: number }\n");
+fs.writeFileSync(path.join(game, "src/lib/gameLogic.ts"), "export interface GameState { points: number }\n");
+assert.match(
+  await AutoFix.duplicateTypes(game, "src/App.tsx(43,34): error TS2345: Argument of type 'GameState' is not assignable to parameter of type 'GameState'."),
+  /GameState is declared in .*: keep only the one in src\/engine\/game\.ts, delete it from src\/lib\/gameLogic\.ts/
+);
+assert.equal(await AutoFix.duplicateTypes(game, "src/App.tsx(1,1): error TS2304: Cannot find name 'x'."), "", "only when the errors are about it");
+fs.rmSync(path.join(game, "src/engine"), { recursive: true });
+fs.rmSync(path.join(game, "src/lib"), { recursive: true });
+
+// An engine the build started from can grow but not be replaced.
+const engineBefore = "export const step = (s: number) => {\n  const next = s + 1;\n  return next;\n};\nexport const launch = () => {\n  return 1;\n};\nexport type State = { a: number };\n";
+assert.equal(CodeGuard.engineRewriteProblem(engineBefore, `${engineBefore}export const saveGame = () => 1;\n`), null, "adding an export is fine");
+assert.match(CodeGuard.engineRewriteProblem(engineBefore, "export const step = (s: number) => {};\nexport type State = { a: number };\n") ?? "", /drops launch/);
+assert.match(CodeGuard.engineRewriteProblem(engineBefore, "export const step = (s: number) => {};\nexport const launch = () => {};\nexport type State = { a: number };\n") ?? "", /keeps only 3 of its 8 lines/);
+
+// A truncated engine rewrite that adds saveGame: the addition is kept, the engine is not lost.
+const truncated = "export const step = (s: number) => s + 1;\nexport const saveGame = (s: State): void => {\n  localStorage.setItem('game', JSON.stringify(s));\n};\nexport function loadGame(): State | null {\n  return null;\n}\n";
+const salvage = CodeGuard.mergeEngineAdditions("src/engine/game.ts", engineBefore, truncated);
+assert.deepEqual(salvage?.added, ["saveGame", "loadGame"]);
+assert.ok(salvage!.merged.startsWith(engineBefore.trimEnd()), "the engine is kept whole");
+assert.match(salvage!.merged, /export const saveGame[\s\S]*export function loadGame/);
+assert.equal(CodeGuard.mergeEngineAdditions("src/engine/game.ts", engineBefore, "export const step = () => 0;\n"), null, "nothing new: nothing to keep");
 
 // Once the module exists, the import that points at the wrong folder is pointed at it.
 fs.mkdirSync(path.join(game, "src/lib"));
@@ -127,6 +175,16 @@ assert.match(fs.readFileSync(path.join(clash, "src/App.tsx"), "utf8"), /import \
 assert.deepEqual(await AutoFix.splitNameClashes(clash), []);
 assert.deepEqual(await AutoFix.fixDefaultImports(clash), [], "default-import fix is idempotent");
 
+// game.ts beside Game.tsx: one name to Windows. The logic moves out of the way.
+const caseClash = fs.mkdtempSync(path.join(os.tmpdir(), "ab-case-"));
+fs.mkdirSync(path.join(caseClash, "src"));
+fs.writeFileSync(path.join(caseClash, "src/game.ts"), "export const step = () => 1;\n");
+fs.writeFileSync(path.join(caseClash, "src/Game.tsx"), "export default function Game() { return null; }\n");
+fs.writeFileSync(path.join(caseClash, "src/App.tsx"), 'import { step } from "./game";\nimport Game from "./Game";\n');
+assert.match(await AutoFix.nameClashes(caseClash), /src\/game\.ts and src\/Game\.tsx|src\/Game\.tsx and src\/game\.ts/, "a clash that differs only in case is named");
+assert.deepEqual(await AutoFix.splitNameClashes(caseClash), ["src/game.ts moved to src/game.logic.ts: it shared its name with src/Game.tsx, so the screen could never be imported"]);
+assert.match(fs.readFileSync(path.join(caseClash, "src/App.tsx"), "utf8"), /import \{ step \} from "\.\/game\.logic";\nimport Game from "\.\/Game";/);
+
 // A component used without being imported gets its import.
 fs.writeFileSync(path.join(clash, "src/Save.tsx"), "export default function Save() {\n  return <p>Save</p>;\n}\n");
 fs.writeFileSync(path.join(clash, "src/Load.tsx"), "export const Load = () => <p>Load</p>;\n");
@@ -135,6 +193,28 @@ assert.equal((await AutoFix.addMissingComponentImports(clash)).length, 2, "Save 
 const shell = fs.readFileSync(path.join(clash, "src/Shell.tsx"), "utf8");
 assert.match(shell, /import Game from "\.\/Game";\nimport Save from "\.\/Save";\nimport \{ Load \} from "\.\/Load";\n/, "default and named imports, after the others");
 assert.deepEqual(await AutoFix.addMissingComponentImports(clash), [], "component import fix is idempotent");
+
+// A hook used without its import gets one: merged into the React import, or a new one.
+fs.writeFileSync(path.join(clash, "src/Hooks.tsx"), 'import React, { useEffect } from "react";\nexport const A = () => { const [n, setN] = useState<number>(0); useEffect(() => {}, []); return null; };\n');
+fs.writeFileSync(path.join(clash, "src/NoReact.tsx"), "export const B = () => { const r = useRef(null); return null; };\n");
+const hookNotes = await AutoFix.addMissingReactImports(clash);
+assert.equal(hookNotes.length, 2);
+assert.match(fs.readFileSync(path.join(clash, "src/Hooks.tsx"), "utf8"), /^import React, \{ useEffect, useState \} from "react";/);
+assert.match(fs.readFileSync(path.join(clash, "src/NoReact.tsx"), "utf8"), /^import \{ useRef \} from "react";/);
+assert.deepEqual(await AutoFix.addMissingReactImports(clash), [], "hook import fix is idempotent");
+
+// The real Pgame App.tsx: type-checks, and blanks the page on load.
+fs.writeFileSync(
+  path.join(clash, "src/Main.tsx"),
+  "import React, { useState } from 'react';\nimport { renderAt } from './lib/testing';\n\nconst [currentPage, setCurrentPage] = useState<'Home' | 'Game'>('Home'); // Added 'Game' to the state type\n\nexport default function Main() {\n  return <button onClick={() => setCurrentPage('Game')}>{currentPage}</button>;\n}\n\nrenderAt(<Main />);\n"
+);
+const hookFix = await AutoFix.fixHooksOutsideComponents(clash);
+const main = fs.readFileSync(path.join(clash, "src/Main.tsx"), "utf8");
+assert.equal(hookFix.length, 2);
+assert.match(main, /export default function Main\(\) \{\n  const \[currentPage, setCurrentPage\] = useState<'Home' \| 'Game'>\('Home'\);\n  return/, "the hook is inside the component");
+assert.ok(!/^const \[currentPage/m.test(main) && !/Added 'Game'/.test(main), "and gone from the top, comment and all");
+assert.ok(!/renderAt\(<Main/.test(main), "the test helper call is gone from the app");
+assert.deepEqual(await AutoFix.fixHooksOutsideComponents(clash), [], "hook fix is idempotent");
 
 // JSX in a .ts file is renamed; a broken .ts copy of a .tsx that exists is removed.
 fs.writeFileSync(path.join(game, "src/Card.ts"), "export const Card = () => <div>card</div>;\n");
@@ -156,9 +236,70 @@ const stub = { "src/App.tsx": 'export default () => <main><h2>Menu</h2><button>S
 const stubCoverage = coverage(gameBrief, stub);
 assert.deepEqual(stubCoverage.missing.map((item) => item.label), ["Home", "Pick a barber: Sipho"], "missing pages are named; a long item needs two of its words");
 assert.ok(stubCoverage.lines < stubCoverage.minLines, "a skeleton is too small to be the app");
+assert.equal(stubCoverage.minLines, 150, "a seven-item brief needs a full app");
+assert.equal(coverage("It must have:\n- Tip percentage\n", stub).minLines, 80, "a one-item brief needs less");
+// The fakes a real build shipped at "100": found without asking a model.
+const shipped = {
+  "src/App.tsx": "const render = () => {\n  ctx.clearRect(0, 0, w, h);\n  // Render game logic here\n  requestAnimationFrame(render);\n};\nexport default () => <button onClick={() => {}}>Save</button>;\nimport { newGame } from './game';\nconst s = newGame(cfg);\n",
+  "src/lib/progression.ts": "export const getProgressionState = (gameState: GameState): GameState => {\n  return gameState;\n};\n",
+  "src/game.ts": "export const newGame = (c: Cfg) => ({});\nexport function step(s: State, dt: number) { return []; }\nexport const launch = (s: State) => s;\nexport const movePaddle = (s: State, x: number) => s;\n"
+};
+const fakes = stubs(shipped);
+assert.ok(fakes.some((f) => /App\.tsx has a placeholder comment "\/\/ Render game logic here"/.test(f)), "placeholder comment");
+assert.ok(fakes.some((f) => /getProgressionState\(\) only returns what it is given/.test(f)), "identity function");
+assert.ok(fakes.some((f) => /does nothing/.test(f)), "empty handler");
+assert.deepEqual(stubs({ "src/a.ts": "// Score goes up by ten for each brick.\nexport const add = (a: number) => a + 10;\n" }), [], "an ordinary comment and a real function are fine");
+const use = engineUse(shipped, ["src/game.ts"])[0];
+assert.deepEqual(use.used, ["newGame"]);
+assert.deepEqual(use.unused, ["step", "launch", "movePaddle"], "an engine imported and never driven is caught");
+assert.equal(coverage("x", shipped, undefined, ["src/game.ts"]).lines < coverage("x", shipped).lines, true, "the engine's own lines are not the app's");
+
 assert.deepEqual(parseReview('Here you go: {"missing": ["Real gameplay: the bar fills on a timer"]}'), ["Real gameplay: the bar fills on a timer"]);
 assert.deepEqual(parseReview('{"missing": []}'), []);
 assert.equal(parseReview("Looks fine to me."), null, "an answer without the format is not a verdict");
+
+// TypeFixer: type errors with a mechanical fix are fixed by TypeScript, not the model.
+const typed = fs.mkdtempSync(path.join(os.tmpdir(), "ab-types-"));
+fs.mkdirSync(path.join(typed, "src"));
+fs.writeFileSync(path.join(typed, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", noEmit: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(path.join(typed, "src/util.ts"), "export const add = (a: number, b: number): number => a + b;\nexport const handleStep = (): number => 1;\n");
+fs.writeFileSync(
+  path.join(typed, "src/game.ts"),
+  [
+    "interface Question { text: string; options: string[] }",
+    "const state: { current: Question | null } = { current: null };",
+    "export const first = (): string[] => [1].map(() => state.current.options[0]);",
+    "export const total = add(1, 2);",
+    "export const scoreValue = 10;",
+    "export const doubled = scoreVaule * 2;",
+    "export const save = () => handleSave();",
+    ""
+  ].join("\n")
+);
+const typeNotes = TypeFixer.run(typed);
+const fixedGame = fs.readFileSync(path.join(typed, "src/game.ts"), "utf8");
+assert.match(fixedGame, /state\.current!\.options\[0\]/, "possibly-null: marked as set");
+assert.match(fixedGame, /import \{ add(, handleStep)? \} from "\.\/util";/, "missing import added");
+assert.match(fixedGame, /scoreValue \* 2/, "a one-letter typo is corrected");
+assert.match(fixedGame, /handleSave\(\)/, "a different name is NOT swapped in (handleSave is not handleStep)");
+assert.ok(typeNotes.length >= 3, `notes: ${typeNotes.join(" | ")}`);
+assert.deepEqual(TypeFixer.run(typed).filter((note) => !/handleSave/.test(note)), [], "nothing left to fix but the real gap");
+
+// Planned builds: the plan is read leniently and kept to safe, unique files under src/.
+const plan = AutonomousOrchestrator.parsePlan(
+  'Here is the plan:\n{"files":[{"path":"src/lib/progress.ts","purpose":"levels and XP","exports":["nextLevel(xp: number): number"]},{"path":"./src/components/Menu.tsx","purpose":"menu"},{"path":"src/main.tsx","purpose":"no"},{"path":"src/lib/testing.tsx","purpose":"no"},{"path":"../evil.ts","purpose":"no"},{"path":"src/lib/Progress.ts","purpose":"dupe"},{"path":"src/App.tsx","purpose":"screens"}]}',
+  new Set(["src/lib/testing.tsx", "src/main.tsx"])
+);
+assert.deepEqual(plan.map((file) => file.path), ["src/lib/progress.ts", "src/components/Menu.tsx", "src/App.tsx"]);
+assert.deepEqual(plan[0].exports, ["nextLevel(xp: number): number"]);
+assert.deepEqual(AutonomousOrchestrator.parsePlan("I think we should build a game.", new Set()), []);
+
+// Export signatures: what another file needs to call it right, props included.
+assert.deepEqual(CodeGuard.exportSignatures("const Menu = ({ onPlay }: { onPlay: () => void }) => <button onClick={onPlay}>Play</button>;\nexport default Menu;\n"), ["default Menu({ onPlay }: { onPlay: () => void })"]);
+assert.deepEqual(
+  CodeGuard.exportSignatures("/** Levels. */\nexport interface Level { /** n */ n: number }\nexport function next(l: Level): Level { return l; }\nexport const START: Level = { n: 1 };\n"),
+  ["interface Level { n: number }", "next(l: Level): Level", "const START: Level"]
+);
 
 // Tailoring: the customer's own contact details come from the brief, not the model.
 const brief = "We are Mama Nandi's Kitchen. Phone 011 555 0199, bookings on WhatsApp +27 82 555 0199, email hello@mamanandis.co.za.\n\nBusiness: Mama Nandi's Kitchen\n";

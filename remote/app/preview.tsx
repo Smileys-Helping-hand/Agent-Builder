@@ -144,6 +144,19 @@ export const PreviewPane = ({
             {Icon.refresh}
           </button>
           {src ? (
+            <button
+              className="btn small ghost"
+              title="Fill the screen with it: best for games"
+              onClick={() => {
+                const box = frameBox.current;
+                if (!box) return;
+                void box.requestFullscreen?.().then(() => frame.current?.focus()).catch(() => undefined);
+              }}
+            >
+              {Icon.expand} Full screen
+            </button>
+          ) : null}
+          {src ? (
             <a className="btn small ghost" href={onMachine(info!.url!)} target="_blank" rel="noreferrer" title="Open in a new tab">
               {Icon.external} Open
             </a>

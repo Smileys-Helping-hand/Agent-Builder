@@ -12,8 +12,22 @@
  *    in src/ it must mean.
  */
 import fs from "fs/promises";
+import fsSync from "fs";
 import path from "path";
-import { builtinModules } from "module";
+import { builtinModules, createRequire } from "module";
+
+let typescriptModule: typeof import("typescript") | null | undefined;
+/** TypeScript's parser, for the fixes a regular expression would get wrong. */
+const loadTypeScript = (): typeof import("typescript") | null => {
+  if (typescriptModule === undefined) {
+    try {
+      typescriptModule = createRequire(import.meta.url)("typescript");
+    } catch {
+      typescriptModule = null;
+    }
+  }
+  return typescriptModule ?? null;
+};
 
 const NODE_BUILTINS = new Set([...builtinModules, ...builtinModules.map((name) => `node:${name}`)]);
 const TEST_FILE = /\.(test|spec)\.(t|j)sx?$/;
@@ -47,6 +61,31 @@ const packageName = (specifier: string): string | null => {
   const parts = specifier.split("/");
   return specifier.startsWith("@") ? (parts.length >= 2 ? `${parts[0]}/${parts[1]}` : null) : parts[0];
 };
+
+/**
+ * Packages that only run on a server (native code, the file system, a
+ * database), with what a browser app uses instead. A small model reaches for
+ * `canvas` to draw a game; the browser has <canvas> built in.
+ */
+export const SERVER_ONLY = new Map<string, string>([
+  ["canvas", "the browser's own <canvas> element (canvasRef.current.getContext('2d'))"],
+  ["node-canvas", "the browser's own <canvas> element"],
+  ["sharp", "an <img> or <canvas> in the page"],
+  ["sqlite3", "localStorage (or IndexedDB) in the browser"],
+  ["better-sqlite3", "localStorage (or IndexedDB) in the browser"],
+  ["fs-extra", "localStorage in the browser; there is no file system"],
+  ["express", "nothing: this app runs in the browser and has no server"],
+  ["cors", "nothing: this app runs in the browser and has no server"],
+  ["body-parser", "nothing: this app runs in the browser and has no server"],
+  ["mongoose", "localStorage in the browser"],
+  ["pg", "localStorage in the browser"],
+  ["mysql2", "localStorage in the browser"],
+  ["bcrypt", "the browser's crypto.subtle"],
+  ["puppeteer", "nothing: tests use Vitest and Testing Library"],
+  ["node-fetch", "the browser's built-in fetch"],
+  ["dotenv", "import.meta.env (Vite)"],
+  ["nodemailer", "a mailto: link or a form the site owner receives"]
+]);
 
 const RESOLVE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".d.ts"];
 const posix = (value: string) => value.replace(/\\/g, "/");
@@ -139,7 +178,9 @@ export const AutoFix = {
     const known = new Set(all);
     for (const ts of all.filter((file) => /\.ts$/.test(file) && !file.endsWith(".d.ts") && !TEST_FILE.test(file))) {
       const bare = ts.slice(0, -3);
-      if (!known.has(`${bare}.tsx`) || known.has(`${bare}.logic.ts`)) continue;
+      // game.ts beside Game.tsx clashes too: Windows resolves names without regard to case.
+      const twin = all.find((file) => file.toLowerCase() === `${bare}.tsx`.toLowerCase());
+      if (!twin || known.has(`${bare}.logic.ts`)) continue;
       const logic = exportsOf(await fs.readFile(path.join(root, ts), "utf8"));
       const target = `${bare}.logic.ts`;
       for (const rel of all.filter((file) => SOURCE_FILE.test(file) && file !== ts)) {
@@ -158,7 +199,7 @@ export const AutoFix = {
       await fs.rename(path.join(root, ts), path.join(root, target));
       known.delete(ts);
       known.add(target);
-      notes.push(`${ts} moved to ${target}: it shared its name with ${bare}.tsx, so the screen could never be imported`);
+      notes.push(`${ts} moved to ${target}: it shared its name with ${twin}, so the screen could never be imported`);
     }
     return notes;
   },
@@ -192,6 +233,121 @@ export const AutoFix = {
         return `import ${name} from ${quote}${specifier}${quote};`;
       });
       if (updated !== text) await fs.writeFile(full, updated, "utf8");
+    }
+    return notes;
+  },
+
+  /**
+   * Two mistakes that type-check and blank the page:
+   *  - a hook called at the top of a module, outside any component
+   *    (`const [page, setPage] = useState('Home')` above `function App`) —
+   *    React throws "Cannot read properties of null (reading 'useState')" on
+   *    load. Moved into the file's default-exported component;
+   *  - a test helper called by the app itself (`renderAt(<App />)` at the
+   *    bottom of App.tsx) — removed from app code; tests keep it.
+   */
+  async fixHooksOutsideComponents(root: string): Promise<string[]> {
+    const ts = loadTypeScript();
+    if (!ts) return [];
+    const notes: string[] = [];
+    const all = (await listFiles(path.join(root, "src"))).map((file) => posix(path.relative(root, file)));
+    for (const rel of all.filter((file) => /\.(t|j)sx$/.test(file) && !TEST_FILE.test(file) && !/(^|\/)lib\/testing\./.test(file))) {
+      const full = path.join(root, rel);
+      const text = await fs.readFile(full, "utf8");
+      const source = ts.createSourceFile(rel, text, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+      const isHookCall = (node: import("typescript").Node | undefined): boolean =>
+        Boolean(node && ts.isCallExpression(node) && ts.isIdentifier(node.expression) && /^use[A-Z]\w*$/.test(node.expression.text));
+      const hookStatements: import("typescript").Statement[] = [];
+      const helperCalls: import("typescript").Statement[] = [];
+      for (const statement of source.statements) {
+        if (ts.isVariableStatement(statement) && statement.declarationList.declarations.some((d) => isHookCall(d.initializer))) hookStatements.push(statement);
+        if (ts.isExpressionStatement(statement) && isHookCall(statement.expression)) hookStatements.push(statement);
+        if (
+          ts.isExpressionStatement(statement) &&
+          ts.isCallExpression(statement.expression) &&
+          ts.isIdentifier(statement.expression.expression) &&
+          /^(renderAt|render)$/.test(statement.expression.expression.text)
+        ) {
+          helperCalls.push(statement);
+        }
+      }
+      if (hookStatements.length === 0 && helperCalls.length === 0) continue;
+
+      // The component to move hooks into: `export default function X() {…}`, or
+      // `export default X` naming a function or arrow component in this file.
+      let body: import("typescript").Block | undefined;
+      for (const statement of source.statements) {
+        if (ts.isFunctionDeclaration(statement) && statement.body && statement.modifiers?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword)) body = statement.body;
+      }
+      const defaultName = source.statements
+        .filter(ts.isExportAssignment)
+        .map((statement) => (ts.isIdentifier(statement.expression) ? statement.expression.text : null))
+        .find(Boolean);
+      if (!body && defaultName) {
+        for (const statement of source.statements) {
+          if (ts.isFunctionDeclaration(statement) && statement.name?.text === defaultName && statement.body) body = statement.body;
+          if (ts.isVariableStatement(statement)) {
+            for (const declaration of statement.declarationList.declarations) {
+              const init = declaration.initializer;
+              if (ts.isIdentifier(declaration.name) && declaration.name.text === defaultName && init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) && ts.isBlock(init.body)) body = init.body;
+            }
+          }
+        }
+      }
+
+      const edits: Array<{ start: number; end: number; text: string }> = [];
+      // A removed statement takes its whole line with it, trailing comment included.
+      const lineStart = (start: number) => text.lastIndexOf("\n", start - 1) + 1;
+      const lineEnd = (end: number) => {
+        const newline = text.indexOf("\n", end);
+        return newline === -1 ? text.length : newline + 1;
+      };
+      if (body && hookStatements.length > 0) {
+        const moved = hookStatements.map((statement) => `  ${statement.getText(source)}`).join("\n");
+        edits.push({ start: body.getStart(source) + 1, end: body.getStart(source) + 1, text: `\n${moved}` });
+        for (const statement of hookStatements) edits.push({ start: lineStart(statement.getStart(source)), end: lineEnd(statement.getEnd()), text: "" });
+        notes.push(`${rel}: moved ${hookStatements.length} hook call${hookStatements.length === 1 ? "" : "s"} from the top of the file into its component (a hook outside a component crashes the page)`);
+      }
+      for (const statement of helperCalls) {
+        edits.push({ start: lineStart(statement.getStart(source)), end: lineEnd(statement.getEnd()), text: "" });
+        notes.push(`${rel}: removed ${statement.getText(source).slice(0, 40)} (a test helper, called by the app itself)`);
+      }
+      if (edits.length === 0) continue;
+      let out = text;
+      for (const edit of edits.sort((a, b) => b.start - a.start)) out = out.slice(0, edit.start) + edit.text + out.slice(edit.end);
+      await fs.writeFile(full, out, "utf8");
+    }
+    return notes;
+  },
+
+  /**
+   * `useState(…)` in a component that never imported it: add the hooks to its
+   * React import (or a new one). Only React's own hooks, only when nothing in
+   * the file declares that name.
+   */
+  async addMissingReactImports(root: string): Promise<string[]> {
+    const HOOKS = ["useState", "useEffect", "useRef", "useCallback", "useMemo", "useReducer", "useContext", "useLayoutEffect", "useId"];
+    const notes: string[] = [];
+    const all = (await listFiles(path.join(root, "src"))).map((file) => posix(path.relative(root, file)));
+    for (const rel of all.filter((file) => /\.(t|j)sx?$/.test(file) && !file.endsWith(".d.ts"))) {
+      const full = path.join(root, rel);
+      const text = await fs.readFile(full, "utf8");
+      const missing = HOOKS.filter(
+        (hook) =>
+          new RegExp(`(^|[^\\w.])${hook}\\s*[<(]`).test(text) &&
+          !new RegExp(`\\b(import[^;]*\\b${hook}\\b|(const|let|var|function)\\s+${hook}\\b)`).test(text)
+      );
+      if (missing.length === 0) continue;
+      const reactNamed = /import\s+(\w+\s*,\s*)?\{([^}]*)\}\s*from\s*["']react["'];?/.exec(text);
+      let updated: string;
+      if (reactNamed) {
+        const names = reactNamed[2].split(",").map((name) => name.trim()).filter(Boolean);
+        updated = text.replace(reactNamed[0], reactNamed[0].replace(`{${reactNamed[2]}}`, `{ ${[...names, ...missing].join(", ")} }`));
+      } else {
+        updated = `import { ${missing.join(", ")} } from "react";\n${text}`;
+      }
+      await fs.writeFile(full, updated, "utf8");
+      notes.push(`${rel}: uses ${missing.join(", ")} without importing ${missing.length === 1 ? "it" : "them"}; imported from react`);
     }
     return notes;
   },
@@ -298,7 +454,59 @@ export const AutoFix = {
       }. Fix any import path that does not point at it.`;
     });
     const missing = lines.length ? `\nThese modules are imported but do not exist. Write each one in full:\n${lines.join("\n")}\n` : "";
-    return missing + (await AutoFix.nameClashes(root));
+
+    // "Module './game' has no exported member 'saveGame'": the module is there,
+    // the name is not. Say which file to add it to, and what it already has.
+    const absent = new Map<string, Set<string>>();
+    for (const match of errorOutput.matchAll(/([\w./\\-]+\.(?:t|j)sx?)\(\d+,\d+\): error TS2305: Module '"(\.{1,2}\/[^"]+)"' has no exported member '([\w$]+)'/g)) {
+      const target = posix(path.join(path.dirname(posix(match[1])), match[2]));
+      const file = [".ts", ".tsx", "/index.ts", "/index.tsx"].map((ext) => target + ext).find((candidate) => fsSync.existsSync(path.join(root, candidate)));
+      if (!file) continue;
+      absent.set(file, (absent.get(file) ?? new Set()).add(match[3]));
+    }
+    const exportsLines = await Promise.all(
+      Array.from(absent, async ([file, names]) => {
+        const has = Array.from(exportsOf(await fs.readFile(path.join(root, file), "utf8")).named).slice(0, 12);
+        return `- ${file} does not export ${Array.from(names).join(", ")}. Add ${names.size === 1 ? "it" : "them"} to ${file} as new exports, keeping everything it already exports${has.length ? ` (${has.join(", ")})` : ""}, or import what it does have instead.`;
+      })
+    );
+    const absentText = exportsLines.length ? `\nThese imports ask for names their module does not export:\n${exportsLines.join("\n")}\n` : "";
+
+    // An import of a server-only package: it was left out on purpose, so say what to use instead.
+    const serverOnly = new Set<string>();
+    for (const match of errorOutput.matchAll(/error TS2307: Cannot find module '([^.'][^']*)'/g)) {
+      const name = packageName(match[1]);
+      if (name && SERVER_ONLY.has(name)) serverOnly.add(name);
+    }
+    const serverText = serverOnly.size
+      ? `\nThese packages only run on a server and are not installed. Remove the imports and use, instead:\n${Array.from(serverOnly)
+          .map((name) => `- ${name}: ${SERVER_ONLY.get(name)}`)
+          .join("\n")}\n`
+      : "";
+    return missing + absentText + serverText + (await AutoFix.nameClashes(root)) + (await AutoFix.duplicateTypes(root, errorOutput));
+  },
+
+  /**
+   * Two files each declaring their own GameState: "'GameState' is not
+   * assignable to 'GameState'", which a model reads as a typo and never
+   * resolves. Named in the repair prompt when the typecheck shows it, with
+   * the engine's (src/engine/) as the one to keep.
+   */
+  async duplicateTypes(root: string, errorOutput: string): Promise<string> {
+    const declared = new Map<string, string[]>();
+    for (const file of (await listFiles(path.join(root, "src"))).map((full) => posix(path.relative(root, full)))) {
+      if (!/\.(t|j)sx?$/.test(file) || TEST_FILE.test(file) || file.endsWith(".d.ts")) continue;
+      const text = await fs.readFile(path.join(root, file), "utf8");
+      for (const match of text.matchAll(/export\s+(?:interface|type)\s+([A-Z]\w*)/g)) declared.set(match[1], [...(declared.get(match[1]) ?? []), file]);
+    }
+    const lines: string[] = [];
+    for (const [name, files] of declared) {
+      if (files.length < 2 || !new RegExp(`\\b${name}\\b`).test(errorOutput)) continue;
+      const keep = files.find((file) => file.startsWith("src/engine/")) ?? files[0];
+      const others = files.filter((file) => file !== keep);
+      lines.push(`- ${name} is declared in ${files.join(" and ")}: keep only the one in ${keep}, delete it from ${others.join(", ")}, and import it from ${keep} everywhere.`);
+    }
+    return lines.length ? `\nThe same type is declared twice, so values of one are rejected where the other is expected:\n${lines.join("\n")}\n` : "";
   },
 
   /**
@@ -311,7 +519,8 @@ export const AutoFix = {
     const groups = new Map<string, string[]>();
     for (const file of (await listFiles(path.join(root, "src"))).map((full) => posix(path.relative(root, full)))) {
       if (!SOURCE_FILE.test(file) || file.endsWith(".d.ts")) continue;
-      const bare = file.replace(/\.(t|j)sx?$/, "");
+      // Lower-cased: on Windows (and macOS) Game.tsx and game.ts are one name to the import resolver.
+      const bare = file.replace(/\.(t|j)sx?$/, "").toLowerCase();
       groups.set(bare, [...(groups.get(bare) ?? []), file]);
     }
     const clashes = Array.from(groups.values()).filter((files) => files.length > 1);
@@ -326,7 +535,9 @@ export const AutoFix = {
       ...(await AutoFix.splitNameClashes(root)),
       ...(await AutoFix.fixImportPaths(root)),
       ...(await AutoFix.fixDefaultImports(root)),
-      ...(await AutoFix.addMissingComponentImports(root))
+      ...(await AutoFix.addMissingComponentImports(root)),
+      ...(await AutoFix.addMissingReactImports(root)),
+      ...(await AutoFix.fixHooksOutsideComponents(root))
     ];
     const pkgPath = path.join(root, "package.json");
     let pkg: Record<string, any>;
@@ -380,15 +591,36 @@ export const AutoFix = {
       }
     }
 
+    // A browser app (Vite) cannot use a server-only package: `canvas` is a
+    // native Node library, and adding it made `npm install` fail for the whole
+    // app (it compiles C++). Never add one, and take out any the model wrote
+    // into package.json itself; the repair is told the browser's own way.
+    const browser = Boolean(devDeps.vite || deps.vite);
+    let changed = false;
+    if (browser) {
+      for (const name of Array.from(missing.keys())) if (SERVER_ONLY.has(name)) missing.delete(name);
+      for (const table of [deps, devDeps]) {
+        for (const name of Object.keys(table)) {
+          if (SERVER_ONLY.has(name)) {
+            delete table[name];
+            changed = true;
+            notes.push(`package.json: removed ${name} (a server-only package; it cannot run in the browser)`);
+          }
+        }
+      }
+    }
     if (missing.size > 0) {
       for (const [name, kind] of missing) {
         if (kind === "dev") devDeps[name] = "latest";
         else deps[name] = "latest";
       }
+      notes.push(`package.json: added ${Array.from(missing.keys()).join(", ")} (imported but not installed)`);
+      changed = true;
+    }
+    if (changed) {
       pkg.dependencies = deps;
       pkg.devDependencies = devDeps;
       await fs.writeFile(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
-      notes.push(`package.json: added ${Array.from(missing.keys()).join(", ")} (imported but not installed)`);
     }
     return notes;
   }
