@@ -285,6 +285,66 @@ assert.match(fixedGame, /handleSave\(\)/, "a different name is NOT swapped in (h
 assert.ok(typeNotes.length >= 3, `notes: ${typeNotes.join(" | ")}`);
 assert.deepEqual(TypeFixer.run(typed).filter((note) => !/handleSave/.test(note)), [], "nothing left to fix but the real gap");
 
+// The live Pgame build's mistakes: engine mutators used as if they returned the
+// state, a type imported from a file that only uses it, and a second local copy
+// of an imported type.
+const mutators = fs.mkdtempSync(path.join(os.tmpdir(), "ab-void-"));
+fs.mkdirSync(path.join(mutators, "src", "engine"), { recursive: true });
+fs.writeFileSync(path.join(mutators, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", noEmit: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(
+  path.join(mutators, "src/engine/game.ts"),
+  "export interface GameState { x: number; status: string }\nexport function launch(state: GameState): void { state.status = 'playing'; }\nexport function movePaddle(state: GameState, x: number): void { state.x = x; }\n"
+);
+fs.writeFileSync(
+  path.join(mutators, "src/logic.ts"),
+  [
+    "import { GameState, launch, movePaddle } from './engine/game';",
+    "interface GameState { x: number; status: string }",
+    "export function serve(state: GameState): GameState {",
+    "  return launch(state);",
+    "}",
+    "export function move(state: GameState, x: number): GameState {",
+    "  state = movePaddle(state, x);",
+    "  return state;",
+    "}",
+    ""
+  ].join("\n")
+);
+fs.writeFileSync(path.join(mutators, "src/menu.ts"), "import { GameState } from './logic';\nexport const label = (s: GameState): string => s.status;\n");
+const voidNotes = TypeFixer.run(mutators);
+const logic = fs.readFileSync(path.join(mutators, "src/logic.ts"), "utf8");
+assert.match(logic, /\n  launch\(state\);\n  return state;\n/, `a void mutator is called, then the state returned (notes: ${voidNotes.join(" | ")})`);
+assert.match(logic, /\n  movePaddle\(state, x\);\n/, "a void mutator is no longer assigned");
+assert.ok(!/^interface GameState/m.test(logic), "the second local GameState is removed");
+assert.match(fs.readFileSync(path.join(mutators, "src/menu.ts"), "utf8") + logic, /export (type )?\{ GameState \}|GameState \} from '\.\/engine\/game'/, "GameState reaches menu.ts");
+assert.deepEqual(TypeFixer.run(mutators), [], `nothing left: ${TypeFixer.run(mutators).join(" | ")}`);
+
+// A Start button that sets the address in an app that switches screens with state leads nowhere.
+const deadStart = stubs({
+  "src/App.tsx": "const [screen, setScreen] = useState('home');\nexport default () => (screen === 'home' ? <Home /> : <Game />);\n",
+  "src/components/Home.tsx": "export default () => <button onClick={() => { window.location.hash = '/game'; }}>Start</button>;\n"
+});
+assert.ok(deadStart.some((f) => /Home\.tsx moves to another screen.*leads nowhere/.test(f)), `dead navigation: ${deadStart.join(" | ")}`);
+assert.deepEqual(
+  stubs({
+    "src/App.tsx": "useEffect(() => { const go = () => setScreen(window.location.hash.slice(1)); window.addEventListener('hashchange', go); }, []);\n",
+    "src/Home.tsx": "export default () => <button onClick={() => { window.location.hash = '/game'; }}>Start</button>;\n"
+  }),
+  [],
+  "an app that listens for the address is fine"
+);
+
+// The starter's <main> test is relaxed only for an App that dropped its <main>.
+const starter = fs.mkdtempSync(path.join(os.tmpdir(), "ab-starter-"));
+fs.mkdirSync(path.join(starter, "src"));
+const stockTest = 'describe("the app", () => {\n  it("renders", () => {\n    expect(renderAt(<App />)).toContain("<main");\n  });\n});\n';
+fs.writeFileSync(path.join(starter, "src/App.test.tsx"), stockTest);
+fs.writeFileSync(path.join(starter, "src/App.tsx"), "export default () => <main>Hi</main>;\n");
+assert.deepEqual(await AutoFix.relaxStarterTest(starter), [], "an App with a <main> keeps the test");
+fs.writeFileSync(path.join(starter, "src/App.tsx"), "export default () => <div style={{ height: '100vh' }}><canvas /></div>;\n");
+assert.equal((await AutoFix.relaxStarterTest(starter)).length, 1);
+assert.match(fs.readFileSync(path.join(starter, "src/App.test.tsx"), "utf8"), /toMatch\(\/<\[a-z\]\/\)/, "the test now asks only that App renders");
+
 // Planned builds: the plan is read leniently and kept to safe, unique files under src/.
 const plan = AutonomousOrchestrator.parsePlan(
   'Here is the plan:\n{"files":[{"path":"src/lib/progress.ts","purpose":"levels and XP","exports":["nextLevel(xp: number): number"]},{"path":"./src/components/Menu.tsx","purpose":"menu"},{"path":"src/main.tsx","purpose":"no"},{"path":"src/lib/testing.tsx","purpose":"no"},{"path":"../evil.ts","purpose":"no"},{"path":"src/lib/Progress.ts","purpose":"dupe"},{"path":"src/App.tsx","purpose":"screens"}]}',
