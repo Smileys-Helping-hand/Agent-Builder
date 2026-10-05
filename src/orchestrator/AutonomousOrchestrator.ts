@@ -1779,7 +1779,23 @@ Rules that keep this build passing its checks (install, typecheck, build, tests)
     // build then carried both into the project nobody asked to change. A copy
     // of one of our own builds or templates already has its runner.
     const fromOurTemplate = fs.existsSync(path.join(this.workspace.root, "template.json"));
+    const verifyStarted = Date.now();
     let report = await Verifier.verify(this.workspace, { scaffoldTests: !this.config.workingDir, autofix: !this.config.workingDir || fromOurTemplate });
+    // Our own apps (a template or the starter) are opened in a real browser:
+    // the one check that says a person would see a working app.
+    if (fromOurTemplate) {
+      const runs = await Verifier.runsCheck(this.workspace.root, verifyStarted).catch(() => null);
+      if (runs) report = Verifier.withCheck(report, runs);
+    }
+    const typeFixes = Verifier.typeFixes.get(this.workspace.root) ?? [];
+    if (typeFixes.length > 0) {
+      this.think(
+        iteration,
+        "decision",
+        `Fixed ${typeFixes.length} type error${typeFixes.length === 1 ? "" : "s"} without the model`,
+        typeFixes.map((fix) => `• ${fix}`).join("\n")
+      );
+    }
     const tailoring = await this.tailoringCheck();
     if (tailoring) report = Verifier.withCheck(report, tailoring);
     const completeness = await this.completenessCheck(iteration, report);

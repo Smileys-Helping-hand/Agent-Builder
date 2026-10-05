@@ -377,6 +377,9 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
               frameRef={previewFrame}
             />
             <div className="btn-row" style={{ marginTop: 10 }}>
+              <a className="btn small" href={`/try/?kind=build&id=${encodeURIComponent(build.buildId)}&name=${encodeURIComponent(build.projectName)}`}>
+                {Icon.play} Try it
+              </a>
               <button className={`btn small ${editing ? "accent" : ""}`} onClick={() => setEditing(!editing)} aria-pressed={editing}>
                 {Icon.wrench} {editing ? "Close the live editor" : "Edit it live"}
               </button>

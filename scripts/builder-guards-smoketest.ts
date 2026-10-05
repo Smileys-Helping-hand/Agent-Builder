@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 
 import { CodeGuard } from "../src/orchestrator/CodeGuard.js";
 import { AutoFix } from "../src/orchestrator/AutoFix.js";
+import { TypeFixer } from "../src/orchestrator/TypeFixer.js";
 import { Verifier } from "../src/orchestrator/Verifier.js";
 import { applyFacts, readFacts, sampleFactsLeft } from "../src/orchestrator/Tailoring.js";
 import { coverage, engineUse, parseReview, requirementsFromBrief, stubs } from "../src/orchestrator/Completeness.js";
@@ -188,6 +189,19 @@ assert.match(fs.readFileSync(path.join(clash, "src/Hooks.tsx"), "utf8"), /^impor
 assert.match(fs.readFileSync(path.join(clash, "src/NoReact.tsx"), "utf8"), /^import \{ useRef \} from "react";/);
 assert.deepEqual(await AutoFix.addMissingReactImports(clash), [], "hook import fix is idempotent");
 
+// The real Pgame App.tsx: type-checks, and blanks the page on load.
+fs.writeFileSync(
+  path.join(clash, "src/Main.tsx"),
+  "import React, { useState } from 'react';\nimport { renderAt } from './lib/testing';\n\nconst [currentPage, setCurrentPage] = useState<'Home' | 'Game'>('Home'); // Added 'Game' to the state type\n\nexport default function Main() {\n  return <button onClick={() => setCurrentPage('Game')}>{currentPage}</button>;\n}\n\nrenderAt(<Main />);\n"
+);
+const hookFix = await AutoFix.fixHooksOutsideComponents(clash);
+const main = fs.readFileSync(path.join(clash, "src/Main.tsx"), "utf8");
+assert.equal(hookFix.length, 2);
+assert.match(main, /export default function Main\(\) \{\n  const \[currentPage, setCurrentPage\] = useState<'Home' \| 'Game'>\('Home'\);\n  return/, "the hook is inside the component");
+assert.ok(!/^const \[currentPage/m.test(main) && !/Added 'Game'/.test(main), "and gone from the top, comment and all");
+assert.ok(!/renderAt\(<Main/.test(main), "the test helper call is gone from the app");
+assert.deepEqual(await AutoFix.fixHooksOutsideComponents(clash), [], "hook fix is idempotent");
+
 // JSX in a .ts file is renamed; a broken .ts copy of a .tsx that exists is removed.
 fs.writeFileSync(path.join(game, "src/Card.ts"), "export const Card = () => <div>card</div>;\n");
 fs.writeFileSync(path.join(game, "src/Menu.test.ts"), "const view = <Menu games={[]} onSelect={() => {}} />;\n");
@@ -229,6 +243,33 @@ assert.equal(coverage("x", shipped, undefined, ["src/game.ts"]).lines < coverage
 assert.deepEqual(parseReview('Here you go: {"missing": ["Real gameplay: the bar fills on a timer"]}'), ["Real gameplay: the bar fills on a timer"]);
 assert.deepEqual(parseReview('{"missing": []}'), []);
 assert.equal(parseReview("Looks fine to me."), null, "an answer without the format is not a verdict");
+
+// TypeFixer: type errors with a mechanical fix are fixed by TypeScript, not the model.
+const typed = fs.mkdtempSync(path.join(os.tmpdir(), "ab-types-"));
+fs.mkdirSync(path.join(typed, "src"));
+fs.writeFileSync(path.join(typed, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", noEmit: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(path.join(typed, "src/util.ts"), "export const add = (a: number, b: number): number => a + b;\nexport const handleStep = (): number => 1;\n");
+fs.writeFileSync(
+  path.join(typed, "src/game.ts"),
+  [
+    "interface Question { text: string; options: string[] }",
+    "const state: { current: Question | null } = { current: null };",
+    "export const first = (): string[] => [1].map(() => state.current.options[0]);",
+    "export const total = add(1, 2);",
+    "export const scoreValue = 10;",
+    "export const doubled = scoreVaule * 2;",
+    "export const save = () => handleSave();",
+    ""
+  ].join("\n")
+);
+const typeNotes = TypeFixer.run(typed);
+const fixedGame = fs.readFileSync(path.join(typed, "src/game.ts"), "utf8");
+assert.match(fixedGame, /state\.current!\.options\[0\]/, "possibly-null: marked as set");
+assert.match(fixedGame, /import \{ add(, handleStep)? \} from "\.\/util";/, "missing import added");
+assert.match(fixedGame, /scoreValue \* 2/, "a one-letter typo is corrected");
+assert.match(fixedGame, /handleSave\(\)/, "a different name is NOT swapped in (handleSave is not handleStep)");
+assert.ok(typeNotes.length >= 3, `notes: ${typeNotes.join(" | ")}`);
+assert.deepEqual(TypeFixer.run(typed).filter((note) => !/handleSave/.test(note)), [], "nothing left to fix but the real gap");
 
 // Tailoring: the customer's own contact details come from the brief, not the model.
 const brief = "We are Mama Nandi's Kitchen. Phone 011 555 0199, bookings on WhatsApp +27 82 555 0199, email hello@mamanandis.co.za.\n\nBusiness: Mama Nandi's Kitchen\n";

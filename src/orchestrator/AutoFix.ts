@@ -14,7 +14,20 @@
 import fs from "fs/promises";
 import fsSync from "fs";
 import path from "path";
-import { builtinModules } from "module";
+import { builtinModules, createRequire } from "module";
+
+let typescriptModule: typeof import("typescript") | null | undefined;
+/** TypeScript's parser, for the fixes a regular expression would get wrong. */
+const loadTypeScript = (): typeof import("typescript") | null => {
+  if (typescriptModule === undefined) {
+    try {
+      typescriptModule = createRequire(import.meta.url)("typescript");
+    } catch {
+      typescriptModule = null;
+    }
+  }
+  return typescriptModule ?? null;
+};
 
 const NODE_BUILTINS = new Set([...builtinModules, ...builtinModules.map((name) => `node:${name}`)]);
 const TEST_FILE = /\.(test|spec)\.(t|j)sx?$/;
@@ -225,6 +238,89 @@ export const AutoFix = {
   },
 
   /**
+   * Two mistakes that type-check and blank the page:
+   *  - a hook called at the top of a module, outside any component
+   *    (`const [page, setPage] = useState('Home')` above `function App`) —
+   *    React throws "Cannot read properties of null (reading 'useState')" on
+   *    load. Moved into the file's default-exported component;
+   *  - a test helper called by the app itself (`renderAt(<App />)` at the
+   *    bottom of App.tsx) — removed from app code; tests keep it.
+   */
+  async fixHooksOutsideComponents(root: string): Promise<string[]> {
+    const ts = loadTypeScript();
+    if (!ts) return [];
+    const notes: string[] = [];
+    const all = (await listFiles(path.join(root, "src"))).map((file) => posix(path.relative(root, file)));
+    for (const rel of all.filter((file) => /\.(t|j)sx$/.test(file) && !TEST_FILE.test(file) && !/(^|\/)lib\/testing\./.test(file))) {
+      const full = path.join(root, rel);
+      const text = await fs.readFile(full, "utf8");
+      const source = ts.createSourceFile(rel, text, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+      const isHookCall = (node: import("typescript").Node | undefined): boolean =>
+        Boolean(node && ts.isCallExpression(node) && ts.isIdentifier(node.expression) && /^use[A-Z]\w*$/.test(node.expression.text));
+      const hookStatements: import("typescript").Statement[] = [];
+      const helperCalls: import("typescript").Statement[] = [];
+      for (const statement of source.statements) {
+        if (ts.isVariableStatement(statement) && statement.declarationList.declarations.some((d) => isHookCall(d.initializer))) hookStatements.push(statement);
+        if (ts.isExpressionStatement(statement) && isHookCall(statement.expression)) hookStatements.push(statement);
+        if (
+          ts.isExpressionStatement(statement) &&
+          ts.isCallExpression(statement.expression) &&
+          ts.isIdentifier(statement.expression.expression) &&
+          /^(renderAt|render)$/.test(statement.expression.expression.text)
+        ) {
+          helperCalls.push(statement);
+        }
+      }
+      if (hookStatements.length === 0 && helperCalls.length === 0) continue;
+
+      // The component to move hooks into: `export default function X() {…}`, or
+      // `export default X` naming a function or arrow component in this file.
+      let body: import("typescript").Block | undefined;
+      for (const statement of source.statements) {
+        if (ts.isFunctionDeclaration(statement) && statement.body && statement.modifiers?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword)) body = statement.body;
+      }
+      const defaultName = source.statements
+        .filter(ts.isExportAssignment)
+        .map((statement) => (ts.isIdentifier(statement.expression) ? statement.expression.text : null))
+        .find(Boolean);
+      if (!body && defaultName) {
+        for (const statement of source.statements) {
+          if (ts.isFunctionDeclaration(statement) && statement.name?.text === defaultName && statement.body) body = statement.body;
+          if (ts.isVariableStatement(statement)) {
+            for (const declaration of statement.declarationList.declarations) {
+              const init = declaration.initializer;
+              if (ts.isIdentifier(declaration.name) && declaration.name.text === defaultName && init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) && ts.isBlock(init.body)) body = init.body;
+            }
+          }
+        }
+      }
+
+      const edits: Array<{ start: number; end: number; text: string }> = [];
+      // A removed statement takes its whole line with it, trailing comment included.
+      const lineStart = (start: number) => text.lastIndexOf("\n", start - 1) + 1;
+      const lineEnd = (end: number) => {
+        const newline = text.indexOf("\n", end);
+        return newline === -1 ? text.length : newline + 1;
+      };
+      if (body && hookStatements.length > 0) {
+        const moved = hookStatements.map((statement) => `  ${statement.getText(source)}`).join("\n");
+        edits.push({ start: body.getStart(source) + 1, end: body.getStart(source) + 1, text: `\n${moved}` });
+        for (const statement of hookStatements) edits.push({ start: lineStart(statement.getStart(source)), end: lineEnd(statement.getEnd()), text: "" });
+        notes.push(`${rel}: moved ${hookStatements.length} hook call${hookStatements.length === 1 ? "" : "s"} from the top of the file into its component (a hook outside a component crashes the page)`);
+      }
+      for (const statement of helperCalls) {
+        edits.push({ start: lineStart(statement.getStart(source)), end: lineEnd(statement.getEnd()), text: "" });
+        notes.push(`${rel}: removed ${statement.getText(source).slice(0, 40)} (a test helper, called by the app itself)`);
+      }
+      if (edits.length === 0) continue;
+      let out = text;
+      for (const edit of edits.sort((a, b) => b.start - a.start)) out = out.slice(0, edit.start) + edit.text + out.slice(edit.end);
+      await fs.writeFile(full, out, "utf8");
+    }
+    return notes;
+  },
+
+  /**
    * `useState(…)` in a component that never imported it: add the hooks to its
    * React import (or a new one). Only React's own hooks, only when nothing in
    * the file declares that name.
@@ -417,7 +513,8 @@ export const AutoFix = {
       ...(await AutoFix.fixImportPaths(root)),
       ...(await AutoFix.fixDefaultImports(root)),
       ...(await AutoFix.addMissingComponentImports(root)),
-      ...(await AutoFix.addMissingReactImports(root))
+      ...(await AutoFix.addMissingReactImports(root)),
+      ...(await AutoFix.fixHooksOutsideComponents(root))
     ];
     const pkgPath = path.join(root, "package.json");
     let pkg: Record<string, any>;
