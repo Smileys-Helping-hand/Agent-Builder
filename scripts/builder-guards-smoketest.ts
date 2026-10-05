@@ -453,6 +453,24 @@ const globalsText = fs.readFileSync(path.join(globalsDir, "src/a.ts"), "utf8");
 assert.match(globalsText, /TOP \+ 10/,`not changed to a browser global: ${globalsText}`);
 assert.match(globalsText, /score \+ 1/, "a typo of the project's own name is still fixed");
 
+// Files an older builder let prose overwrite come back from their own history.
+const proseRepo = fs.mkdtempSync(path.join(os.tmpdir(), "ab-prose-"));
+fs.mkdirSync(path.join(proseRepo, "src"), { recursive: true });
+const gitProse = (...args: string[]) => execFileSync("git", args, { cwd: proseRepo, stdio: "ignore" });
+gitProse("init", "-q");
+gitProse("config", "user.email", "t@t");
+gitProse("config", "user.name", "t");
+const reservation = "import { useState } from 'react';\nexport const Reservation = () => {\n  const [date, setDate] = useState('');\n  return <input value={date} onChange={(e) => setDate(e.target.value)} />;\n};\n";
+fs.writeFileSync(path.join(proseRepo, "src/Reservation.tsx"), reservation);
+fs.writeFileSync(path.join(proseRepo, "src/ok.ts"), "export const ok = 1;\n");
+gitProse("add", "-A");
+gitProse("commit", "-q", "-m", "Iteration 1: generate");
+fs.writeFileSync(path.join(proseRepo, "src/Reservation.tsx"), "To optimize the code for performance, we can make several improvements, including caching.\n\n1. **Caching**: use it.\n");
+gitProse("commit", "-qam", "Iteration 9: apply 8 improvement(s)");
+const restoredFiles = CodeGuard.restoreUnparseable(proseRepo);
+assert.deepEqual(restoredFiles.map((item) => item.file), ["src/Reservation.tsx"], "only the file that does not parse");
+assert.equal(restoredFiles[0].text, reservation, "back to the latest version that was code");
+
 // A continued build gets back what a pass took out of the engine it started from.
 const engineRepo = fs.mkdtempSync(path.join(os.tmpdir(), "ab-engine-"));
 fs.mkdirSync(path.join(engineRepo, "src", "engine"), { recursive: true });

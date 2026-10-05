@@ -410,6 +410,55 @@ export const CodeGuard = {
   },
 
   /** The file as the project's "Head start" commit wrote it, or null when it was not one of ours. */
+  /**
+   * Source files that do not parse, each with the latest version from the
+   * project's own history that did. Damage done before the guards existed
+   * stays in a project: a restaurant order's App.test.tsx and Reservation.tsx
+   * were the model's prose about "optimising for performance", and eight
+   * passes of repairs worked around them. A build that carries on starts by
+   * putting such files back. Files with no parsing version are left alone.
+   */
+  restoreUnparseable(root: string): { file: string; text: string; commit: string }[] {
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"], maxBuffer: 20 * 1024 * 1024 });
+    const code = (text: string) => text.split(/\r?\n/).filter((line) => line.trim() && !/^\s*(\/\/|\/?\*)/.test(line)).length;
+    const out: { file: string; text: string; commit: string }[] = [];
+    const walk = (dir: string): string[] =>
+      fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) return entry.name === "node_modules" ? [] : walk(full);
+        return /\.(t|j)sx?$/.test(entry.name) && !entry.name.endsWith(".d.ts") ? [full] : [];
+      });
+    let files: string[];
+    try {
+      files = walk(path.join(root, "src"));
+    } catch {
+      return out;
+    }
+    for (const full of files) {
+      const file = path.relative(root, full).split(path.sep).join("/");
+      const current = fs.readFileSync(full, "utf8");
+      if (CodeGuard.syntaxErrors(file, current).length === 0) continue;
+      let commits: string[];
+      try {
+        commits = git("log", "--format=%H", "-n", "40", "--", file).split("\n").filter(Boolean);
+      } catch {
+        continue;
+      }
+      for (const commit of commits) {
+        let text: string;
+        try {
+          text = git("show", `${commit}:${file}`);
+        } catch {
+          continue;
+        }
+        if (text === current || code(text) < 3 || CodeGuard.syntaxErrors(file, text).length > 0) continue;
+        out.push({ file, text, commit: commit.slice(0, 7) });
+        break;
+      }
+    }
+    return out;
+  },
+
   headStart(root: string, file: string): string | null {
     const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
     try {
