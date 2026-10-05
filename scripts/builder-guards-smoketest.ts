@@ -632,6 +632,13 @@ assert.deepEqual(
   "rendered on the game screen"
 );
 
+// A component from the engine counts as used when a screen renders it.
+assert.deepEqual(
+  engineUse({ "src/engine/play.tsx": board, "src/components/Game.tsx": "export default () => <GameBoard settings={DEFAULT_SETTINGS} />;\n" }, ["src/engine/play.tsx"])[0].unused,
+  [],
+  "<GameBoard /> is using it"
+);
+
 // A dead button on a screen gets the exact wiring when App switches screens with state.
 const deadPlay = stubs({
   "src/App.tsx": 'const App = () => {\n  const [screen, setScreen] = useState<"home" | "menu" | "game">("home");\n  return <div>{screen === "home" && <Home />}</div>;\n};\n',

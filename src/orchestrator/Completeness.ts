@@ -232,7 +232,8 @@ export const engineUse = (source: Record<string, string>, engineFiles: string[])
         .filter(([name]) => name !== file)
         .map(([, text]) => text)
         .join("\n");
-      const used = functions.filter((name) => new RegExp(`\\b${name}\\s*\\(`).test(others));
+      // Called, or for a component (GameBoard), rendered: <GameBoard … /> is how a board is used.
+      const used = functions.filter((name) => new RegExp(`\\b${name}\\s*\\(|<${name}\\b`).test(others));
       return { file, used, unused: functions.filter((name) => !used.includes(name)) };
     });
 

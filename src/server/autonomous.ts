@@ -21,6 +21,7 @@ import { signLink, verifyLink } from "../utils/SignedLinks.js";
 import { BuildService, buildEvents, type BuildRecord } from "../orchestrator/BuildService.js";
 import { Packager } from "../orders/Packager.js";
 import { SelfHeal } from "../orchestrator/SelfHeal.js";
+import { withStorageShim } from "./previews.js";
 import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
 import { JarvisClient } from "../integrations/JarvisClient.js";
 import { Logger } from "../utils/Logger.js";
@@ -389,6 +390,9 @@ export const registerAutonomousRoutes = (app: Express) => {
     res.setHeader("Content-Security-Policy", "sandbox allow-scripts allow-forms allow-popups allow-modals");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Cache-Control", "no-store");
+    // Sandboxed, localStorage throws on first touch, and apps that save
+    // crash before drawing: pages get storage of their own first.
+    if (/\.html?$/i.test(file)) return res.type("html").send(withStorageShim(fs.readFileSync(file, "utf8")));
     res.sendFile(file);
   });
 
