@@ -1350,9 +1350,11 @@ Plan the files. Logic (rules, state, saving) goes in plain .ts modules under src
 component under src/components/; src/App.tsx shows the screens and switches between them; tests go in
 src/lib/*.test.ts and test the logic. Every page and every must-have in the brief gets a real home.
 Between 4 and 9 files. Do not plan src/main.tsx, src/lib/testing.tsx or anything already in the project.
+Every component's exports give its props in full — App.tsx will pass exactly these and nothing else:
+  "default Menu(props: { onPlay: () => void; onBack: () => void })". A screen with no props: "default Home()".
 
 Answer with JSON only:
-{"files":[{"path":"src/lib/example.ts","purpose":"what it does, in one sentence","exports":["name(arg: Type): Return", "interface Name { field: Type }"]}]}`;
+{"files":[{"path":"src/lib/example.ts","purpose":"what it does, in one sentence","exports":["name(arg: Type): Return", "interface Name { field: Type }"]},{"path":"src/components/Example.tsx","purpose":"a screen","exports":["default Example(props: { onDone: () => void })"]}]}`;
     let plan: Array<{ path: string; purpose: string; exports: string[] }> = [];
     let answer = "";
     for (let attempt = 0; attempt < 2 && plan.length === 0; attempt++) {
@@ -1415,7 +1417,15 @@ ${[engineCode, others].filter(Boolean).join("\n\n") || "(nothing yet)"}
 
 Now write ${file.path} (${file.purpose}), complete and working: real logic and real screens, no
 placeholders, no TODO comments, no buttons that do nothing. Import only from the files above, the
-installed packages, and files listed in the plan. Answer with exactly one file:
+installed packages, and files listed in the plan.${
+        file.exports.length
+          ? `\nIt must export exactly what the plan says, with the same names and props: ${file.exports.join("; ")}.`
+          : ""
+      }${
+        file.path === "src/App.tsx"
+          ? "\nRender each screen with exactly the props its signature above takes — no more, no fewer."
+          : ""
+      } Answer with exactly one file:
 FILE: ${file.path}
 \`\`\`
 …the whole file…
