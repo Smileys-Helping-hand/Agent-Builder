@@ -76,13 +76,29 @@ export const requirementsFromBrief = (brief: string): Requirement[] => {
  * read by a small model on every pass. A finding stays when it shares two
  * words with the brief itself; a section left empty goes.
  */
+/** Words too general to show two texts are about the same thing ("system" joined a game's progression system to the limbic system). */
+const GENERAL = new Set(["system", "use", "using", "used", "data", "based", "new", "way", "time", "make", "work", "help", "need", "one", "two", "more", "less", "high", "low", "well", "real"]);
+
+const topicWords = (text: string): Set<string> =>
+  new Set(
+    (text.replace(/\(https?:[^)]*\)|https?:\/\/\S+/g, " ").match(/[A-Za-z]{3,}/g) ?? [])
+      .map((word) => word.toLowerCase())
+      .filter((word) => !STOP.has(word) && !GENERAL.has(word))
+      .map(stem)
+      .filter((word) => !GENERAL.has(word))
+  );
+
+/** Whether a research finding is about the same thing as the brief: two specific words in common. */
+export const relatedTo = (brief: string, claim: string): boolean => {
+  const own = topicWords(brief);
+  return Array.from(topicWords(claim)).filter((word) => own.has(word)).length >= 2;
+};
+
 export const dropUnrelatedResearch = (brief: string): string => {
   const match = /\n(What our research confirmed[^\n]*\n)((?:[ \t]*[-*•][^\n]*(?:\n|$))+)/i.exec(brief);
   if (!match) return brief;
   const own = brief.slice(0, match.index) + brief.slice(match.index + match[0].length);
-  const words = (text: string) => new Set((text.replace(/\(https?:[^)]*\)/g, " ").match(/[A-Za-z]{3,}/g) ?? []).map((w) => w.toLowerCase()).filter((w) => !STOP.has(w)).map(stem));
-  const ownWords = words(own);
-  const kept = match[2].split("\n").filter((line) => line.trim() && Array.from(words(line)).filter((w) => ownWords.has(w)).length >= 2);
+  const kept = match[2].split("\n").filter((line) => line.trim() && relatedTo(own, line));
   const section = kept.length > 0 ? `\n${match[1]}${kept.join("\n")}\n` : "\n";
   return brief.slice(0, match.index) + section + brief.slice(match.index + match[0].length);
 };
