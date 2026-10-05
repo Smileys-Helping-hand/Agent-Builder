@@ -391,6 +391,57 @@ assert.deepEqual(
 assert.deepEqual(sampleFactsLeft(sampleContent, tailored.replace("@saltandember", "@mamanandis"), facts), [], "fully tailored passes");
 assert.deepEqual(sampleFactsLeft(sampleContent, sampleContent, readFacts("A restaurant in Durban.")), [], "no details in the brief, nothing demanded");
 
+// A name used several times without an import is imported once, not once per use.
+const many = fs.mkdtempSync(path.join(os.tmpdir(), "ab-many-"));
+fs.mkdirSync(path.join(many, "src"));
+fs.writeFileSync(path.join(many, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", noEmit: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(path.join(many, "src/settings.ts"), "export const DEFAULT_SETTINGS = { lives: 3, width: 320 };\nexport const handleEvent = (n: number): number => n;\n");
+fs.writeFileSync(
+  path.join(many, "src/use.ts"),
+  "export const a = DEFAULT_SETTINGS.lives;\nexport const b = DEFAULT_SETTINGS.width;\nexport const c = DEFAULT_SETTINGS.lives + handleEvent(1) + handleEvent(2) + handleEvent(3);\n"
+);
+TypeFixer.run(many);
+const used = fs.readFileSync(path.join(many, "src/use.ts"), "utf8");
+const importLines = used.split("\n").filter((line) => line.startsWith("import"));
+assert.equal(importLines.filter((line) => /\bDEFAULT_SETTINGS\b/.test(line)).length, 1, `DEFAULT_SETTINGS imported once: ${used}`);
+assert.equal(importLines.filter((line) => /\bhandleEvent\b/.test(line)).length, 1, `handleEvent imported once: ${used}`);
+assert.ok(importLines.every((line) => (line.match(/\b(DEFAULT_SETTINGS|handleEvent)\b/g) ?? []).length === 1), `no name twice in one import: ${used}`);
+
+// Names already imported twice (the live Pgame test file) are imported once.
+const dup = fs.mkdtempSync(path.join(os.tmpdir(), "ab-dup-"));
+fs.mkdirSync(path.join(dup, "src", "lib"), { recursive: true });
+fs.writeFileSync(
+  path.join(dup, "src/lib/gameLogic.test.ts"),
+  [
+    "// src/lib/gameLogic.test.ts",
+    "",
+    'import { DEFAULT_SETTINGS } from "../engine/game";',
+    'import { DEFAULT_SETTINGS } from "../engine/game";',
+    'import { DEFAULT_SETTINGS } from "../engine/game";',
+    "import { GameState, initializeGame, handleEvent, handleEvent, handleEvent } from '../lib/gameLogic';",
+    'import Home, { type Props as HomeProps } from "../Home";',
+    'import Home from "../Home";',
+    "",
+    "describe('x', () => {});",
+    ""
+  ].join("\n")
+);
+assert.deepEqual(await AutoFix.dedupeImports(dup), ["src/lib/gameLogic.test.ts: removed 5 name(s) imported a second time"]);
+assert.equal(
+  fs.readFileSync(path.join(dup, "src/lib/gameLogic.test.ts"), "utf8"),
+  [
+    "// src/lib/gameLogic.test.ts",
+    "",
+    'import { DEFAULT_SETTINGS } from "../engine/game";',
+    "import { GameState, initializeGame, handleEvent } from '../lib/gameLogic';",
+    'import Home, { type Props as HomeProps } from "../Home";',
+    "",
+    "describe('x', () => {});",
+    ""
+  ].join("\n")
+);
+assert.deepEqual(await AutoFix.dedupeImports(dup), [], "nothing left to remove");
+
 // "..." for "the rest" in a test is a syntax error; it becomes a partial match.
 const dots = fs.mkdtempSync(path.join(os.tmpdir(), "ab-dots-"));
 fs.mkdirSync(path.join(dots, "src", "lib"), { recursive: true });
