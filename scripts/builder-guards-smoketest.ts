@@ -472,6 +472,51 @@ assert.match(restoredEngine!.text, /export type GameEvent/, "the lost export is 
 assert.match(restoredEngine!.text, /export function saveGame/, "what it added is kept");
 assert.equal(CodeGuard.headStart(engineRepo, "src/engine/other.ts"), null, "a file that was not a head start is not ours to restore");
 
+// A repair that answers with a fragment does not replace a working file.
+const frag = fs.mkdtempSync(path.join(os.tmpdir(), "ab-frag-"));
+fs.mkdirSync(path.join(frag, "src", "components"), { recursive: true });
+const saveScreen = [
+  "import React, { useState } from 'react';",
+  "import { saveGame } from '../lib/gameLogic';",
+  "",
+  "const Save: React.FC = () => {",
+  "  const [name, setName] = useState('');",
+  "  const [saved, setSaved] = useState(false);",
+  "  const onSave = () => { saveGame(name); setSaved(true); };",
+  "  return (",
+  "    <section>",
+  "      <input value={name} onChange={(e) => setName(e.target.value)} />",
+  "      <button onClick={onSave}>Save</button>",
+  "      {saved ? <p>Saved</p> : null}",
+  "    </section>",
+  "  );",
+  "};",
+  "",
+  "export default Save;",
+  ""
+].join("\n");
+fs.writeFileSync(path.join(frag, "src/components/Save.tsx"), saveScreen);
+fs.writeFileSync(path.join(frag, "src/App.tsx"), "import Save from './components/Save';\nexport const App = () => <Save />;\n");
+assert.match(String(CodeGuard.fragmentProblem(frag, "src/components/Save.tsx", saveScreen, "import { saveGame } from '../lib/gameLogic';\n")), /keeps only 1 of its 15 lines/, "a one-line answer is not the file");
+assert.equal(
+  CodeGuard.fragmentProblem(frag, "src/components/Save.tsx", saveScreen, "import React from 'react';\nconst Save = () => <section><button>Save</button></section>;\nexport const helper = 1;\nconst a = 1;\n"),
+  "drops its default export, which src/App.tsx imports",
+  "a rewrite that loses what App imports is refused"
+);
+assert.equal(CodeGuard.fragmentProblem(frag, "src/components/Save.tsx", saveScreen, saveScreen.replace("Saved", "Saved!")), null, "a real edit is fine");
+
+// `box-shadow:` in a style object is CSS where React wants boxShadow.
+const kebab = fs.mkdtempSync(path.join(os.tmpdir(), "ab-kebab-"));
+fs.mkdirSync(path.join(kebab, "src", "lib"), { recursive: true });
+fs.writeFileSync(path.join(kebab, "src/lib/styles.ts"), "export const appStyles = {\n  screen: {\n    padding: '2rem',\n    box-shadow: '0 0 10px rgba(0,0,0,0.1)',\n    z-index: 2,\n  },\n};\n");
+fs.writeFileSync(path.join(kebab, "src/lib/page.ts"), "export const css = `\n  box-shadow: 0 0 10px black;\n`;\n");
+assert.equal((await AutoFix.fixKebabCaseKeys(kebab)).length, 1);
+const kebabFixed = fs.readFileSync(path.join(kebab, "src/lib/styles.ts"), "utf8");
+assert.match(kebabFixed, /\n    boxShadow: '0 0 10px/, `camel-cased: ${kebabFixed}`);
+assert.match(kebabFixed, /\n    zIndex: 2,/);
+assert.deepEqual(CodeGuard.syntaxErrors("src/lib/styles.ts", kebabFixed), [], "it parses");
+assert.match(fs.readFileSync(path.join(kebab, "src/lib/page.ts"), "utf8"), /box-shadow: 0 0 10px/, "CSS inside a string in a file that parses is left alone");
+
 // "..." for "the rest" in a test is a syntax error; it becomes a partial match.
 const dots = fs.mkdtempSync(path.join(os.tmpdir(), "ab-dots-"));
 fs.mkdirSync(path.join(dots, "src", "lib"), { recursive: true });

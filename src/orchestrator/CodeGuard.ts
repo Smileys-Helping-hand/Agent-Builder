@@ -354,6 +354,58 @@ export const CodeGuard = {
     return { files: out, cleaned, refused };
   },
 
+  /**
+   * Why a new version of a working file is a fragment, not the file: a repair
+   * answered with one line ("import { onPlay } from '../engine/game';") and
+   * Game.tsx, Save.tsx, Load.tsx and styles.ts were each replaced by a line.
+   * The score was already low, so nothing undid it. A new version is refused
+   * when it drops an export another file imports, or keeps under a quarter of
+   * a file's code. Null when it is a real new version.
+   */
+  fragmentProblem(root: string, file: string, before: string, after: string): string | null {
+    const code = (text: string) => text.split(/\r?\n/).filter((line) => line.trim() && !/^\s*(\/\/|\/?\*)/.test(line)).length;
+    if (code(before) >= 8 && code(after) < code(before) * 0.25) return `keeps only ${code(after)} of its ${code(before)} lines of code`;
+    const names = (text: string) => {
+      const out = exportedNames(text);
+      if (/export\s+default\b/.test(text)) out.add("default");
+      for (const match of text.matchAll(/export\s*\{([^}]*)\}/g)) for (const part of match[1].split(",")) if (part.trim()) out.add(part.trim().split(/\s+as\s+/).pop()!.replace(/^type\s+/, ""));
+      return out;
+    };
+    const kept = names(after);
+    const lost = [...names(before)].filter((name) => !kept.has(name));
+    if (lost.length === 0) return null;
+    // Only exports something uses: dropping a helper nobody imports is a choice.
+    const module = file.replace(/\.(t|j)sx?$/, "");
+    const users: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name !== "node_modules") walk(full);
+          continue;
+        }
+        if (!/\.(t|j)sx?$/.test(entry.name)) continue;
+        const rel = path.relative(root, full).split(path.sep).join("/");
+        if (rel === file) continue;
+        const text = fs.readFileSync(full, "utf8");
+        for (const match of text.matchAll(/import\s+(?:type\s+)?([A-Za-z_$][\w$]*)?\s*,?\s*(?:\{([^}]*)\})?\s*from\s+["']([^"']+)["']/g)) {
+          const target = path.posix.normalize(path.posix.join(path.posix.dirname(rel), match[3])).replace(/\.(t|j)sx?$/, "");
+          if (target !== module) continue;
+          const wanted = [match[1] ? "default" : "", ...(match[2] ?? "").split(",").map((part) => part.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0])];
+          if (wanted.some((name) => name && lost.includes(name))) users.push(rel);
+        }
+      }
+    };
+    try {
+      walk(path.join(root, "src"));
+    } catch {
+      return null;
+    }
+    if (users.length === 0) return null;
+    const shown = lost.map((name) => (name === "default" ? "its default export" : name));
+    return `drops ${shown.slice(0, 4).join(", ")}, which ${Array.from(new Set(users)).slice(0, 3).join(", ")} ${users.length === 1 ? "imports" : "import"}`;
+  },
+
   /** The file as the project's "Head start" commit wrote it, or null when it was not one of ours. */
   headStart(root: string, file: string): string | null {
     const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });

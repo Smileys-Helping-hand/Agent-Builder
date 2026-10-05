@@ -1841,6 +1841,33 @@ Rules that keep this build passing its checks (install, typecheck, build, tests)
     }
     files = checked.files;
 
+    // A working file is replaced by a whole new version, never by a fragment:
+    // a repair answered with one import line, and four screens became that line.
+    const fragments: string[] = [];
+    for (const file of Object.keys(files)) {
+      if (this.adoptedEngine.includes(file) || !/\.(t|j)sx?$/.test(file)) continue;
+      let before = "";
+      try {
+        before = fs.readFileSync(path.join(this.workspace.root, file), "utf8");
+      } catch {
+        continue;
+      }
+      const problem = CodeGuard.fragmentProblem(this.workspace.root, file, before, files[file]);
+      if (problem) {
+        files[file] = before;
+        fragments.push(`• ${file}: the new version ${problem}, so the working one stays.`);
+      }
+    }
+    if (fragments.length > 0) {
+      this.think(
+        this.currentIteration,
+        "decision",
+        "Kept files the answer would have cut down",
+        `${fragments.join("\n")}\nChange a file by sending all of it, with what it exports kept.`,
+        fragments.map((line) => line.slice(2, line.indexOf(":")))
+      );
+    }
+
     // The engine this build started from may grow (a new export, a tweak to a
     // rule), but not be replaced: a 7B model "rewrote" game.ts as empty stubs.
     for (const file of this.adoptedEngine) {

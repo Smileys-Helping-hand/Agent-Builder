@@ -15,6 +15,7 @@ import fs from "fs/promises";
 import fsSync from "fs";
 import path from "path";
 import { builtinModules, createRequire } from "module";
+import { CodeGuard } from "./CodeGuard.js";
 
 let typescriptModule: typeof import("typescript") | null | undefined;
 /** TypeScript's parser, for the fixes a regular expression would get wrong. */
@@ -616,8 +617,37 @@ export const AutoFix = {
     return notes;
   },
 
+  /**
+   * `box-shadow: '0 0 10px …'` in a style object: CSS written where React wants
+   * `boxShadow`. It is a syntax error ("',' expected"), and the parser gives
+   * up on the rest of the file, so one key showed as 70 errors and every
+   * screen importing the styles failed with it. Only in a file that does not
+   * parse, only a bare key followed by a quoted or numeric value, and only
+   * when the file then parses better than before.
+   */
+  async fixKebabCaseKeys(root: string): Promise<string[]> {
+    const notes: string[] = [];
+    for (const file of (await listFiles(path.join(root, "src"))).filter((name) => /\.(t|j)sx?$/.test(name) && !name.endsWith(".d.ts"))) {
+      const rel = posix(path.relative(root, file));
+      const text = await fs.readFile(file, "utf8");
+      const before = CodeGuard.syntaxErrors(rel, text).length;
+      if (before === 0) continue;
+      const keys: string[] = [];
+      const fixed = text.replace(/^(\s*)([a-z]+(?:-[a-z]+)+)(\s*:\s*['"`\d-])/gm, (_whole, indent: string, key: string, rest: string) => {
+        const camel = key.replace(/-([a-z])/g, (_dash, letter: string) => letter.toUpperCase());
+        keys.push(`${key} -> ${camel}`);
+        return `${indent}${camel}${rest}`;
+      });
+      if (keys.length === 0 || CodeGuard.syntaxErrors(rel, fixed).length >= before) continue;
+      await fs.writeFile(file, fixed, "utf8");
+      notes.push(`${rel}: CSS property names in a style object, written the JavaScript way (${keys.slice(0, 4).join(", ")}${keys.length > 4 ? ", …" : ""})`);
+    }
+    return notes;
+  },
+
   async run(root: string): Promise<string[]> {
     const notes: string[] = [
+      ...(await AutoFix.fixKebabCaseKeys(root)),
       ...(await AutoFix.dedupeImports(root)),
       ...(await AutoFix.splitNameClashes(root)),
       ...(await AutoFix.fixImportPaths(root)),
