@@ -1154,6 +1154,14 @@ export const api = {
     return `${conn.address}${res.path}`;
   },
 
+  /** A signed, hour-long link to download a build's package (the key never goes in a URL). */
+  downloadBuildUrl: async (id: string): Promise<string> => {
+    const conn = loadConnection();
+    if (!conn) throw new ApiError("Not connected to a machine yet.", 0);
+    const res = await request<{ path: string }>(`/api/autonomous/${encodeURIComponent(id)}/download-link`, { method: "POST" });
+    return `${conn.address}${res.path}`;
+  },
+
   // --- Jarvis ---
   jarvis: () => request<JarvisStatus>("/api/jarvis/status"),
   testJarvis: () =>

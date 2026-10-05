@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { api, type PreviewKind } from "@/lib/api";
 import { PreviewPane } from "../preview";
+import { DownloadBuild } from "../build/download";
 import { Banner, Header, NotConnected, Skeleton, useConnected, useRemote } from "../ui";
 
 interface Item {
@@ -117,7 +118,14 @@ export default function TryPage() {
 
         <section className="try-stage">
           {picked ? (
-            <PreviewPane key={`${picked.kind}:${picked.id}`} kind={picked.kind} id={picked.id} title={picked.name} height={height} />
+            <>
+              <PreviewPane key={`${picked.kind}:${picked.id}`} kind={picked.kind} id={picked.id} title={picked.name} height={height} />
+              {picked.kind === "build" ? (
+                <div className="btn-row" style={{ marginTop: 10 }}>
+                  <DownloadBuild id={picked.id} label="Download the app" />
+                </div>
+              ) : null}
+            </>
           ) : (
             <div className="try-empty">
               <h3>Pick something to try</h3>

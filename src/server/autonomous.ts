@@ -19,6 +19,7 @@ import type { Express, Request, Response } from "express";
 import { signLink, verifyLink } from "../utils/SignedLinks.js";
 
 import { BuildService, buildEvents, type BuildRecord } from "../orchestrator/BuildService.js";
+import { Packager } from "../orders/Packager.js";
 import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
 import { JarvisClient } from "../integrations/JarvisClient.js";
 import { Logger } from "../utils/Logger.js";
@@ -202,6 +203,38 @@ export const registerAutonomousRoutes = (app: Express) => {
     if (!build) return res.status(404).json({ error: "Unknown build." });
     res.json(build);
   });
+
+  /**
+   * Download what a build has made, packaged like an order's (see Packager):
+   * "Open the website.html" to double-click, the source, and how to open both.
+   * The link is signed for this one build and an hour, so the key never goes
+   * into a URL a browser tab, proxy or tunnel would log.
+   */
+  app.post("/api/autonomous/:buildId/download-link", authenticateAgent("read"), (req: Request, res: Response) => {
+    const build = BuildService.view(req.params.buildId);
+    if (!build) return res.status(404).json({ error: "Unknown build." });
+    const token = signLink("build-download", build.buildId, 60 * 60 * 1000);
+    res.json({ path: `/api/autonomous/${encodeURIComponent(build.buildId)}/download?t=${encodeURIComponent(token)}`, expiresInMinutes: 60 });
+  });
+
+  app.get(
+    "/api/autonomous/:buildId/download",
+    (req: Request, res: Response, next) => {
+      if (!verifyLink("build-download", req.params.buildId, req.query.t)) return authenticateAgent("read")(req, res, next);
+      next();
+    },
+    async (req: Request, res: Response) => {
+      const build = BuildService.view(req.params.buildId);
+      if (!build) return res.status(404).json({ error: "Unknown build." });
+      if (!build.outputDir || !fs.existsSync(build.outputDir)) return res.status(409).json({ error: "This build's folder is gone, so there is nothing to download." });
+      try {
+        const pkg = await Packager.packageBuild(path.resolve(build.outputDir), build.projectName, build.buildId);
+        res.download(pkg.zipPath, pkg.fileName);
+      } catch (error) {
+        res.status(500).json({ error: `Could not package it: ${error instanceof Error ? error.message : String(error)}` });
+      }
+    }
+  );
 
   app.get("/api/autonomous/:buildId/iterations", authenticateAgent("read"), (req: Request, res: Response) => {
     const build = BuildService.view(req.params.buildId);
