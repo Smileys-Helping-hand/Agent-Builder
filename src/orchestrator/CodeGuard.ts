@@ -224,6 +224,9 @@ export const CodeGuard = {
       }
       const fresh = names.filter((name) => !had.has(name));
       if (fresh.length === 0 || fresh.length !== names.length) continue;
+      // A function with nothing in it ("// Implementation of updateGameState")
+      // is a placeholder, not an addition: merged in, it shadowed the real one.
+      if (typescript.isFunctionDeclaration(statement) && statement.body && statement.body.statements.length === 0) continue;
       additions.push(statement.getText(file));
       added.push(...fresh);
     }

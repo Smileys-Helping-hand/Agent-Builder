@@ -465,7 +465,7 @@ fs.writeFileSync(engineFile, 'export type GameEvent = "brick" | "wall";\nexport 
 gitIn("add", "-A");
 gitIn("commit", "-q", "-m", "Head start: the engine from Arcade Promo Game");
 assert.equal(CodeGuard.restoreEngine(engineRepo, "src/engine/game.ts"), null, "an intact engine is left alone");
-fs.writeFileSync(engineFile, "export interface GameState { score: number }\nexport function step(state: GameState): any[] { return []; }\nexport function saveGame(state: GameState): void {}\n");
+fs.writeFileSync(engineFile, "export interface GameState { score: number }\nexport function step(state: GameState): any[] { return []; }\nexport function saveGame(state: GameState): void { state.score = 0; }\n");
 const restoredEngine = CodeGuard.restoreEngine(engineRepo, "src/engine/game.ts");
 assert.equal(restoredEngine?.problem, "had lost GameEvent");
 assert.match(restoredEngine!.text, /export type GameEvent/, "the lost export is back");
@@ -516,6 +516,52 @@ assert.match(kebabFixed, /\n    boxShadow: '0 0 10px/, `camel-cased: ${kebabFixe
 assert.match(kebabFixed, /\n    zIndex: 2,/);
 assert.deepEqual(CodeGuard.syntaxErrors("src/lib/styles.ts", kebabFixed), [], "it parses");
 assert.match(fs.readFileSync(path.join(kebab, "src/lib/page.ts"), "utf8"), /box-shadow: 0 0 10px/, "CSS inside a string in a file that parses is left alone");
+
+// The live Pgame build's last three: a number used as its list, a name imported
+// from the wrong file, and an empty stub shadowing the real function.
+const levels = fs.mkdtempSync(path.join(os.tmpdir(), "ab-levels-"));
+fs.mkdirSync(path.join(levels, "src", "engine"), { recursive: true });
+fs.mkdirSync(path.join(levels, "src", "lib"), { recursive: true });
+fs.writeFileSync(path.join(levels, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", noEmit: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(
+  path.join(levels, "src/engine/game.ts"),
+  [
+    "export interface LevelSpec { rows: string[] }",
+    "export interface GameSettings { width: number; levels: LevelSpec[] }",
+    "export interface GameState { level: number; settings: GameSettings }",
+    "export function bricksFor(level: LevelSpec, width: number): number { return level.rows.length * width; }",
+    "export function newGame(settings: GameSettings): GameState { return { level: 0, settings }; }",
+    "export function updateGameState(state: GameState): GameState {",
+    "  // Implementation of updateGameState",
+    "}",
+    ""
+  ].join("\n")
+);
+fs.writeFileSync(path.join(levels, "src/lib/gameLogic.ts"), "import { GameState } from '../engine/game';\nexport function updateGameState(state: GameState): GameState { return { ...state, level: state.level + 1 }; }\n");
+fs.writeFileSync(
+  path.join(levels, "src/lib/play.ts"),
+  [
+    "import { GameState, bricksFor, updateGameState } from '../engine/game';",
+    "import { newGame } from './gameLogic';",
+    "export const current = (state: GameState) => state.level[state.level];",
+    "export const more = (state: GameState) => state.level + 1 < state.level.length;",
+    "export const bricks = (state: GameState) => bricksFor(state.level, state.settings.width);",
+    "export const next = (state: GameState) => updateGameState(state);",
+    "export const fresh = newGame;",
+    ""
+  ].join("\n")
+);
+const levelNotes = TypeFixer.run(levels);
+const play = fs.readFileSync(path.join(levels, "src/lib/play.ts"), "utf8");
+assert.match(play, /state\.settings\.levels\[state\.level\];/, `indexing the number becomes the list: ${levelNotes.join(" | ")}`);
+assert.match(play, /state\.level \+ 1 < state\.settings\.levels\.length/, "its length is the list's");
+assert.match(play, /bricksFor\(state\.settings\.levels\[state\.level\], state\.settings\.width\)/, "a call that wants a level gets the level");
+assert.match(play, /import \{ newGame \} from "\.\.\/engine\/game"|import \{ newGame \} from '\.\.\/engine\/game'/, "newGame comes from the file that exports it");
+assert.match(play, /import \{ updateGameState \} from ['"]\.\/gameLogic['"]/, "the real updateGameState is imported");
+assert.ok(!/Implementation of updateGameState/.test(fs.readFileSync(path.join(levels, "src/engine/game.ts"), "utf8")), "the empty stub is gone");
+assert.deepEqual(TypeFixer.run(levels), [], `nothing left: ${TypeFixer.run(levels).join(" | ")}`);
+// An empty function is never merged into the engine.
+assert.equal(CodeGuard.mergeEngineAdditions("src/engine/game.ts", "export const a = 1;\n", "export function stub(): number {\n  // later\n}\n"), null);
 
 // "..." for "the rest" in a test is a syntax error; it becomes a partial match.
 const dots = fs.mkdtempSync(path.join(os.tmpdir(), "ab-dots-"));
