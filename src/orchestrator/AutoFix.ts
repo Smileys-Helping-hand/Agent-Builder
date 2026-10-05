@@ -694,10 +694,28 @@ export const AutoFix = {
     return notes;
   },
 
+  /**
+   * The starter's test setup cleaned the page between tests but not saved
+   * data, so a test that saved a game made the next test's "no saved game"
+   * false. Builds made before the starter was fixed get the same line.
+   */
+  async clearStorageBetweenTests(root: string): Promise<string[]> {
+    const setup = path.join(root, "src", "lib", "setup-tests.ts");
+    const text = await fs.readFile(setup, "utf8").catch(() => "");
+    if (!/afterEach\(\(\) => cleanup\(\)\);/.test(text) || /localStorage/.test(text)) return [];
+    await fs.writeFile(
+      setup,
+      text.replace(/afterEach\(\(\) => cleanup\(\)\);/, "afterEach(() => {\n  cleanup();\n  globalThis.localStorage?.clear();\n  globalThis.sessionStorage?.clear();\n});"),
+      "utf8"
+    );
+    return ["src/lib/setup-tests.ts: saved data is now cleared between tests, so one test's save is not the next test's starting point"];
+  },
+
   async run(root: string): Promise<string[]> {
     const notes: string[] = [
       ...(await AutoFix.fixKebabCaseKeys(root)),
       ...(await AutoFix.addEmotionPragma(root)),
+      ...(await AutoFix.clearStorageBetweenTests(root)),
       ...(await AutoFix.dedupeImports(root)),
       ...(await AutoFix.splitNameClashes(root)),
       ...(await AutoFix.fixImportPaths(root)),

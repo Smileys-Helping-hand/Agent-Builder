@@ -676,6 +676,15 @@ TypeFixer.run(shortKeys);
 assert.match(fs.readFileSync(path.join(shortKeys, "src/a.test.ts"), "utf8"), /\{ x: 1, y: 2, w: 70, h: 10 \}/);
 assert.equal(TypeFixer.errorCount(shortKeys), 0);
 
+// Saved data is cleared between tests, in the starter and in builds made before it was.
+const setupDir = fs.mkdtempSync(path.join(os.tmpdir(), "ab-setup-"));
+fs.mkdirSync(path.join(setupDir, "src", "lib"), { recursive: true });
+fs.writeFileSync(path.join(setupDir, "src/lib/setup-tests.ts"), 'import { cleanup } from "@testing-library/react";\nimport { afterEach } from "vitest";\n\nafterEach(() => cleanup());\n');
+assert.equal((await AutoFix.clearStorageBetweenTests(setupDir)).length, 1);
+assert.match(fs.readFileSync(path.join(setupDir, "src/lib/setup-tests.ts"), "utf8"), /cleanup\(\);\n  globalThis\.localStorage\?\.clear\(\);/);
+assert.deepEqual(await AutoFix.clearStorageBetweenTests(setupDir), [], "once");
+assert.match(fs.readFileSync(path.resolve("templates/starters/web/src/lib/setup-tests.ts"), "utf8"), /localStorage\?\.clear\(\)/, "the starter does it from the start");
+
 // An empty function is never merged into the engine.
 assert.equal(CodeGuard.mergeEngineAdditions("src/engine/game.ts", "export const a = 1;\n", "export function stub(): number {\n  // later\n}\n"), null);
 
