@@ -16,6 +16,7 @@
 import fs from "fs";
 import path from "path";
 import { createRequire } from "module";
+import { execFileSync } from "child_process";
 
 type TsModule = typeof import("typescript");
 let ts: TsModule | null | undefined;
@@ -351,5 +352,39 @@ export const CodeGuard = {
       out[file] = content;
     }
     return { files: out, cleaned, refused };
+  },
+
+  /** The file as the project's "Head start" commit wrote it, or null when it was not one of ours. */
+  headStart(root: string, file: string): string | null {
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+    try {
+      const commit = git("log", "--format=%H", "--grep=^Head start", "--", file).trim().split("\n").filter(Boolean).pop();
+      return commit ? git("show", `${commit}:${file}`) : null;
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * An engine a project started from (committed as "Head start: …") that has
+   * since been rewritten and lost exports: put back what was lost, keep what
+   * was added. Continued builds never saw the head start, so nothing guarded
+   * the engine — the model rewrote game.ts, dropped GameEvent, and twenty
+   * imports across the app broke. Null when the engine is intact or there is
+   * no head start to go back to.
+   */
+  restoreEngine(root: string, file: string): { text: string; problem: string } | null {
+    const original = CodeGuard.headStart(root, file);
+    if (original === null) return null;
+    let current: string;
+    try {
+      current = fs.readFileSync(path.join(root, file), "utf8");
+    } catch {
+      return null;
+    }
+    const lost = [...exportedNames(original)].filter((name) => !exportedNames(current).has(name));
+    if (lost.length === 0) return null;
+    const merged = CodeGuard.mergeEngineAdditions(file, original, current)?.merged ?? original;
+    return { text: merged, problem: `had lost ${lost.slice(0, 6).join(", ")}${lost.length > 6 ? ` and ${lost.length - 6} more` : ""}` };
   }
 };
