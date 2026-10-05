@@ -472,6 +472,18 @@ assert.match(restoredEngine!.text, /export type GameEvent/, "the lost export is 
 assert.match(restoredEngine!.text, /export function saveGame/, "what it added is kept");
 assert.equal(CodeGuard.headStart(engineRepo, "src/engine/other.ts"), null, "a file that was not a head start is not ours to restore");
 
+// `box-shadow:` in a style object is CSS where React wants boxShadow.
+const kebab = fs.mkdtempSync(path.join(os.tmpdir(), "ab-kebab-"));
+fs.mkdirSync(path.join(kebab, "src", "lib"), { recursive: true });
+fs.writeFileSync(path.join(kebab, "src/lib/styles.ts"), "export const appStyles = {\n  screen: {\n    padding: '2rem',\n    box-shadow: '0 0 10px rgba(0,0,0,0.1)',\n    z-index: 2,\n  },\n};\n");
+fs.writeFileSync(path.join(kebab, "src/lib/page.ts"), "export const css = `\n  box-shadow: 0 0 10px black;\n`;\n");
+assert.equal((await AutoFix.fixKebabCaseKeys(kebab)).length, 1);
+const kebabFixed = fs.readFileSync(path.join(kebab, "src/lib/styles.ts"), "utf8");
+assert.match(kebabFixed, /\n    boxShadow: '0 0 10px/, `camel-cased: ${kebabFixed}`);
+assert.match(kebabFixed, /\n    zIndex: 2,/);
+assert.deepEqual(CodeGuard.syntaxErrors("src/lib/styles.ts", kebabFixed), [], "it parses");
+assert.match(fs.readFileSync(path.join(kebab, "src/lib/page.ts"), "utf8"), /box-shadow: 0 0 10px/, "CSS inside a string in a file that parses is left alone");
+
 // "..." for "the rest" in a test is a syntax error; it becomes a partial match.
 const dots = fs.mkdtempSync(path.join(os.tmpdir(), "ab-dots-"));
 fs.mkdirSync(path.join(dots, "src", "lib"), { recursive: true });
