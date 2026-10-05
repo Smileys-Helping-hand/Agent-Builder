@@ -15,7 +15,7 @@ import { AutoFix } from "../src/orchestrator/AutoFix.js";
 import { TypeFixer } from "../src/orchestrator/TypeFixer.js";
 import { Verifier } from "../src/orchestrator/Verifier.js";
 import { applyFacts, readFacts, sampleFactsLeft } from "../src/orchestrator/Tailoring.js";
-import { coverage, engineUse, parseReview, requirementsFromBrief, stubs } from "../src/orchestrator/Completeness.js";
+import { coverage, dropUnrelatedResearch, engineUse, parseReview, requirementsFromBrief, stubs } from "../src/orchestrator/Completeness.js";
 import { candidates, projectKey } from "../src/orchestrator/SelfHeal.js";
 import type { BuildView } from "../src/orchestrator/BuildService.js";
 
@@ -390,6 +390,41 @@ assert.deepEqual(
 );
 assert.deepEqual(sampleFactsLeft(sampleContent, tailored.replace("@saltandember", "@mamanandis"), facts), [], "fully tailored passes");
 assert.deepEqual(sampleFactsLeft(sampleContent, sampleContent, readFacts("A restaurant in Durban.")), [], "no details in the brief, nothing demanded");
+
+// "..." for "the rest" in a test is a syntax error; it becomes a partial match.
+const dots = fs.mkdtempSync(path.join(os.tmpdir(), "ab-dots-"));
+fs.mkdirSync(path.join(dots, "src", "lib"), { recursive: true });
+fs.writeFileSync(
+  path.join(dots, "src/lib/game.test.ts"),
+  "it('starts', () => {\n  expect(s.ball).toEqual({ x: 160, vy: 0, ... });\n  expect(s.paddle).toEqual({ ...base, w: 70 });\n});\n"
+);
+fs.writeFileSync(path.join(dots, "src/lib/game.ts"), "export const rest = { ...{} };\n");
+assert.equal((await AutoFix.fixPlaceholderEllipsis(dots)).length, 1);
+const dotted = fs.readFileSync(path.join(dots, "src/lib/game.test.ts"), "utf8");
+assert.match(dotted, /expect\(s\.ball\)\.toMatchObject\(\{ x: 160, vy: 0 \}\);/, `placeholder removed: ${dotted}`);
+assert.match(dotted, /expect\(s\.paddle\)\.toEqual\(\{ \.\.\.base, w: 70 \}\);/, "a real spread is left alone");
+assert.deepEqual(await AutoFix.fixPlaceholderEllipsis(dots), [], "nothing left to fix");
+
+// Research about something else stays out of the brief the model reads.
+const noisy = [
+  "Build Pgame: a website.",
+  "",
+  "What it is for:",
+  "A fun phone game with a progression system, saved in the browser.",
+  "",
+  "What our research confirmed (use where it applies):",
+  "- Quantum annealing solves the core TCM task 16 times faster than simulated annealing. (https://arxiv.org/html/2511.15665v1)",
+  "- Self-consistency fails on long-context tasks due to positional bias. (https://example.com/a)",
+  "- Phone game players return for a visible progression system with short levels. (https://example.com/b)",
+  "",
+  "This project was started by an earlier build."
+].join("\n");
+const focused = dropUnrelatedResearch(noisy);
+assert.ok(!/Quantum|Self-consistency/.test(focused), "unrelated findings go");
+assert.match(focused, /What our research confirmed.*\n- Phone game players/, "a related one stays");
+assert.match(focused, /This project was started by an earlier build\.$/, "what follows the section is kept");
+assert.ok(!/research confirmed/.test(dropUnrelatedResearch(noisy.replace(/- Phone game.*\n/, ""))), "an emptied section goes");
+assert.equal(dropUnrelatedResearch("A plain brief."), "A plain brief.");
 
 // Self-heal: the latest build of each project that ended short is retried, once per builder version.
 const healDir = fs.mkdtempSync(path.join(os.tmpdir(), "ab-heal-"));
