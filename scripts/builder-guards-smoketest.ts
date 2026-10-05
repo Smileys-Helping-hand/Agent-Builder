@@ -357,6 +357,13 @@ assert.deepEqual(plan.map((file) => file.path), ["src/lib/progress.ts", "src/com
 assert.deepEqual(plan[0].exports, ["nextLevel(xp: number): number"]);
 assert.deepEqual(AutonomousOrchestrator.parsePlan("I think we should build a game.", new Set()), []);
 
+// With a playable board, the plan does not redo input, the loop or drawing; the rest of the app stays.
+assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/inputHandler.ts", purpose: "handles paddle movement and ball launch" }), true);
+assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/gameLoop.ts", purpose: "runs the frame loop" }), true);
+assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/storage.ts", purpose: "save and load the game in localStorage" }), false);
+assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/progression.ts", purpose: "unlock levels and track high scores" }), false);
+assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/components/Game.tsx", purpose: "the game screen with the canvas" }), false, "screens stay: the game screen is where the board goes");
+
 // A carried-on build knows how its predecessor ended, so its first pass repairs instead of rewriting.
 assert.equal(AutonomousOrchestrator.inheritedBlocker("Build Pgame.\n\nThis project was started by an earlier build and is already in the folder.\nCarry on.\n\nWhen it last ran, the typecheck check failed with:\nsrc/a.ts(1,1): error"), "typecheck");
 assert.equal(AutonomousOrchestrator.inheritedBlocker("Build Pgame.\n\nWhen it last ran, the test check failed with:\n1 failed"), undefined, "a failing test is not a reason to stop adding");

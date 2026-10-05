@@ -1204,6 +1204,14 @@ ${lines}
    * (roughly 3.3 characters a token for code and English). Hosted models have
    * windows far larger than any prompt here.
    */
+  /** A planned logic file that would redo what a playable board does: input, controls, the loop, drawing, physics. */
+  static duplicatesBoard(file: { path: string; purpose: string }): boolean {
+    if (!/\.ts$/.test(file.path) || /\.test\./.test(file.path)) return false;
+    return /\b(input|controls?|keyboard|touch|pointer|game ?loop|frame loop|render(er|ing)?|draw(ing)?|canvas|physics|collisions?|paddle|ball movement)\b/i.test(
+      `${path.basename(file.path).replace(/([a-z])([A-Z])/g, "$1 $2")} ${file.purpose}`
+    );
+  }
+
   /** The compile-level check a build carried on from another left failing ("When it last ran, the typecheck check failed"), if any. */
   static inheritedBlocker(description: string): "install" | "typecheck" | "build" | undefined {
     return /When it last ran, the (install|typecheck|build) check failed/.exec(description)?.[1] as "install" | "typecheck" | "build" | undefined;
@@ -1408,8 +1416,18 @@ ${lines}
       const text = fs.existsSync(path.join(this.workspace.root, file)) ? fs.readFileSync(path.join(this.workspace.root, file), "utf8") : "";
       return { file, text, exports: CodeGuard.exportSignatures(text) };
     });
+    // A playable board (GameBoard: canvas, frame loop, touch and keys) means the
+    // game itself is done: a plan that added an input handler and its own loop
+    // around it fought the board for three passes.
+    const boards = engine
+      .filter((e) => e.file.endsWith(".tsx"))
+      .flatMap((e) => Array.from(e.text.matchAll(/export\s+function\s+([A-Z]\w*)/g)).map((m) => ({ name: m[1], file: e.file })));
     const engineNote = engine.length
-      ? `\nAlready in the project (a tested engine — use it, do not plan to rewrite it):\n${engine.map((e) => `- ${e.file}: ${e.exports.join("; ")}`).join("\n")}\n`
+      ? `\nAlready in the project (a tested engine — use it, do not plan to rewrite it):\n${engine.map((e) => `- ${e.file}: ${e.exports.join("; ")}`).join("\n")}\n${
+          boards.length
+            ? `The game itself already plays: ${boards.map((b) => `${b.name} in ${b.file}`).join(", ")} draws it, runs the loop and handles touch, mouse and keys. Plan no files for input, controls, a game loop, drawing or physics: the game screen renders <${boards[0].name} settings={DEFAULT_SETTINGS} onScore={...} /> and the rest of the app (menus, saving, progression) goes around it.\n`
+            : ""
+        }`
       : "";
     const rules = this.environmentRules();
 
@@ -1446,7 +1464,9 @@ Answer with JSON only:
         return { file, dupes, keep: file.exports.filter((signature) => !engineNames.has(exportName(signature))) };
       })
       .filter(({ file, dupes, keep }) => !(dupes.length > 0 && dupes.length >= keep.length && !/\.tsx$/.test(file.path)))
-      .map(({ file, keep }) => ({ ...file, exports: keep }));
+      .map(({ file, keep }) => ({ ...file, exports: keep }))
+      // With a playable board, logic files for what it already does are dropped.
+      .filter((file) => !(boards.length && AutonomousOrchestrator.duplicatesBoard(file)));
     // Tests for the logic, when the plan forgot them.
     const logic = plan.find((file) => /^src\/lib\/[^/]+\.ts$/.test(file.path) && !/\.test\./.test(file.path));
     if (logic && !plan.some((file) => /\.test\.tsx?$/.test(file.path))) {
