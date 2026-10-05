@@ -179,6 +179,15 @@ const shell = fs.readFileSync(path.join(clash, "src/Shell.tsx"), "utf8");
 assert.match(shell, /import Game from "\.\/Game";\nimport Save from "\.\/Save";\nimport \{ Load \} from "\.\/Load";\n/, "default and named imports, after the others");
 assert.deepEqual(await AutoFix.addMissingComponentImports(clash), [], "component import fix is idempotent");
 
+// A hook used without its import gets one: merged into the React import, or a new one.
+fs.writeFileSync(path.join(clash, "src/Hooks.tsx"), 'import React, { useEffect } from "react";\nexport const A = () => { const [n, setN] = useState<number>(0); useEffect(() => {}, []); return null; };\n');
+fs.writeFileSync(path.join(clash, "src/NoReact.tsx"), "export const B = () => { const r = useRef(null); return null; };\n");
+const hookNotes = await AutoFix.addMissingReactImports(clash);
+assert.equal(hookNotes.length, 2);
+assert.match(fs.readFileSync(path.join(clash, "src/Hooks.tsx"), "utf8"), /^import React, \{ useEffect, useState \} from "react";/);
+assert.match(fs.readFileSync(path.join(clash, "src/NoReact.tsx"), "utf8"), /^import \{ useRef \} from "react";/);
+assert.deepEqual(await AutoFix.addMissingReactImports(clash), [], "hook import fix is idempotent");
+
 // JSX in a .ts file is renamed; a broken .ts copy of a .tsx that exists is removed.
 fs.writeFileSync(path.join(game, "src/Card.ts"), "export const Card = () => <div>card</div>;\n");
 fs.writeFileSync(path.join(game, "src/Menu.test.ts"), "const view = <Menu games={[]} onSelect={() => {}} />;\n");

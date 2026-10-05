@@ -225,6 +225,38 @@ export const AutoFix = {
   },
 
   /**
+   * `useState(…)` in a component that never imported it: add the hooks to its
+   * React import (or a new one). Only React's own hooks, only when nothing in
+   * the file declares that name.
+   */
+  async addMissingReactImports(root: string): Promise<string[]> {
+    const HOOKS = ["useState", "useEffect", "useRef", "useCallback", "useMemo", "useReducer", "useContext", "useLayoutEffect", "useId"];
+    const notes: string[] = [];
+    const all = (await listFiles(path.join(root, "src"))).map((file) => posix(path.relative(root, file)));
+    for (const rel of all.filter((file) => /\.(t|j)sx?$/.test(file) && !file.endsWith(".d.ts"))) {
+      const full = path.join(root, rel);
+      const text = await fs.readFile(full, "utf8");
+      const missing = HOOKS.filter(
+        (hook) =>
+          new RegExp(`(^|[^\\w.])${hook}\\s*[<(]`).test(text) &&
+          !new RegExp(`\\b(import[^;]*\\b${hook}\\b|(const|let|var|function)\\s+${hook}\\b)`).test(text)
+      );
+      if (missing.length === 0) continue;
+      const reactNamed = /import\s+(\w+\s*,\s*)?\{([^}]*)\}\s*from\s*["']react["'];?/.exec(text);
+      let updated: string;
+      if (reactNamed) {
+        const names = reactNamed[2].split(",").map((name) => name.trim()).filter(Boolean);
+        updated = text.replace(reactNamed[0], reactNamed[0].replace(`{${reactNamed[2]}}`, `{ ${[...names, ...missing].join(", ")} }`));
+      } else {
+        updated = `import { ${missing.join(", ")} } from "react";\n${text}`;
+      }
+      await fs.writeFile(full, updated, "utf8");
+      notes.push(`${rel}: uses ${missing.join(", ")} without importing ${missing.length === 1 ? "it" : "them"}; imported from react`);
+    }
+    return notes;
+  },
+
+  /**
    * `<Save />` in App.tsx with no import of Save, while src/Save.tsx exists:
    * add the import. Only for a capitalised tag nothing in the file declares,
    * and only when exactly one component file has that name.
@@ -384,7 +416,8 @@ export const AutoFix = {
       ...(await AutoFix.splitNameClashes(root)),
       ...(await AutoFix.fixImportPaths(root)),
       ...(await AutoFix.fixDefaultImports(root)),
-      ...(await AutoFix.addMissingComponentImports(root))
+      ...(await AutoFix.addMissingComponentImports(root)),
+      ...(await AutoFix.addMissingReactImports(root))
     ];
     const pkgPath = path.join(root, "package.json");
     let pkg: Record<string, any>;
