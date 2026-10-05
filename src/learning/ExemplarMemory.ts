@@ -336,10 +336,15 @@ export const ExemplarMemory = {
   formatForPrompt(exemplar: Exemplar, adopted: string[] = []): string {
     if (adopted.length > 0) {
       const modules = adopted.map((file) => `./${file.replace(/^src\//, "").replace(/\.ts$/, "")}`).join(", ");
+      // A model handed GameSettings tried `new GameSettings()`: say which values are ready to use.
+      const defaults = Array.from(new Set(exemplar.outline.match(/\bDEFAULT_[A-Z_]+\b/g) ?? []));
       return `Already in your project, complete, tested and working: ${adopted.join(", ")} (the engine from our
 "${exemplar.title}"). Build this app ON it: import from ${modules} and write the screens, navigation,
 saving and anything else the brief asks for around it. Change the engine only where the brief needs
 something different, and never rewrite it from scratch or import anything it does not export.
+Its interfaces and types are types only: never \`new\` them; pass plain objects of that shape.${
+        defaults.length ? `\nReady-made values to start from: ${defaults.join(", ")} (e.g. newGame(${defaults[0]})).` : ""
+      }
 Its files:
 ${exemplar.outline}
 `;

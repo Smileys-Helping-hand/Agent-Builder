@@ -51,6 +51,25 @@ const COLUMNS_GAP = 6;
 const TOP = 56;
 const BRICK_H = 20;
 /** Points for breaking a brick, by the hits it took. */
+/**
+ * Settings that play well as they are: three levels, getting harder. A game
+ * built on this engine can start with newGame(DEFAULT_SETTINGS) and tune from
+ * there (GameSettings is a type: it cannot be created with `new`).
+ */
+export const DEFAULT_SETTINGS: GameSettings = {
+  width: 640,
+  height: 480,
+  lives: 3,
+  speed: 320,
+  speedUpPerLevel: 0.12,
+  colors: ["#22d3ee", "#a855f7", "#f472b6"],
+  levels: [
+    { name: "Level 1", rows: ["11111111", "11111111", "11111111"] },
+    { name: "Level 2", rows: ["22222222", "21111112", "11111111", "1.1..1.1"] },
+    { name: "Level 3", rows: ["33333333", "2.2222.2", "22111122", "1.1111.1", "11111111"] }
+  ]
+};
+
 export const POINTS = [0, 50, 120, 250];
 
 export function bricksFor(level: LevelSpec, width: number): Brick[] {
