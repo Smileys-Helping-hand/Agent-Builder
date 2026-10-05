@@ -11,7 +11,11 @@
 
 param([switch]$Check, [switch]$Force)
 
-$ErrorActionPreference = "Stop"
+# Not "Stop": git writes its progress ("Updating files: 21%") to stderr, which
+# PowerShell then treats as a failure - that aborted an update half way, after
+# the merge and before the build, and left Jarvis down. Every native step is
+# judged by its exit code instead.
+$ErrorActionPreference = "Continue"
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $dataDir = Join-Path $repo "data"
 $jarvisDir = if ($env:JARVIS_DIR) { $env:JARVIS_DIR } else { "E:\Services\jarvis" }
@@ -41,8 +45,13 @@ try {
         Where-Object { $_.CommandLine -like "*next*start -p 3005*" -or $_.CommandLine -like "*jarvis-node-agent*" } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
-    git merge --ff-only --quiet origin/main
-    if ($lockChanged) { & cmd.exe /c "npm ci --no-audit --no-fund >> `"$jarvisLog`" 2>&1" }
+    & cmd.exe /c "git merge --ff-only --quiet --no-progress origin/main >> `"$jarvisLog`" 2>&1"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Could not move Jarvis to main (see data\jarvis.log); keeping $current." -ForegroundColor Yellow
+    } elseif ($lockChanged) {
+        & cmd.exe /c "npm ci --no-audit --no-fund >> `"$jarvisLog`" 2>&1"
+        if ($LASTEXITCODE -ne 0) { Write-Host "npm ci did not finish (see data\jarvis.log); building with what is installed." -ForegroundColor Yellow }
+    }
 
     Remove-Item -Recurse -Force (Join-Path $jarvisDir ".next") -ErrorAction SilentlyContinue
     & cmd.exe /c "npx next build >> `"$jarvisLog`" 2>&1"
