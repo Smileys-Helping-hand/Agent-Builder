@@ -1289,6 +1289,18 @@ ${lines}
    */
   private async protectEngine(): Promise<void> {
     if (!this.config.workingDir) return;
+    // Files an older builder let the model's prose overwrite come back first.
+    const broken = CodeGuard.restoreUnparseable(this.workspace.root);
+    if (broken.length > 0) {
+      await this.workspace.writeFiles(Object.fromEntries(broken.map((item) => [item.file, item.text])), "Restored files that no longer parsed");
+      this.think(
+        1,
+        "decision",
+        `Restored ${broken.length} file(s) that did not parse`,
+        broken.map((item) => `• ${item.file}: back to its version from ${item.commit}, the latest that was code.`).join("\n"),
+        broken.map((item) => item.file)
+      );
+    }
     let names: string[];
     try {
       names = fs.readdirSync(path.join(this.workspace.root, "src", "engine")).filter((name) => /\.(t|j)sx?$/.test(name) && !/\.(test|spec)\./.test(name));
