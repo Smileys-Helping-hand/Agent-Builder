@@ -16,6 +16,8 @@ import { TypeFixer } from "../src/orchestrator/TypeFixer.js";
 import { Verifier } from "../src/orchestrator/Verifier.js";
 import { applyFacts, readFacts, sampleFactsLeft } from "../src/orchestrator/Tailoring.js";
 import { coverage, engineUse, parseReview, requirementsFromBrief, stubs } from "../src/orchestrator/Completeness.js";
+import { candidates, projectKey } from "../src/orchestrator/SelfHeal.js";
+import type { BuildView } from "../src/orchestrator/BuildService.js";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "ab-guards-"));
 fs.mkdirSync(path.join(root, "src"), { recursive: true });
@@ -388,5 +390,31 @@ assert.deepEqual(
 );
 assert.deepEqual(sampleFactsLeft(sampleContent, tailored.replace("@saltandember", "@mamanandis"), facts), [], "fully tailored passes");
 assert.deepEqual(sampleFactsLeft(sampleContent, sampleContent, readFacts("A restaurant in Durban.")), [], "no details in the brief, nothing demanded");
+
+// Self-heal: the latest build of each project that ended short is retried, once per builder version.
+const healDir = fs.mkdtempSync(path.join(os.tmpdir(), "ab-heal-"));
+const run = (over: Partial<BuildView>): BuildView =>
+  ({
+    buildId: "b", projectName: "Pgame", description: "", startedAt: "2026-10-05T10:00:00Z", finishedAt: "2026-10-05T11:00:00Z",
+    state: "completed", iterations: 3, qualityScore: 35, outputDir: healDir, startedBy: "user", orderId: null, profile: "deep",
+    qualityThreshold: 90, maxIterations: 60, continuedFrom: null, passed: false, bestScore: 35, outcome: null, stage: null,
+    repairAttempt: null, stageSince: null, passSince: null, guidance: [], iterationDetail: [], events: [], thoughts: [], audit: null, live: false,
+    ...over
+  }) as BuildView;
+const later = Date.parse("2026-10-05T12:00:00Z");
+const healRuns = [
+  run({ buildId: "pg-old", startedAt: "2026-10-04T10:00:00Z" }),
+  run({ buildId: "pg-new" }),
+  run({ buildId: "works", projectName: "Blog", bestScore: 100, passed: true }),
+  run({ buildId: "order", projectName: "Restaurant", orderId: "o1" }),
+  run({ buildId: "stopped", projectName: "Salon", state: "stopped" }),
+  run({ buildId: "yielded", projectName: "Quiz", state: "stopped", startedBy: "self-heal" }),
+  run({ buildId: "fresh", projectName: "Shop", finishedAt: "2026-10-05T11:55:00Z" }),
+  run({ buildId: "gone", projectName: "Old", outputDir: path.join(healDir, "missing") })
+];
+assert.deepEqual(candidates(healRuns, "v1", { healed: {} }, later).map((b) => b.buildId).sort(), ["pg-new", "yielded"], "the latest short build per project; not working, order, stopped, just-finished or missing ones");
+const healedOnV1 = { healed: { [projectKey(healRuns[1])]: { version: "v1", buildId: "x", at: "" } } };
+assert.deepEqual(candidates(healRuns, "v1", healedOnV1, later).map((b) => b.buildId), ["yielded"], "retried once per version");
+assert.ok(candidates(healRuns, "v2", healedOnV1, later).some((b) => b.buildId === "pg-new"), "a new builder version retries it again");
 
 console.log("builder guards: all checks passed");

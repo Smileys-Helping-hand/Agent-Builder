@@ -20,6 +20,7 @@ import { signLink, verifyLink } from "../utils/SignedLinks.js";
 
 import { BuildService, buildEvents, type BuildRecord } from "../orchestrator/BuildService.js";
 import { Packager } from "../orders/Packager.js";
+import { SelfHeal } from "../orchestrator/SelfHeal.js";
 import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
 import { JarvisClient } from "../integrations/JarvisClient.js";
 import { Logger } from "../utils/Logger.js";
@@ -319,6 +320,17 @@ export const registerAutonomousRoutes = (app: Express) => {
     } catch (error) {
       res.status(500).json({ error: errorMessage(error) });
     }
+  });
+
+  /** Builds that ended short of working are carried on while the PC is idle: see SelfHeal. */
+  SelfHeal.start();
+  app.get("/api/autonomous/self-heal", authenticateAgent("read"), (_req: Request, res: Response) => {
+    res.json(SelfHeal.status());
+  });
+  app.post("/api/autonomous/self-heal/now", authenticateAgent("execute"), (_req: Request, res: Response) => {
+    if (GameMode.isOn()) return res.status(409).json({ error: "Game mode is on." });
+    const buildId = SelfHeal.tick();
+    res.json({ started: buildId, message: buildId ? "Carrying on the latest build that ended below its bar." : "Nothing to retry right now (a build is running, or every project is working or already retried on this version)." });
   });
 
   app.get("/api/autonomous/active", authenticateAgent("read"), (_req: Request, res: Response) => {
