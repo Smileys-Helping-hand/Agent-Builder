@@ -117,6 +117,7 @@ fs.rmSync(path.join(game, "src/engine.ts"));
 
 // The same type declared twice is named, with the engine's as the one to keep.
 fs.mkdirSync(path.join(game, "src/engine"), { recursive: true });
+fs.mkdirSync(path.join(game, "src/lib"), { recursive: true });
 fs.writeFileSync(path.join(game, "src/engine/game.ts"), "export interface GameState { score: number }\n");
 fs.writeFileSync(path.join(game, "src/lib/gameLogic.ts"), "export interface GameState { points: number }\n");
 assert.match(
@@ -125,6 +126,7 @@ assert.match(
 );
 assert.equal(await AutoFix.duplicateTypes(game, "src/App.tsx(1,1): error TS2304: Cannot find name 'x'."), "", "only when the errors are about it");
 fs.rmSync(path.join(game, "src/engine"), { recursive: true });
+fs.rmSync(path.join(game, "src/lib"), { recursive: true });
 
 // An engine the build started from can grow but not be replaced.
 const engineBefore = "export const step = (s: number) => {\n  const next = s + 1;\n  return next;\n};\nexport const launch = () => {\n  return 1;\n};\nexport type State = { a: number };\n";
