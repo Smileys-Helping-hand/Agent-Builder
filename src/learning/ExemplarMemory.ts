@@ -295,7 +295,12 @@ export const ExemplarMemory = {
     for (const set of words.values()) for (const token of set) documentFrequency.set(token, (documentFrequency.get(token) ?? 0) + 1);
     let best: { exemplar: Exemplar; score: number } | null = null;
     for (const row of rows) {
-      if (row.times_used >= RETIRE_AFTER_USES && (row.times_passed + 1) / (row.times_used + 2) < RETIRE_BELOW_RATE) continue;
+      // Only an app this builder made can wear out its welcome. A catalogue
+      // example is our own tested code: four Pgame runs that were cut short by
+      // restarts (and by builder bugs since fixed) counted as four failures,
+      // retired the game engine, and the next build started with nothing.
+      const retired = row.origin === "build" && row.times_used >= RETIRE_AFTER_USES && (row.times_passed + 1) / (row.times_used + 2) < RETIRE_BELOW_RATE;
+      if (retired) continue;
       // A real build of this kind of app beats a catalogue seed at equal similarity.
       const score = similarity(wanted, head, words.get(row.id)!, documentFrequency, rows.length) * (row.origin === "build" ? 1.15 : 1);
       if (score >= MIN_SIMILARITY && (!best || score > best.score)) best = { exemplar: fromRow(row), score };
