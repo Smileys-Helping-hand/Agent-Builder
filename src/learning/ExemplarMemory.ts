@@ -295,6 +295,7 @@ export const ExemplarMemory = {
     const documentFrequency = new Map<string, number>();
     for (const set of words.values()) for (const token of set) documentFrequency.set(token, (documentFrequency.get(token) ?? 0) + 1);
     let best: { exemplar: Exemplar; score: number } | null = null;
+    let bestSeed: { exemplar: Exemplar; score: number } | null = null;
     for (const row of rows) {
       // Only an app this builder made can wear out its welcome. A catalogue
       // example is our own tested code: four Pgame runs that were cut short by
@@ -302,11 +303,17 @@ export const ExemplarMemory = {
       // retired the game engine, and the next build started with nothing.
       const retired = row.origin === "build" && row.times_used >= RETIRE_AFTER_USES && (row.times_passed + 1) / (row.times_used + 2) < RETIRE_BELOW_RATE;
       if (retired) continue;
-      // A real build of this kind of app beats a catalogue seed at equal similarity.
-      const score = similarity(wanted, head, words.get(row.id)!, documentFrequency, rows.length) * (row.origin === "build" ? 1.15 : 1);
-      if (score >= MIN_SIMILARITY && (!best || score > best.score)) best = { exemplar: fromRow(row), score };
+      const score = similarity(wanted, head, words.get(row.id)!, documentFrequency, rows.length);
+      if (score < MIN_SIMILARITY) continue;
+      if (!best || score > best.score) best = { exemplar: fromRow(row), score };
+      if (row.origin !== "build" && (!bestSeed || score > bestSeed.score)) bestSeed = { exemplar: fromRow(row), score };
     }
-    return best?.exemplar ?? null;
+    // A catalogue example that fits goes into the project as tested code (the
+    // game engine and the board that plays it); a remembered build is only a
+    // description to follow. A Pgame that passed with four buttons instead of
+    // a game was remembered and preferred, and the next Pgame started with no
+    // engine. Remembered builds teach the kinds of app the catalogue lacks.
+    return (bestSeed ?? best)?.exemplar ?? null;
   },
 
   /**

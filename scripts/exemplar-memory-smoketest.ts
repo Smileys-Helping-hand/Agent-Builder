@@ -95,14 +95,24 @@ const remembered = ExemplarMemory.list().find((e) => e.id === id)!;
 assert.match(remembered.outline, /src\/levels\.ts .*exports Level, nextLevel/);
 assert.ok(!/App\.test|lib\/testing/.test(remembered.sample), "tests and kit are not part of the example");
 assert.ok(remembered.sample.indexOf("levels.ts") < remembered.sample.indexOf("App.tsx"), "logic first: it is what small models leave out");
-assert.equal(ExemplarMemory.relevant("A fun phone game with levels and progression")?.id, id, "a real build of this kind beats the catalogue seed");
+// Where the catalogue has tested code for this kind of app, that wins: it goes into the project whole.
+assert.equal(ExemplarMemory.relevant("A fun phone game with levels and progression")?.title, "Arcade Promo Game", "the catalogue engine beats a remembered game");
+
+// A remembered build teaches the kinds of app the catalogue does not have.
+const planner = path.join(tmp, "planner");
+fs.mkdirSync(path.join(planner, "src"), { recursive: true });
+fs.writeFileSync(path.join(planner, "src", "pantry.ts"), "export interface Item { name: string; qty: number }\nexport const lowStock = (items: Item[]): Item[] => items.filter((i) => i.qty < 2);\n");
+fs.writeFileSync(path.join(planner, "src", "App.tsx"), "import { lowStock } from './pantry';\nexport default function App() { return <main>Pantry</main>; }\n");
+const plannerId = ExemplarMemory.recordSuccess(planner, "Pantry Planner", "A weekly meal planner with pantry stock tracking and shopping lists, saved in the browser.", 100);
+const plannerBrief = "A meal planner that tracks pantry stock and builds a shopping list";
+assert.equal(ExemplarMemory.relevant(plannerBrief)?.id, plannerId, "nothing in the catalogue fits, so the remembered build is followed");
 
 // An example that keeps not helping stops being shown.
-for (let i = 0; i < 5; i += 1) ExemplarMemory.markUsed(id!);
-assert.notEqual(ExemplarMemory.relevant("A fun phone game with levels and progression")?.id, id, "retired after repeated failures");
-ExemplarMemory.recordOutcome(id!, true);
-ExemplarMemory.recordOutcome(id!, true);
-assert.equal(ExemplarMemory.relevant("A fun phone game with levels and progression")?.id, id, "back once builds that follow it pass");
+for (let i = 0; i < 5; i += 1) ExemplarMemory.markUsed(plannerId!);
+assert.notEqual(ExemplarMemory.relevant(plannerBrief)?.id, plannerId, "retired after repeated failures");
+ExemplarMemory.recordOutcome(plannerId!, true);
+ExemplarMemory.recordOutcome(plannerId!, true);
+assert.equal(ExemplarMemory.relevant(plannerBrief)?.id, plannerId, "back once builds that follow it pass");
 
 assert.match(ExemplarMemory.formatForPrompt(game!), /Do NOT copy its names, content or theme/);
 
