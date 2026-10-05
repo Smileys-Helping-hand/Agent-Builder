@@ -505,6 +505,30 @@ export const TypeFixer = {
             }
           }
 
+          // { width: 70, radius: 6 } where the type says w and r: an object literal's
+          // key spelled out where the type uses its first letter.
+          if (diagnostic.code === 2353) {
+            const program = service.getProgram();
+            const source = program?.getSourceFile(fileName);
+            const written = text.slice(start, end);
+            let literal: import("typescript").ObjectLiteralExpression | undefined;
+            const visit = (node: import("typescript").Node) => {
+              if (node.getStart(source) <= start && node.getEnd() >= end) {
+                if (ts.isObjectLiteralExpression(node)) literal = node;
+                ts.forEachChild(node, visit);
+              }
+            };
+            if (source) ts.forEachChild(source, visit);
+            const expected = literal && program ? program.getTypeChecker().getContextualType(literal) : undefined;
+            const short = written[0];
+            const taken = new Set(literal?.properties.map((property) => property.name?.getText(source)) ?? []);
+            if (expected && written.length > 1 && /^[A-Za-z_$][\w$]*$/.test(written) && expected.getProperty(short) && !taken.has(short)) {
+              add(path.resolve(fileName), { start, end, text: short });
+              notes.push(`${rel}:${line}: ${written} is called ${short} here`);
+              continue;
+            }
+          }
+
           // A number used as a list ("can't be used to index type 'Number'", "'length' does not exist on type 'number'").
           if (diagnostic.code === 7053 || diagnostic.code === 2339 || diagnostic.code === 2345) {
             const edit = NumberAsListFix.edit(ts, service.getProgram(), service.getProgram()?.getSourceFile(fileName), start, end, diagnostic.code);

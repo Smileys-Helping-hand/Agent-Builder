@@ -370,7 +370,9 @@ export const ExemplarMemory = {
 saving and anything else the brief asks for around it. Change the engine only where the brief needs
 something different, and never rewrite it from scratch or import anything it does not export.
 Its interfaces and types are types only: never \`new\` them; pass plain objects of that shape.${
-        defaults.length ? `\nReady-made values to start from: ${defaults.join(", ")} (e.g. newGame(${defaults[0]})).` : ""
+        defaults.length
+          ? `\nReady-made values to start from: ${defaults.join(", ")} (e.g. newGame(${defaults[0]})). In tests, make a state the same way and change only what the test is about: { ...newGame(${defaults[0]}), score: 120 }. Never write the paddle, ball or bricks out by hand.`
+          : ""
       }${playable}
 Its files:
 ${exemplar.outline}

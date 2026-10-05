@@ -666,6 +666,16 @@ const gameScreen = fs.readFileSync(path.join(boardProps, "src/Game.tsx"), "utf8"
 assert.match(gameScreen, /<GameBoard settings=\{1\} onScore=\{\(\) => \{\}\} \/>/, gameScreen);
 assert.match(gameScreen, /<Own a=\{1\} b=\{2\} \/>/, "the app's own component keeps its props for the model to sort out");
 
+// { width: 70, radius: 6 } where the type says w and r.
+const shortKeys = fs.mkdtempSync(path.join(os.tmpdir(), "ab-short-"));
+fs.mkdirSync(path.join(shortKeys, "src"));
+fs.mkdirSync(path.join(shortKeys, "node_modules"));
+fs.writeFileSync(path.join(shortKeys, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", noEmit: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(path.join(shortKeys, "src/a.test.ts"), "type Paddle = { x: number; y: number; w: number; h: number };\nexport const p: Paddle = { x: 1, y: 2, width: 70, height: 10 };\nexport const q: { name: string } = { name: 'a', title: 'b' } as never;\n");
+TypeFixer.run(shortKeys);
+assert.match(fs.readFileSync(path.join(shortKeys, "src/a.test.ts"), "utf8"), /\{ x: 1, y: 2, w: 70, h: 10 \}/);
+assert.equal(TypeFixer.errorCount(shortKeys), 0);
+
 // An empty function is never merged into the engine.
 assert.equal(CodeGuard.mergeEngineAdditions("src/engine/game.ts", "export const a = 1;\n", "export function stub(): number {\n  // later\n}\n"), null);
 
