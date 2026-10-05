@@ -66,6 +66,130 @@ const indentOf = (text: string, position: number): string => {
   return /^[ \t]*/.exec(text.slice(lineStart))?.[0] ?? "";
 };
 
+/**
+ * An import asking a file for a name it does not export, when exactly one
+ * other file of ours does: the name moves to an import from that file.
+ */
+const WrongModuleFix = {
+  edits(
+    ts: TsModule,
+    program: import("typescript").Program | undefined,
+    fileName: string,
+    start: number,
+    ours: (file: string) => boolean
+  ): { edits: Edit[]; note: string } | null {
+    const source = program?.getSourceFile(fileName);
+    if (!program || !source) return null;
+    const declaration = source.statements.find(
+      (statement): statement is import("typescript").ImportDeclaration => ts.isImportDeclaration(statement) && statement.getStart(source) <= start && statement.getEnd() >= start
+    );
+    const named = declaration?.importClause?.namedBindings;
+    if (!declaration || !named || !ts.isNamedImports(named) || !ts.isStringLiteral(declaration.moduleSpecifier)) return null;
+    const element = named.elements.find((item) => item.getStart(source) <= start && item.getEnd() > start);
+    if (!element) return null;
+    const name = (element.propertyName ?? element.name).text;
+    const checker = program.getTypeChecker();
+    const current = checker.getSymbolAtLocation(declaration.moduleSpecifier);
+    const owners = program.getSourceFiles().filter((other) => {
+      if (other === source || !ours(other.fileName) || /\.(test|spec)\./.test(other.fileName)) return false;
+      const symbol = checker.getSymbolAtLocation(other);
+      return Boolean(symbol && symbol !== current && checker.getExportsOfModule(symbol).some((exported) => exported.name === name));
+    });
+    if (owners.length !== 1) return null;
+    let specifier = path.relative(path.dirname(fileName), owners[0].fileName).split(path.sep).join("/").replace(/\.(t|j)sx?$/, "");
+    if (!specifier.startsWith(".")) specifier = `./${specifier}`;
+    const quote = declaration.moduleSpecifier.getText(source)[0];
+    if (named.elements.length === 1 && !declaration.importClause?.name) {
+      const literal = declaration.moduleSpecifier;
+      return { edits: [{ start: literal.getStart(source), end: literal.getEnd(), text: `${quote}${specifier}${quote}` }], note: `${name} is exported by ${specifier}, not ${declaration.moduleSpecifier.text}; imported from there` };
+    }
+    // Take the name out of this import (with its comma), and import it on its own line.
+    const index = named.elements.indexOf(element);
+    const removeFrom = index < named.elements.length - 1 ? element.getStart(source) : named.elements[index - 1].getEnd();
+    const removeTo = index < named.elements.length - 1 ? named.elements[index + 1].getStart(source) : element.getEnd();
+    const typeOnly = declaration.importClause?.isTypeOnly ? "type " : "";
+    return {
+      edits: [
+        { start: removeFrom, end: removeTo, text: "" },
+        { start: declaration.getStart(source), end: declaration.getStart(source), text: `import ${typeOnly}{ ${element.getText(source)} } from ${quote}${specifier}${quote};\n` }
+      ],
+      note: `${name} is exported by ${specifier}, not ${declaration.moduleSpecifier.text}; imported from there`
+    };
+  }
+};
+
+/**
+ * `state.level[state.level]` and `state.level.length` when `level` is the
+ * current level's number and the list is `state.settings.levels`: a small
+ * model indexes the number. A live build spent a whole pass of repairs on it,
+ * with the answer spelled out in its instructions. When the number has exactly
+ * one plural list beside it (on the same object, or one level down), the
+ * list is meant: `state.settings.levels[state.level]`.
+ */
+const NumberAsListFix = {
+  edit(ts: TsModule, program: import("typescript").Program | undefined, file: import("typescript").SourceFile | undefined, start: number, end: number, code: number): (Edit & { note: string }) | null {
+    if (!program || !file) return null;
+    let node: import("typescript").Node | undefined;
+    const visit = (child: import("typescript").Node) => {
+      if (child.getStart(file) <= start && child.getEnd() >= end) {
+        node = child;
+        ts.forEachChild(child, visit);
+      }
+    };
+    ts.forEachChild(file, visit);
+    if (!node) return null;
+    // The number being used as a list: `x.level` in `x.level[i]` or `x.level.length`.
+    let target: import("typescript").Node | undefined;
+    // `bricksFor(state.level, w)` where bricksFor wants a LevelSpec: the level, not its number.
+    let asItem = false;
+    if (code === 2345 && ts.isPropertyAccessExpression(node) && node.parent && ts.isCallExpression(node.parent) && node.parent.arguments.includes(node as any)) {
+      target = node;
+      asItem = true;
+    } else if (ts.isElementAccessExpression(node)) target = node.expression;
+    else if (ts.isIdentifier(node) && node.text === "length" && node.parent && ts.isPropertyAccessExpression(node.parent)) target = node.parent.expression;
+    else if (ts.isPropertyAccessExpression(node) && node.name.text === "length") target = node.expression;
+    if (!target || !ts.isPropertyAccessExpression(target)) return null;
+    const checker = program.getTypeChecker();
+    if (!(checker.getTypeAtLocation(target).flags & ts.TypeFlags.NumberLike)) return null;
+    const name = target.name.text;
+    const isList = (type: import("typescript").Type | undefined) => Boolean(type && type.getNumberIndexType());
+    const owner = checker.getTypeAtLocation(target.expression);
+    const paths: string[] = [];
+    const plural = owner.getProperty(`${name}s`);
+    if (plural && isList(checker.getTypeOfSymbolAtLocation(plural, target))) paths.push(`${name}s`);
+    for (const property of owner.getProperties()) {
+      const inner = checker.getTypeOfSymbolAtLocation(property, target);
+      if (!(inner.flags & ts.TypeFlags.Object) || isList(inner)) continue;
+      const nested = inner.getProperty(`${name}s`);
+      if (nested && isList(checker.getTypeOfSymbolAtLocation(nested, target))) paths.push(`${property.name}.${name}s`);
+    }
+    if (paths.length !== 1) return null;
+    const list = `${target.expression.getText(file)}.${paths[0]}`;
+    if (asItem) {
+      // Only when an item of the list is what the call wants.
+      const call = target.parent as import("typescript").CallExpression;
+      const signature = checker.getResolvedSignature(call);
+      const parameter = signature?.getParameters()[call.arguments.indexOf(target as any)];
+      const wanted = parameter ? checker.typeToString(checker.getTypeOfSymbolAtLocation(parameter, call)) : "";
+      let listType: import("typescript").Type | undefined = owner;
+      for (const key of paths[0].split(".")) {
+        const property: import("typescript").Symbol | undefined = listType?.getProperty(key);
+        listType = property ? checker.getTypeOfSymbolAtLocation(property, target) : undefined;
+      }
+      const item = listType?.getNumberIndexType();
+      if (!item || checker.typeToString(item) !== wanted) return null;
+      const replacement = `${list}[${target.getText(file)}]`;
+      return { start: target.getStart(file), end: target.getEnd(), text: replacement, note: `${target.getText(file)} is a number; the call wants the item, ${replacement}` };
+    }
+    return {
+      start: target.getStart(file),
+      end: target.getEnd(),
+      text: list,
+      note: `${target.getText(file)} is a number; the list is ${list}`
+    };
+  }
+};
+
 const AutonomousVoidFix = {
   edit(ts: TsModule, file: import("typescript").SourceFile | undefined, position: number): (Edit & { note: string }) | null {
     if (!file) return null;
@@ -249,6 +373,55 @@ export const TypeFixer = {
           // place (launch(state): void) used as if it returned the new state.
           if (diagnostic.code === 2322 && /Type 'void' is not assignable/.test(ts.flattenDiagnosticMessageText(diagnostic.messageText, " "))) {
             const edit = AutonomousVoidFix.edit(ts, service.getProgram()?.getSourceFile(fileName), start);
+            if (edit) {
+              add(path.resolve(fileName), edit);
+              notes.push(`${rel}:${line}: ${edit.note}`);
+              continue;
+            }
+          }
+
+          // An empty exported function ("// Implementation of updateGameState")
+          // where another of our files exports the real one: the stub goes, and
+          // the imports that found it are pointed at the real one next round.
+          if (diagnostic.code === 2355) {
+            const program = service.getProgram();
+            const source = program?.getSourceFile(fileName);
+            let stub: import("typescript").FunctionDeclaration | undefined;
+            source?.statements.forEach((statement) => {
+              if (ts.isFunctionDeclaration(statement) && statement.name && statement.body && statement.body.statements.length === 0 && statement.getStart(source) <= start && statement.getEnd() >= end) stub = statement;
+            });
+            if (program && source && stub?.name) {
+              const name = stub.name.text;
+              const checker = program.getTypeChecker();
+              const elsewhere = program.getSourceFiles().find((other) => {
+                if (other === source || !ours(other.fileName) || /\.(test|spec)\./.test(other.fileName)) return false;
+                const symbol = checker.getSymbolAtLocation(other);
+                return Boolean(symbol && checker.getExportsOfModule(symbol).some((exported) => exported.name === name));
+              });
+              if (elsewhere) {
+                const from = text.lastIndexOf("\n", stub.getStart(source) - 1) + 1;
+                const to = text.indexOf("\n", stub.getEnd());
+                add(path.resolve(fileName), { start: from, end: to === -1 ? text.length : to + 1, text: "" });
+                notes.push(`${rel}:${line}: removed an empty ${name}(); the real one is in ${path.relative(root, elsewhere.fileName).split(path.sep).join("/")}`);
+                continue;
+              }
+            }
+          }
+
+          // `import { newGame } from "./lib/gameLogic"` when only src/engine/game.ts
+          // exports newGame: the import goes to the one file of ours that has it.
+          if (diagnostic.code === 2305) {
+            const edits = WrongModuleFix.edits(ts, service.getProgram(), fileName, start, ours);
+            if (edits) {
+              for (const edit of edits.edits) add(path.resolve(fileName), edit);
+              notes.push(`${rel}:${line}: ${edits.note}`);
+              continue;
+            }
+          }
+
+          // A number used as a list ("can't be used to index type 'Number'", "'length' does not exist on type 'number'").
+          if (diagnostic.code === 7053 || diagnostic.code === 2339 || diagnostic.code === 2345) {
+            const edit = NumberAsListFix.edit(ts, service.getProgram(), service.getProgram()?.getSourceFile(fileName), start, end, diagnostic.code);
             if (edit) {
               add(path.resolve(fileName), edit);
               notes.push(`${rel}:${line}: ${edit.note}`);
