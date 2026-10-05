@@ -798,13 +798,14 @@ Failing check: ${failing.name}
 Error output:
 ${errorOutput}
 ${critique ? `\nA senior engineer's diagnosis of the root cause:\n${critique}\n` : ""}${builtInHint}${lessonsSection}
-Current files:
+${this.guidanceBlock(this.currentIteration)}Current files:
 ${listing}
 
 Fix the problem. Start with ONE line beginning "CAUSE:" that says what was wrong
 and what you are changing. Then return ONLY the corrected file(s) as FILE:
 blocks, in the same format as the files above. Only include files you are
-changing — omit anything unchanged. No other prose.`;
+changing — omit anything unchanged — and send each one whole, from its first
+import to its last export: never a fragment or a single changed line. No other prose.`;
     let prompt = promptWith(fileListing);
     if (AutonomousOrchestrator.promptTooBig(prompt)) {
       // Too big to leave room for the answer — the "no usable fix" repairs.
