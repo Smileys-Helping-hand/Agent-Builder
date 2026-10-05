@@ -169,7 +169,7 @@ export const registerAutonomousRoutes = (app: Express) => {
 
   /**
    * Give a running build a further instruction — the "actually, also do X"
-   * route. The note joins the prompt from the next pass onward and stays in it.
+   * route. The note joins the next repair or pass and stays in every prompt after it.
    * POST /api/autonomous/:buildId/guidance  Body: { text }
    */
   app.post("/api/autonomous/:buildId/guidance", authenticateAgent("execute"), (req: Request, res: Response) => {
@@ -183,7 +183,7 @@ export const registerAutonomousRoutes = (app: Express) => {
     res.json({
       success: true,
       note,
-      appliesFrom: "the next pass",
+      appliesFrom: "the next repair or pass",
       guidance: BuildService.guidance(req.params.buildId)
     });
   });

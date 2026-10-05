@@ -83,7 +83,7 @@ export default function Orders() {
   const instruct = async (order: Order) => {
     const text = (instruction[order.id] ?? "").trim();
     if (!text) return;
-    await act("Sent. It takes effect on the next pass.", async () => {
+    await act("Sent. It takes effect on the next repair or pass.", async () => {
       await api.instructOrder(order.id, text);
       setInstruction((current) => ({ ...current, [order.id]: "" }));
     });

@@ -503,7 +503,7 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
         {live ? (
           <div className="card">
             <h2>Tell it something while it works</h2>
-            <p className="hint">It joins the instructions from the next pass and stays for the rest of the build.</p>
+            <p className="hint">It joins the instructions from the next repair or pass and stays for the rest of the build.</p>
             <div className="chips" style={{ marginBottom: 10 }}>
               {QUICK_STEERS.map((quick) => (
                 <button key={quick.label} className={`chip ${steer === quick.text ? "accent" : ""}`} onClick={() => setSteer(quick.text)}>
@@ -525,7 +525,7 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
                   act("steer", async () => {
                     await api.guideBuild(build.buildId, steer.trim());
                     setSteer("");
-                    toast("Noted. It takes effect on the next pass.", "ok");
+                    toast("Noted. It takes effect on the next repair or pass.", "ok");
                   })
                 }
               >
@@ -603,7 +603,7 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
                 <div className="body">
                   <strong style={{ fontWeight: 560 }}>{note.text}</strong>
                   <span>
-                    {note.appliedAtIteration === null ? "from the next pass" : `from pass ${note.appliedAtIteration}`} · {ago(note.at)}
+                    {note.appliedAtIteration === null ? "from the next repair or pass" : `from pass ${note.appliedAtIteration}`} · {ago(note.at)}
                   </span>
                 </div>
               </div>
