@@ -1,7 +1,7 @@
 import { EventEmitter } from "events";
 import { CodeGuard } from "./CodeGuard.js";
 import { AutoFix } from "./AutoFix.js";
-import { appSource, coverage, dropUnrelatedResearch, engineUse, parseReview, reviewPrompt, stubs } from "./Completeness.js";
+import { appSource, coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, reviewPrompt, stubs } from "./Completeness.js";
 import { applyFacts, readFacts, sampleFactsLeft } from "./Tailoring.js";
 import { ExemplarMemory, type Exemplar } from "../learning/ExemplarMemory.js";
 import { GameModeOnError } from "../utils/GameMode.js";
@@ -2000,10 +2000,15 @@ Rules that keep this build passing its checks (install, typecheck, build, tests)
     if (this.research === null) {
       try {
         const focus = [this.config.projectName, this.config.description, ...this.guidance.map((note) => note.text)].join(" ");
-        this.research = ResearchStore.relevantFindings(focus, 6).map((finding) => ({
-          claim: finding.claim,
-          source: finding.sourceTitle ?? finding.sourceUrl
-        }));
+        // The search matches one shared word; a phone game was handed the limbic
+        // system and XAI for cyber analysts. Keep only findings about this app.
+        this.research = ResearchStore.relevantFindings(focus, 18)
+          .filter((finding) => relatedTo(focus, finding.claim))
+          .slice(0, 6)
+          .map((finding) => ({
+            claim: finding.claim,
+            source: finding.sourceTitle ?? finding.sourceUrl
+          }));
         if (this.research.length > 0) {
           this.think(
             iteration,

@@ -16,7 +16,7 @@ import { AutoFix } from "../src/orchestrator/AutoFix.js";
 import { TypeFixer } from "../src/orchestrator/TypeFixer.js";
 import { Verifier } from "../src/orchestrator/Verifier.js";
 import { applyFacts, readFacts, sampleFactsLeft } from "../src/orchestrator/Tailoring.js";
-import { coverage, dropUnrelatedResearch, engineUse, parseReview, requirementsFromBrief, stubs } from "../src/orchestrator/Completeness.js";
+import { coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, requirementsFromBrief, stubs } from "../src/orchestrator/Completeness.js";
 import { candidates, projectKey } from "../src/orchestrator/SelfHeal.js";
 import type { BuildView } from "../src/orchestrator/BuildService.js";
 
@@ -551,6 +551,11 @@ assert.match(focused, /What our research confirmed.*\n- Phone game players/, "a 
 assert.match(focused, /This project was started by an earlier build\.$/, "what follows the section is kept");
 assert.ok(!/research confirmed/.test(dropUnrelatedResearch(noisy.replace(/- Phone game.*\n/, ""))), "an emptied section goes");
 assert.equal(dropUnrelatedResearch("A plain brief."), "A plain brief.");
+// The same test for findings the build looks up itself: one shared word ("system") is not enough.
+const gameFocus = "Pgame. A nice fun phone game webapp with a progression system. Mobile first, fast to load, works offline in the browser.";
+assert.equal(relatedTo(gameFocus, "The limbic system plays a crucial role in emotional processing and motivation."), false);
+assert.equal(relatedTo(gameFocus, "XAI techniques marketed for non-technical users may not be understandable by cyber analysts."), false);
+assert.equal(relatedTo(gameFocus, "Using Vite's build configuration to split vendor chunks and target modern browsers makes pages load fast."), true);
 
 // Self-heal: the latest build of each project that ended short is retried, once per builder version.
 const healDir = fs.mkdtempSync(path.join(os.tmpdir(), "ab-heal-"));
