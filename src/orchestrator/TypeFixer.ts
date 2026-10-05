@@ -44,7 +44,7 @@ const IMPLICIT_ANY = new Set([7006, 7031]);
  * import, correct a name to one that exists, add an `await`, or write down a
  * type that is already implied. Nothing that deletes code or changes logic.
  */
-const SAFE_FIXES = new Set(["import", "spelling", "addMissingAwait", "inferFromUsage", "fixAddMissingMember", "addMissingConst", "fixAddVoidToPromise"]);
+const SAFE_FIXES = new Set(["import", "spelling", "addMissingAwait", "inferFromUsage", "fixAddMissingMember", "addMissingConst", "fixAddVoidToPromise", "fixImportNonExportedMember", "convertToTypeOnlyExport", "convertToTypeOnlyImport"]);
 
 const MAX_ROUNDS = 4;
 
@@ -53,6 +53,50 @@ interface Edit {
   end: number;
   text: string;
 }
+
+/**
+ * `state = launch(state)` and `return launch(state)` where launch changes the
+ * state in place and returns nothing: call it, then use the state. Only when
+ * the call's first argument is the very thing being assigned (or a plain
+ * name, for a return), so the meaning is not in doubt.
+ */
+/** The whitespace a line starts with, so a statement split in two stays lined up. */
+const indentOf = (text: string, position: number): string => {
+  const lineStart = text.lastIndexOf("\n", position - 1) + 1;
+  return /^[ \t]*/.exec(text.slice(lineStart))?.[0] ?? "";
+};
+
+const AutonomousVoidFix = {
+  edit(ts: TsModule, file: import("typescript").SourceFile | undefined, position: number): (Edit & { note: string }) | null {
+    if (!file) return null;
+    // The smallest statement around the error.
+    let found: import("typescript").Statement | undefined;
+    const visit = (node: import("typescript").Node) => {
+      if (position < node.getStart(file) || position >= node.getEnd()) return;
+      if (ts.isExpressionStatement(node) || ts.isReturnStatement(node)) found = node;
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
+    if (!found) return null;
+    const statement = found;
+    const start = statement.getStart(file);
+    const end = statement.getEnd();
+    if (ts.isReturnStatement(statement) && statement.expression && ts.isCallExpression(statement.expression)) {
+      const call = statement.expression;
+      const first = call.arguments[0];
+      if (!first || !ts.isIdentifier(first)) return null;
+      return { start, end, text: `${call.getText(file)};\n${indentOf(file.text, start)}return ${first.text};`, note: `${call.expression.getText(file)}() changes ${first.text} in place and returns nothing: called it, then returned ${first.text}` };
+    }
+    if (ts.isExpressionStatement(statement) && ts.isBinaryExpression(statement.expression) && statement.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const { left, right } = statement.expression;
+      if (!ts.isCallExpression(right)) return null;
+      const first = right.arguments[0];
+      if (!first || first.getText(file) !== left.getText(file)) return null;
+      return { start, end, text: `${right.getText(file)};`, note: `${right.expression.getText(file)}() changes ${left.getText(file)} in place and returns nothing: no longer assigned` };
+    }
+    return null;
+  }
+};
 
 /** Levenshtein distance, for telling a typo from a different name. */
 const editDistance = (a: string, b: string): number => {
@@ -158,6 +202,35 @@ export const TypeFixer = {
               notes.push(`${rel}:${line}: ${text.slice(start, end)} may be empty here; marked as set (${diagnostic.code})`);
             }
             continue;
+          }
+
+          // "Import declaration conflicts with local declaration of 'GameState'":
+          // the file imports the real type and then writes its own. The import
+          // wins; the local type or interface (only those) goes.
+          if (diagnostic.code === 2440) {
+            const name = /'([A-Za-z_$][\w$]*)'/.exec(ts.flattenDiagnosticMessageText(diagnostic.messageText, " "))?.[1];
+            const source = service.getProgram()?.getSourceFile(fileName);
+            const local = source?.statements.find(
+              (statement) => (ts.isTypeAliasDeclaration(statement) || ts.isInterfaceDeclaration(statement)) && statement.name.text === name
+            );
+            if (source && local) {
+              const from = text.lastIndexOf("\n", local.getStart(source) - 1) + 1;
+              const newline = text.indexOf("\n", local.getEnd());
+              add(path.resolve(fileName), { start: from, end: newline === -1 ? text.length : newline + 1, text: "" });
+              notes.push(`${rel}:${line}: removed a second ${name} type; the imported one is used`);
+              continue;
+            }
+          }
+
+          // "Type 'void' is not assignable": a function that changes the state in
+          // place (launch(state): void) used as if it returned the new state.
+          if (diagnostic.code === 2322 && /Type 'void' is not assignable/.test(ts.flattenDiagnosticMessageText(diagnostic.messageText, " "))) {
+            const edit = AutonomousVoidFix.edit(ts, service.getProgram()?.getSourceFile(fileName), start);
+            if (edit) {
+              add(path.resolve(fileName), edit);
+              notes.push(`${rel}:${line}: ${edit.note}`);
+              continue;
+            }
           }
 
           const fixes = service.getCodeFixesAtPosition(fileName, start, end, [diagnostic.code], format, preferences);

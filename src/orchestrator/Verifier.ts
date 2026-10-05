@@ -361,7 +361,9 @@ export class Verifier {
     const errors = rendered.errors.filter((error) => !/favicon/i.test(error));
     const reasons: string[] = [];
     if (errors.length > 0) reasons.push(`it throws while loading:\n${errors.slice(0, 8).join("\n")}`);
-    if (text.length < 15) reasons.push("the page is blank: nothing is drawn once it has loaded (an error before the first screen, or a screen that renders nothing)");
+    // A start screen can be one "Play" button, a game one <canvas>: those are drawn, not blank.
+    const drawn = /<(button|canvas|input|select|textarea|svg|img|video)\b/i.test(body.replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, " "));
+    if (text.length < 15 && !drawn) reasons.push("the page is blank: nothing is drawn once it has loaded (an error before the first screen, or a screen that renders nothing)");
     return {
       name: "runs",
       applicable: true,

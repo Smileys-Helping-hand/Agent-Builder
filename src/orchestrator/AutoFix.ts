@@ -530,6 +530,23 @@ export const AutoFix = {
       .join("\n")}\n`;
   },
 
+  /**
+   * The starter's own smoke test asks for a <main> because the starter's App
+   * has one. An app that replaced it (a game whose root is a full-screen
+   * <div>) fails a test nobody wrote for it, and the model spends passes on a
+   * tag. While App has no <main>, the test asks only that App renders markup.
+   */
+  async relaxStarterTest(root: string): Promise<string[]> {
+    const testPath = path.join(root, "src", "App.test.tsx");
+    const test = await fs.readFile(testPath, "utf8").catch(() => "");
+    const stock = /expect\(renderAt\(<App \/>\)\)\.toContain\(["']<main["']\);/;
+    if (!stock.test(test)) return [];
+    const app = await fs.readFile(path.join(root, "src", "App.tsx"), "utf8").catch(() => "");
+    if (!app || /<main[\s>]/.test(app)) return [];
+    await fs.writeFile(testPath, test.replace(stock, "expect(renderAt(<App />)).toMatch(/<[a-z]/);"), "utf8");
+    return ["src/App.test.tsx: the starter's test asked for a <main> the app no longer has; it now checks that App renders"];
+  },
+
   async run(root: string): Promise<string[]> {
     const notes: string[] = [
       ...(await AutoFix.splitNameClashes(root)),
@@ -537,7 +554,8 @@ export const AutoFix = {
       ...(await AutoFix.fixDefaultImports(root)),
       ...(await AutoFix.addMissingComponentImports(root)),
       ...(await AutoFix.addMissingReactImports(root)),
-      ...(await AutoFix.fixHooksOutsideComponents(root))
+      ...(await AutoFix.fixHooksOutsideComponents(root)),
+      ...(await AutoFix.relaxStarterTest(root))
     ];
     const pkgPath = path.join(root, "package.json");
     let pkg: Record<string, any>;

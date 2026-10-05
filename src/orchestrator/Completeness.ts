@@ -138,6 +138,19 @@ export const stubs = (source: Record<string, string>): string[] => {
     }
     if (/on[A-Z]\w*=\{\s*\(\s*\)\s*=>\s*\{\s*\}\s*\}/.test(text)) found.push(`${file} has a button or handler that does nothing ({() => {}})`);
   }
+  // A screen that "navigates" by changing the address (`window.location.hash = '/game'`)
+  // in an app that switches screens with state: nothing reads the address, so the
+  // Start button leads nowhere. It type-checks, renders and passes its tests.
+  const all = Object.values(source).join("\n");
+  const listens = /addEventListener\(\s*["'](hashchange|popstate)|on(hashchange|popstate)\b|useLocation|useNavigate|react-router|wouter|location\.(hash|pathname)(?!\s*=[^=])/.test(all);
+  if (!listens) {
+    for (const [file, text] of Object.entries(source)) {
+      const move = /location\.(hash|href)\s*=\s*["'`][#/]|history\.pushState\(/.exec(text);
+      if (move) {
+        found.push(`${file} moves to another screen by changing the page address (${move[0].replace(/\s*=\s*["'`][#/]$/, " = …")}), but nothing in the app reads the address, so it leads nowhere: give the component a prop such as onStart: () => void and have App switch screens with state`);
+      }
+    }
+  }
   return found.slice(0, 6);
 };
 
