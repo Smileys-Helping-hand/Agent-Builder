@@ -645,6 +645,20 @@ assert.match(screenHint, /Status \(in src\/engine\/game\.ts\) can only be "ready
 assert.match(screenHint, /useState<"home" \| "game">\("home"\)/, screenHint);
 assert.equal(await AutoFix.literalsOutsideUnion(screens, "src/a.ts(1,1): error TS2304: Cannot find name 'x'."), "", "no hint without the pattern");
 
+// Props a component from src/engine/ does not take are removed where it is rendered; the app's own components are left alone.
+const boardProps = fs.mkdtempSync(path.join(os.tmpdir(), "ab-boardprops-"));
+fs.mkdirSync(path.join(boardProps, "src", "engine"), { recursive: true });
+fs.mkdirSync(path.join(boardProps, "node_modules"));
+fs.writeFileSync(path.join(boardProps, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", jsx: "preserve", noEmit: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(path.join(boardProps, "src/jsx.d.ts"), "declare namespace JSX { interface Element {} interface IntrinsicElements { [name: string]: unknown } interface ElementAttributesProperty { props: {} } }\n");
+fs.writeFileSync(path.join(boardProps, "src/engine/play.tsx"), "export interface GameBoardProps { settings: number; onScore?: (s: number) => void }\nexport function GameBoard(props: GameBoardProps): JSX.Element { return <canvas />; }\n");
+fs.writeFileSync(path.join(boardProps, "src/Own.tsx"), "export function Own(props: { a: number }): JSX.Element { return <div />; }\n");
+fs.writeFileSync(path.join(boardProps, "src/Game.tsx"), "import { GameBoard } from './engine/play';\nimport { Own } from './Own';\nexport const Game = () => <div><GameBoard settings={1} onScore={() => {}} onWon={() => {}} onLost={() => {}} /><Own a={1} b={2} /></div>;\n");
+TypeFixer.run(boardProps);
+const gameScreen = fs.readFileSync(path.join(boardProps, "src/Game.tsx"), "utf8");
+assert.match(gameScreen, /<GameBoard settings=\{1\} onScore=\{\(\) => \{\}\} \/>/, gameScreen);
+assert.match(gameScreen, /<Own a=\{1\} b=\{2\} \/>/, "the app's own component keeps its props for the model to sort out");
+
 // An empty function is never merged into the engine.
 assert.equal(CodeGuard.mergeEngineAdditions("src/engine/game.ts", "export const a = 1;\n", "export function stub(): number {\n  // later\n}\n"), null);
 
