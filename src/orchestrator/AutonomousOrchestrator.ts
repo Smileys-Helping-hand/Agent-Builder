@@ -357,7 +357,12 @@ export class AutonomousOrchestrator extends EventEmitter {
       // While the app does not even compile, a pass only fixes: generating new
       // code first added fresh errors faster than the repairs cleared the old
       // ones, and a build went round at 20 for pass after pass.
-      const lastBlocker = this.iterations[this.iterations.length - 1]?.verification?.blockingCheck?.name;
+      // A build carried on from another (Continue, self-heal, a restart) knows
+      // how that one ended: its first pass is held to the same rule. Pass 1
+      // used to rewrite regardless, and took a Pgame left with 1 type error
+      // to 7 (score 35 -> 20).
+      const inherited = iterationNum === 1 ? AutonomousOrchestrator.inheritedBlocker(this.config.description) : undefined;
+      const lastBlocker = this.iterations[this.iterations.length - 1]?.verification?.blockingCheck?.name ?? inherited;
       const fixFirst =
         this.config.workingDir !== undefined &&
         this.isStarter() &&
@@ -1191,6 +1196,11 @@ ${lines}
    * (roughly 3.3 characters a token for code and English). Hosted models have
    * windows far larger than any prompt here.
    */
+  /** The compile-level check a build carried on from another left failing ("When it last ran, the typecheck check failed"), if any. */
+  static inheritedBlocker(description: string): "install" | "typecheck" | "build" | undefined {
+    return /When it last ran, the (install|typecheck|build) check failed/.exec(description)?.[1] as "install" | "typecheck" | "build" | undefined;
+  }
+
   static promptTooBig(prompt: string): boolean {
     if (getProviderFromEnv() !== "ollama") return false;
     const { num_ctx } = ollamaOptions();

@@ -357,6 +357,11 @@ assert.deepEqual(plan.map((file) => file.path), ["src/lib/progress.ts", "src/com
 assert.deepEqual(plan[0].exports, ["nextLevel(xp: number): number"]);
 assert.deepEqual(AutonomousOrchestrator.parsePlan("I think we should build a game.", new Set()), []);
 
+// A carried-on build knows how its predecessor ended, so its first pass repairs instead of rewriting.
+assert.equal(AutonomousOrchestrator.inheritedBlocker("Build Pgame.\n\nThis project was started by an earlier build and is already in the folder.\nCarry on.\n\nWhen it last ran, the typecheck check failed with:\nsrc/a.ts(1,1): error"), "typecheck");
+assert.equal(AutonomousOrchestrator.inheritedBlocker("Build Pgame.\n\nWhen it last ran, the test check failed with:\n1 failed"), undefined, "a failing test is not a reason to stop adding");
+assert.equal(AutonomousOrchestrator.inheritedBlocker("Build Pgame: a fresh one."), undefined);
+
 // Export signatures: what another file needs to call it right, props included.
 assert.deepEqual(CodeGuard.exportSignatures("const Menu = ({ onPlay }: { onPlay: () => void }) => <button onClick={onPlay}>Play</button>;\nexport default Menu;\n"), ["default Menu({ onPlay }: { onPlay: () => void })"]);
 assert.deepEqual(
