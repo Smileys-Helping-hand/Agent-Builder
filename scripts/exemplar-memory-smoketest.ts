@@ -61,6 +61,12 @@ Quality bar:
 - Clear empty and error states
 - Works offline`;
 assert.equal(ExemplarMemory.relevant(pgameBrief)?.title, "Arcade Promo Game", "the real Pgame brief finds the game engine, not the restaurant's Menu");
+
+// Our own catalogue engine is never retired: runs cut short are not its failures.
+const arcade = ExemplarMemory.relevant(pgameBrief)!;
+assert.equal(arcade.title, "Arcade Promo Game");
+for (let i = 0; i < 6; i += 1) ExemplarMemory.markUsed(arcade.id);
+assert.equal(ExemplarMemory.relevant(pgameBrief)?.title, "Arcade Promo Game", "the game engine is still offered after runs that never passed");
 const salonBrief = `Build Fade & Co bookings: a web app.
 
 What it is for:
