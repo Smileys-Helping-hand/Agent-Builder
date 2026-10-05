@@ -779,7 +779,8 @@ error) and the specific change needed to fix it. Do not write code.`;
       (await AutoFix.missingModules(this.workspace.root, failing.output).catch(() => "")) +
       (this.adoptedEngine.length
         ? `\n${this.adoptedEngine.join(", ")} is a tested engine: do not rewrite it. A function it lacks (saving, loading, a new rule) goes in a new module such as src/lib/storage.ts, imported from there.\n`
-        : "");
+        : "") +
+      this.stuckTestHint(failing.name);
 
     // The brief without its research notes: a repair needs to know what the app
     // is for, not what the research engine read last week.
@@ -1467,6 +1468,23 @@ FILE: ${file.path}
       });
     }
     return out.slice(0, 10);
+  }
+
+  /**
+   * A test that has failed pass after pass, on an app that otherwise works, is
+   * usually a test and an app the model wrote that disagree — and it cannot
+   * tell which is wrong, so it changes neither enough. Say plainly that the test
+   * is ours, not the customer's, and which way to settle it.
+   */
+  private stuckTestHint(failing: string): string {
+    if (failing !== "test" || !this.config.workingDir || !(this.isStarter() || fs.existsSync(path.join(this.workspace.root, "template.json")))) return "";
+    let streak = 0;
+    for (let i = this.iterations.length - 1; i >= 0 && this.iterations[i].verification?.blockingCheck?.name === "test"; i--) streak++;
+    if (streak < 2) return "";
+    return `\nThis test has failed for ${streak} passes in a row. It was written by this build, not by the customer. If it
+checks something the brief does not ask for, or checks it differently from how the app (correctly) does it, change
+the test to check what the app really does — keep it a real test with real expected values. If the brief does ask
+for it, make the app do it. Do one or the other completely; do not change both halfway.\n`;
   }
 
   /** Whether this build started from the web starter (templates/starters/web) rather than a real project or template. */
