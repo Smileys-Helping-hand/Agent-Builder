@@ -859,6 +859,17 @@ changing — omit anything unchanged. No other prose.`;
         : "") +
       this.researchPreamble(context.iteration) +
       this.exemplarPreamble(context.iteration);
+
+    // A new app is planned, then written one file at a time (see generatePlanned).
+    if (this.config.workingDir && this.isStarter() && this.starterStillPlaceholder()) {
+      const planned = await this.generatePlanned(context.iteration, lessonPreamble).catch((error: any) => {
+        if (error instanceof GameModeOnError) throw error;
+        Logger.warn("Planned generation failed; writing the app in one go instead", { error: error?.message });
+        return null;
+      });
+      if (planned) return planned;
+    }
+
     // The prompt and the answer share the model's window. A project that grows
     // pass by pass used to push the prompt to the edge of it, leaving no room
     // for the files: the model then answered in prose or stopped mid-file, and
@@ -1303,6 +1314,159 @@ ${lines}
     } catch (error: any) {
       Logger.warn("Could not remember this build as a worked example", { error: error?.message });
     }
+  }
+
+  /**
+   * A new app, planned and then written one file at a time.
+   *
+   * Asked for a whole app in one answer, a 7B model writes a little of
+   * everything and gets the seams wrong: an import of a function it never
+   * wrote, two different GameState types, props one screen passes and another
+   * does not take. One focused file at a time is what a small model does best,
+   * so: first a short plan (the files, what each is for, what each exports),
+   * then each file in its own call, which sees the plan and the actual code
+   * already written — so every import points at something real. Logic first,
+   * then screens, then App.tsx, then tests. Null when there is no usable plan.
+   */
+  private async generatePlanned(iteration: number, preamble: string): Promise<{ files: Record<string, string>; artifacts: string[] } | null> {
+    const brief = this.config.description.split(/\n(?:What our research confirmed|This is going to a real customer)/i)[0].trim();
+    const engine = this.adoptedEngine.map((file) => {
+      const text = fs.existsSync(path.join(this.workspace.root, file)) ? fs.readFileSync(path.join(this.workspace.root, file), "utf8") : "";
+      return { file, text, exports: CodeGuard.exportSignatures(text) };
+    });
+    const engineNote = engine.length
+      ? `\nAlready in the project (a tested engine — use it, do not plan to rewrite it):\n${engine.map((e) => `- ${e.file}: ${e.exports.join("; ")}`).join("\n")}\n`
+      : "";
+    const rules = this.environmentRules();
+
+    // 1. The plan: small, structured, cheap to retry.
+    const planPrompt = `${preamble}You are planning a new web app (React + TypeScript + Vite + Vitest, already set up).
+
+What to build:
+${brief}
+${engineNote}${rules}
+Plan the files. Logic (rules, state, saving) goes in plain .ts modules under src/lib/; each screen is a
+component under src/components/; src/App.tsx shows the screens and switches between them; tests go in
+src/lib/*.test.ts and test the logic. Every page and every must-have in the brief gets a real home.
+Between 4 and 9 files. Do not plan src/main.tsx, src/lib/testing.tsx or anything already in the project.
+
+Answer with JSON only:
+{"files":[{"path":"src/lib/example.ts","purpose":"what it does, in one sentence","exports":["name(arg: Type): Return", "interface Name { field: Type }"]}]}`;
+    let plan: Array<{ path: string; purpose: string; exports: string[] }> = [];
+    let answer = "";
+    for (let attempt = 0; attempt < 2 && plan.length === 0; attempt++) {
+      answer = await ModelRouter.generate(planPrompt);
+      plan = AutonomousOrchestrator.parsePlan(answer, new Set([...this.kitFiles(), ...this.adoptedEngine, "src/main.tsx"]));
+    }
+    // What the engine already exports is not planned again: a plan that
+    // rewrote newGame/step in its own gameLogic.ts gave the app two GameState
+    // types that never fit together. A file that would only duplicate the
+    // engine is dropped; a duplicated export is struck from the rest.
+    const engineNames = new Set(engine.flatMap((e) => e.exports.map((signature) => /(?:interface|type|const|class|default)?\s*([A-Za-z_$][\w$]*)/.exec(signature)?.[1] ?? "")));
+    const exportName = (signature: string) => /(?:interface|type|const|class|default)?\s*([A-Za-z_$][\w$]*)/.exec(signature.trim())?.[1] ?? "";
+    plan = plan
+      .map((file) => {
+        const dupes = file.exports.filter((signature) => engineNames.has(exportName(signature)));
+        return { file, dupes, keep: file.exports.filter((signature) => !engineNames.has(exportName(signature))) };
+      })
+      .filter(({ file, dupes, keep }) => !(dupes.length > 0 && dupes.length >= keep.length && !/\.tsx$/.test(file.path)))
+      .map(({ file, keep }) => ({ ...file, exports: keep }));
+    // Tests for the logic, when the plan forgot them.
+    const logic = plan.find((file) => /^src\/lib\/[^/]+\.ts$/.test(file.path) && !/\.test\./.test(file.path));
+    if (logic && !plan.some((file) => /\.test\.tsx?$/.test(file.path))) {
+      plan.push({ path: logic.path.replace(/\.ts$/, ".test.ts"), purpose: `tests for ${logic.path}: each exported function, with real expected values`, exports: [] });
+    }
+    if (plan.length > 0 && !plan.some((file) => file.path === "src/App.tsx")) {
+      // The screen switcher is what turns modules into an app; plan it if the model did not.
+      plan.push({ path: "src/App.tsx", purpose: "shows each screen and switches between them", exports: ["default App()"] });
+    }
+    if (plan.length < 2) {
+      Logger.warn("Planned generation: no usable plan", { answer: answer.slice(0, 600) });
+      return null;
+    }
+
+    // Logic first, then screens, App.tsx, and tests last: each file is written
+    // after the ones it is likely to import.
+    const rank = (file: string) => (/\.test\.tsx?$/.test(file) ? 3 : file === "src/App.tsx" ? 2 : /\.tsx$/.test(file) ? 1 : 0);
+    plan.sort((a, b) => rank(a.path) - rank(b.path));
+    const planText = plan.map((file) => `- ${file.path}: ${file.purpose}${file.exports.length ? `\n    exports: ${file.exports.join("; ")}` : ""}`).join("\n");
+    this.think(iteration, "plan", `Planned ${plan.length} files`, planText, plan.map((file) => file.path));
+
+    // 2. Each file in its own call. What stays the same comes first (so the
+    // model server's prompt cache holds); what changes per file comes last.
+    const written: Record<string, string> = {};
+    const fixed = `${preamble}You are writing one file of a new web app (React + TypeScript + Vite + Vitest, already set up).
+
+What to build:
+${brief}
+${engineNote}${rules}
+The plan for the whole app:
+${planText}
+`;
+    for (const [index, file] of plan.entries()) {
+      const others = Object.entries(written)
+        .map(([name, text]) => (text.length > 6000 ? `FILE: ${name} (exports: ${CodeGuard.exportSignatures(text).join("; ")})` : `FILE: ${name}\n\`\`\`\n${text}\n\`\`\``))
+        .join("\n\n");
+      const engineCode = engine.map((e) => `FILE: ${e.file} (already written; exports: ${e.exports.join("; ")})`).join("\n");
+      const prompt = `${fixed}
+Already written — import from these exactly as they are (names, props, types):
+${[engineCode, others].filter(Boolean).join("\n\n") || "(nothing yet)"}
+
+Now write ${file.path} (${file.purpose}), complete and working: real logic and real screens, no
+placeholders, no TODO comments, no buttons that do nothing. Import only from the files above, the
+installed packages, and files listed in the plan. Answer with exactly one file:
+FILE: ${file.path}
+\`\`\`
+…the whole file…
+\`\`\``;
+      let code: string | undefined;
+      for (let attempt = 0; attempt < 2 && !code; attempt++) {
+        const answer = await ModelRouter.generate(prompt);
+        const files = this.parseGeneratedCode(answer);
+        code = files[file.path] ?? (Object.keys(files).length === 1 ? Object.values(files)[0] : undefined);
+        if (!code) {
+          // One fenced block and no FILE: line is still this file.
+          const blocks = Array.from(answer.matchAll(/```[\w-]*\n([\s\S]*?)```/g)).map((match) => match[1]);
+          if (blocks.length === 1 && /\b(import|export)\b/.test(blocks[0])) code = blocks[0];
+        }
+      }
+      if (code) {
+        written[file.path] = code;
+        this.emit("iteration-status", { iteration, status: "writing", attempt: index + 1 });
+      } else {
+        Logger.warn(`Planned generation: no usable answer for ${file.path}`);
+      }
+    }
+    if (!written["src/App.tsx"]) return null;
+    this.think(iteration, "decision", `Wrote ${Object.keys(written).length} of ${plan.length} planned files, one at a time`, Object.keys(written).map((file) => `• ${file}`).join("\n"), Object.keys(written));
+    return { files: written, artifacts: Object.keys(written) };
+  }
+
+  /** The plan's files from the model's answer: JSON, under src/, nothing locked, no duplicates. */
+  static parsePlan(answer: string, locked: Set<string>): Array<{ path: string; purpose: string; exports: string[] }> {
+    const json = /\{[\s\S]*\}/.exec(answer)?.[0];
+    if (!json) return [];
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(json);
+    } catch {
+      return [];
+    }
+    const files = (parsed as { files?: unknown })?.files;
+    if (!Array.isArray(files)) return [];
+    const seen = new Set<string>();
+    const out: Array<{ path: string; purpose: string; exports: string[] }> = [];
+    for (const entry of files as Array<Record<string, unknown>>) {
+      const file = typeof entry?.path === "string" ? entry.path.replace(/\\/g, "/").replace(/^\.\//, "").trim() : "";
+      if (!/^src\/[\w./-]+\.(ts|tsx|css)$/.test(file) || file.includes("..") || locked.has(file) || seen.has(file.toLowerCase())) continue;
+      seen.add(file.toLowerCase());
+      out.push({
+        path: file,
+        purpose: typeof entry.purpose === "string" ? entry.purpose.slice(0, 200) : "",
+        exports: Array.isArray(entry.exports) ? entry.exports.filter((item): item is string => typeof item === "string").map((item) => item.slice(0, 160)).slice(0, 10) : []
+      });
+    }
+    return out.slice(0, 10);
   }
 
   /** Whether this build started from the web starter (templates/starters/web) rather than a real project or template. */

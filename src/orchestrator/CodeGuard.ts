@@ -110,6 +110,75 @@ const topLevelKeys = (source: string, name: string): Set<string> => {
 
 export const CodeGuard = {
   /**
+   * What a module exports, as short signatures another file can be written
+   * against: `newGame(settings: GameSettings): GameState`, `interface Brick
+   * { x: number; … }`, `const DEFAULT_SETTINGS: GameSettings`. Bodies left out.
+   */
+  exportSignatures(source: string): string[] {
+    const ts = loadTs();
+    if (!ts) return Array.from(exportedNames(source));
+    const file = ts.createSourceFile("module.tsx", source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+    const text = (node: import("typescript").Node | undefined) =>
+      node
+        ? node
+            .getText(file)
+            .replace(/\/\*[\s\S]*?\*\//g, "")
+            .replace(/\/\/[^\n]*/g, "")
+            .replace(/\s+/g, " ")
+            .trim()
+        : "";
+    const out: string[] = [];
+    for (const statement of file.statements) {
+      const modifiers = ts.canHaveModifiers(statement) ? ts.getModifiers(statement) ?? [] : [];
+      if (!modifiers.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)) continue;
+      const isDefault = modifiers.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword);
+      if (ts.isFunctionDeclaration(statement)) {
+        const params = statement.parameters.map((p) => text(p)).join(", ");
+        out.push(`${isDefault ? "default " : ""}${statement.name?.text ?? "function"}(${params})${statement.type ? `: ${text(statement.type)}` : ""}`);
+      } else if (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement) || ts.isEnumDeclaration(statement)) {
+        const full = text(statement).replace(/^export\s+/, "");
+        out.push(full.length > 220 ? `${full.slice(0, 217)}…` : full);
+      } else if (ts.isVariableStatement(statement)) {
+        for (const declaration of statement.declarationList.declarations) {
+          const name = text(declaration.name);
+          const init = declaration.initializer;
+          if (init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init))) {
+            out.push(`${name}(${init.parameters.map((p) => text(p)).join(", ")})${init.type ? `: ${text(init.type)}` : ""}`);
+          } else {
+            out.push(`const ${name}${declaration.type ? `: ${text(declaration.type)}` : ""}`);
+          }
+        }
+      } else if (ts.isClassDeclaration(statement)) {
+        out.push(`${isDefault ? "default " : ""}class ${statement.name?.text ?? ""}`);
+      }
+    }
+    // `export default Menu`: show Menu's own signature, props included —
+    // wrong props were the model's commonest seam error between files.
+    for (const statement of file.statements) {
+      if (!ts.isExportAssignment(statement) || !ts.isIdentifier(statement.expression)) continue;
+      const name = statement.expression.text;
+      let signature = `default ${name}`;
+      for (const other of file.statements) {
+        if (ts.isFunctionDeclaration(other) && other.name?.text === name) {
+          signature = `default ${name}(${other.parameters.map((p) => text(p)).join(", ")})`;
+        }
+        if (ts.isVariableStatement(other)) {
+          for (const declaration of other.declarationList.declarations) {
+            const init = declaration.initializer;
+            if (text(declaration.name) === name && init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init))) {
+              signature = `default ${name}(${init.parameters.map((p) => text(p)).join(", ")})`;
+            } else if (text(declaration.name) === name && declaration.type) {
+              signature = `default ${name}: ${text(declaration.type)}`;
+            }
+          }
+        }
+      }
+      out.push(signature);
+    }
+    return out.slice(0, 24);
+  },
+
+  /**
    * A tested engine a build started from (src/game.ts from our catalogue) may
    * gain exports and have rules adjusted, but a new version that drops any of
    * its exports or throws away most of its code is a replacement, not an

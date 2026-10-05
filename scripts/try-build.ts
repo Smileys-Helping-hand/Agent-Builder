@@ -57,7 +57,7 @@ const minutes = () => ((Date.now() - started) / 60000).toFixed(1);
 orchestrator.on("iteration-status", (info) => console.log(`  [${minutes()}m] pass ${info.iteration}: ${info.status}${info.attempt ? ` ${info.attempt}` : ""}`));
 orchestrator.on("thought", (thought) => {
   const review = /^Reviewed/.test(thought?.title ?? "");
-  if (thought?.kind === "decision" || thought?.kind === "repair" || review || /^(Following a worked example|Remembered this app)/.test(thought?.title ?? "")) {
+  if (thought?.kind === "decision" || thought?.kind === "repair" || review || /^(Following a worked example|Remembered this app|Planned [0-9]+ files)/.test(thought?.title ?? "")) {
     console.log(`  [${minutes()}m] ${thought.title}${review && thought.text ? `\n${thought.text}` : ""}`);
   }
 });

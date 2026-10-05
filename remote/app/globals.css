@@ -1436,3 +1436,19 @@ body::before {
 /* Full screen: the app fills the screen at its real size, not the scaled preview. */
 .preview-frame:fullscreen { background: #000; height: 100% !important; }
 .preview-frame:fullscreen iframe { width: 100% !important; height: 100% !important; transform: none !important; left: 0 !important; }
+
+/* ---------- a project's runs, inside its page ---------- */
+.project-runs { display: flex; flex-direction: column; gap: 4px; padding: 8px; }
+.project-run {
+  display: grid; grid-template-columns: 64px minmax(0, 1fr) auto 44px 22px; align-items: center; gap: 10px;
+  padding: 9px 10px; border-radius: var(--radius-sm); border: 1px solid transparent; background: transparent;
+  color: var(--text); text-align: left; cursor: pointer; font-size: 13px;
+}
+.project-run:hover:not(:disabled) { border-color: var(--line-strong); background: var(--card); }
+.project-run.on { border-color: var(--accent); background: var(--accent-soft); cursor: default; }
+.project-run-n { font-weight: 700; }
+.project-run-when { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.project-run-score { font-weight: 800; text-align: right; color: var(--bad); }
+.project-run-score.good { color: var(--good); }
+.project-run .chev { transform: rotate(180deg); display: inline-flex; width: 16px; height: 16px; color: var(--faint); }
+@media (max-width: 560px) { .project-run { grid-template-columns: 54px minmax(0, 1fr) 40px 18px; } .project-run > .muted { display: none; } }

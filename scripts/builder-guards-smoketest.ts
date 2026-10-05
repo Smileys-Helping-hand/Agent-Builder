@@ -10,6 +10,7 @@ import path from "node:path";
 import assert from "node:assert/strict";
 
 import { CodeGuard } from "../src/orchestrator/CodeGuard.js";
+import { AutonomousOrchestrator } from "../src/orchestrator/AutonomousOrchestrator.js";
 import { AutoFix } from "../src/orchestrator/AutoFix.js";
 import { TypeFixer } from "../src/orchestrator/TypeFixer.js";
 import { Verifier } from "../src/orchestrator/Verifier.js";
@@ -283,6 +284,22 @@ assert.match(fixedGame, /scoreValue \* 2/, "a one-letter typo is corrected");
 assert.match(fixedGame, /handleSave\(\)/, "a different name is NOT swapped in (handleSave is not handleStep)");
 assert.ok(typeNotes.length >= 3, `notes: ${typeNotes.join(" | ")}`);
 assert.deepEqual(TypeFixer.run(typed).filter((note) => !/handleSave/.test(note)), [], "nothing left to fix but the real gap");
+
+// Planned builds: the plan is read leniently and kept to safe, unique files under src/.
+const plan = AutonomousOrchestrator.parsePlan(
+  'Here is the plan:\n{"files":[{"path":"src/lib/progress.ts","purpose":"levels and XP","exports":["nextLevel(xp: number): number"]},{"path":"./src/components/Menu.tsx","purpose":"menu"},{"path":"src/main.tsx","purpose":"no"},{"path":"src/lib/testing.tsx","purpose":"no"},{"path":"../evil.ts","purpose":"no"},{"path":"src/lib/Progress.ts","purpose":"dupe"},{"path":"src/App.tsx","purpose":"screens"}]}',
+  new Set(["src/lib/testing.tsx", "src/main.tsx"])
+);
+assert.deepEqual(plan.map((file) => file.path), ["src/lib/progress.ts", "src/components/Menu.tsx", "src/App.tsx"]);
+assert.deepEqual(plan[0].exports, ["nextLevel(xp: number): number"]);
+assert.deepEqual(AutonomousOrchestrator.parsePlan("I think we should build a game.", new Set()), []);
+
+// Export signatures: what another file needs to call it right, props included.
+assert.deepEqual(CodeGuard.exportSignatures("const Menu = ({ onPlay }: { onPlay: () => void }) => <button onClick={onPlay}>Play</button>;\nexport default Menu;\n"), ["default Menu({ onPlay }: { onPlay: () => void })"]);
+assert.deepEqual(
+  CodeGuard.exportSignatures("/** Levels. */\nexport interface Level { /** n */ n: number }\nexport function next(l: Level): Level { return l; }\nexport const START: Level = { n: 1 };\n"),
+  ["interface Level { n: number }", "next(l: Level): Level", "const START: Level"]
+);
 
 // Tailoring: the customer's own contact details come from the brief, not the model.
 const brief = "We are Mama Nandi's Kitchen. Phone 011 555 0199, bookings on WhatsApp +27 82 555 0199, email hello@mamanandis.co.za.\n\nBusiness: Mama Nandi's Kitchen\n";
