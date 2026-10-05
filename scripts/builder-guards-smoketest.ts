@@ -528,6 +528,15 @@ assert.equal(
 );
 assert.equal(CodeGuard.fragmentProblem(frag, "src/components/Save.tsx", saveScreen, saveScreen.replace("Saved", "Saved!")), null, "a real edit is fine");
 
+// Emotion's css prop needs its one line at the top of the file.
+const emotion = fs.mkdtempSync(path.join(os.tmpdir(), "ab-emotion-"));
+fs.mkdirSync(path.join(emotion, "src", "components"), { recursive: true });
+fs.writeFileSync(path.join(emotion, "src/components/Home.tsx"), "import { css } from '@emotion/react';\nconst box = css`padding: 1rem;`;\nexport default () => <div css={box}>Hi</div>;\n");
+fs.writeFileSync(path.join(emotion, "src/components/Plain.tsx"), "import { css } from '@emotion/react';\nexport const s = css`color: red;`;\n");
+assert.equal((await AutoFix.addEmotionPragma(emotion)).length, 1, "only the file that uses the css prop");
+assert.match(fs.readFileSync(path.join(emotion, "src/components/Home.tsx"), "utf8"), /^\/\*\* @jsxImportSource @emotion\/react \*\/\n/);
+assert.deepEqual(await AutoFix.addEmotionPragma(emotion), [], "added once");
+
 // `box-shadow:` in a style object is CSS where React wants boxShadow.
 const kebab = fs.mkdtempSync(path.join(os.tmpdir(), "ab-kebab-"));
 fs.mkdirSync(path.join(kebab, "src", "lib"), { recursive: true });

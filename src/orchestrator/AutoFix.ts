@@ -677,9 +677,27 @@ export const AutoFix = {
     return notes;
   },
 
+  /**
+   * `<div css={styles.box}>` with `import { css } from '@emotion/react'`: the
+   * css prop only works when the file's JSX comes from Emotion, which takes
+   * one line at the top. Without it every styled element is a type error
+   * ("css: SerializedStyles is not assignable…") — 16 of a fresh Pgame's 26.
+   */
+  async addEmotionPragma(root: string): Promise<string[]> {
+    const notes: string[] = [];
+    for (const file of (await listFiles(path.join(root, "src"))).filter((name) => /\.(t|j)sx$/.test(name))) {
+      const text = await fs.readFile(file, "utf8");
+      if (!/from\s+["']@emotion\/react["']/.test(text) || !/\scss=\{/.test(text) || /@jsxImportSource/.test(text)) continue;
+      await fs.writeFile(file, `/** @jsxImportSource @emotion/react */\n${text}`, "utf8");
+      notes.push(`${posix(path.relative(root, file))}: uses Emotion's css prop; added the line that makes it work`);
+    }
+    return notes;
+  },
+
   async run(root: string): Promise<string[]> {
     const notes: string[] = [
       ...(await AutoFix.fixKebabCaseKeys(root)),
+      ...(await AutoFix.addEmotionPragma(root)),
       ...(await AutoFix.dedupeImports(root)),
       ...(await AutoFix.splitNameClashes(root)),
       ...(await AutoFix.fixImportPaths(root)),
