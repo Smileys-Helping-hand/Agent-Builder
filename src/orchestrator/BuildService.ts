@@ -637,8 +637,11 @@ export const BuildService = {
 
     const instruction = options.instruction?.trim();
     const blocker = bestPass(previous)?.blocker;
+    // Carrying on from a build that was itself carried on: keep the brief, not
+    // every earlier "carry on" and its old error, which pile up with each one.
+    const brief = previous.description.split(/\n+This project was started by an earlier build and is already in the folder\./)[0].trim();
     const description = [
-      previous.description,
+      brief,
       "",
       "This project was started by an earlier build and is already in the folder.",
       instruction ? `Now do this: ${instruction}` : "Carry on: finish what is missing and fix whatever still fails.",

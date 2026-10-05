@@ -547,6 +547,35 @@ export const AutoFix = {
     return ["src/App.test.tsx: the starter's test asked for a <main> the app no longer has; it now checks that App renders"];
   },
 
+  /**
+   * `expect(state.ball).toEqual({ x: 160, vx: 0, ... })` — the model's "and the
+   * rest" written into a test. It is a syntax error ("Expression expected")
+   * that type fixes cannot touch and the small model does not recognise, and
+   * it held a live build at typecheck for a whole pass. What it means is a
+   * partial match: the placeholder goes and the assertion becomes toMatchObject.
+   * Tests only: a "..." in app code is missing code, not a figure of speech.
+   */
+  async fixPlaceholderEllipsis(root: string): Promise<string[]> {
+    const notes: string[] = [];
+    for (const file of (await listFiles(path.join(root, "src"))).filter((name) => TEST_FILE.test(name))) {
+      const text = await fs.readFile(file, "utf8");
+      let count = 0;
+      const fixed = text
+        .split("\n")
+        .map((line) => {
+          // "..." straight before a closing brace is never a spread (a spread names what it spreads).
+          if (!/(,\s*)?\.\.\.\s*(?=\})/.test(line)) return line;
+          count++;
+          return line.replace(/(,\s*)?\.\.\.\s*(?=\})/g, " ").replace(/\.(toEqual|toStrictEqual)\(/g, ".toMatchObject(");
+        })
+        .join("\n");
+      if (count === 0) continue;
+      await fs.writeFile(file, fixed, "utf8");
+      notes.push(`${posix(path.relative(root, file))}: ${count} assertion(s) used "..." for "the rest"; now a partial match (toMatchObject)`);
+    }
+    return notes;
+  },
+
   async run(root: string): Promise<string[]> {
     const notes: string[] = [
       ...(await AutoFix.splitNameClashes(root)),
@@ -555,7 +584,8 @@ export const AutoFix = {
       ...(await AutoFix.addMissingComponentImports(root)),
       ...(await AutoFix.addMissingReactImports(root)),
       ...(await AutoFix.fixHooksOutsideComponents(root)),
-      ...(await AutoFix.relaxStarterTest(root))
+      ...(await AutoFix.relaxStarterTest(root)),
+      ...(await AutoFix.fixPlaceholderEllipsis(root))
     ];
     const pkgPath = path.join(root, "package.json");
     let pkg: Record<string, any>;

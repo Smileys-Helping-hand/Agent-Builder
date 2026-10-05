@@ -15,7 +15,9 @@ import { AutoFix } from "../src/orchestrator/AutoFix.js";
 import { TypeFixer } from "../src/orchestrator/TypeFixer.js";
 import { Verifier } from "../src/orchestrator/Verifier.js";
 import { applyFacts, readFacts, sampleFactsLeft } from "../src/orchestrator/Tailoring.js";
-import { coverage, engineUse, parseReview, requirementsFromBrief, stubs } from "../src/orchestrator/Completeness.js";
+import { coverage, dropUnrelatedResearch, engineUse, parseReview, requirementsFromBrief, stubs } from "../src/orchestrator/Completeness.js";
+import { candidates, projectKey } from "../src/orchestrator/SelfHeal.js";
+import type { BuildView } from "../src/orchestrator/BuildService.js";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "ab-guards-"));
 fs.mkdirSync(path.join(root, "src"), { recursive: true });
@@ -388,5 +390,66 @@ assert.deepEqual(
 );
 assert.deepEqual(sampleFactsLeft(sampleContent, tailored.replace("@saltandember", "@mamanandis"), facts), [], "fully tailored passes");
 assert.deepEqual(sampleFactsLeft(sampleContent, sampleContent, readFacts("A restaurant in Durban.")), [], "no details in the brief, nothing demanded");
+
+// "..." for "the rest" in a test is a syntax error; it becomes a partial match.
+const dots = fs.mkdtempSync(path.join(os.tmpdir(), "ab-dots-"));
+fs.mkdirSync(path.join(dots, "src", "lib"), { recursive: true });
+fs.writeFileSync(
+  path.join(dots, "src/lib/game.test.ts"),
+  "it('starts', () => {\n  expect(s.ball).toEqual({ x: 160, vy: 0, ... });\n  expect(s.paddle).toEqual({ ...base, w: 70 });\n});\n"
+);
+fs.writeFileSync(path.join(dots, "src/lib/game.ts"), "export const rest = { ...{} };\n");
+assert.equal((await AutoFix.fixPlaceholderEllipsis(dots)).length, 1);
+const dotted = fs.readFileSync(path.join(dots, "src/lib/game.test.ts"), "utf8");
+assert.match(dotted, /expect\(s\.ball\)\.toMatchObject\(\{ x: 160, vy: 0 \}\);/, `placeholder removed: ${dotted}`);
+assert.match(dotted, /expect\(s\.paddle\)\.toEqual\(\{ \.\.\.base, w: 70 \}\);/, "a real spread is left alone");
+assert.deepEqual(await AutoFix.fixPlaceholderEllipsis(dots), [], "nothing left to fix");
+
+// Research about something else stays out of the brief the model reads.
+const noisy = [
+  "Build Pgame: a website.",
+  "",
+  "What it is for:",
+  "A fun phone game with a progression system, saved in the browser.",
+  "",
+  "What our research confirmed (use where it applies):",
+  "- Quantum annealing solves the core TCM task 16 times faster than simulated annealing. (https://arxiv.org/html/2511.15665v1)",
+  "- Self-consistency fails on long-context tasks due to positional bias. (https://example.com/a)",
+  "- Phone game players return for a visible progression system with short levels. (https://example.com/b)",
+  "",
+  "This project was started by an earlier build."
+].join("\n");
+const focused = dropUnrelatedResearch(noisy);
+assert.ok(!/Quantum|Self-consistency/.test(focused), "unrelated findings go");
+assert.match(focused, /What our research confirmed.*\n- Phone game players/, "a related one stays");
+assert.match(focused, /This project was started by an earlier build\.$/, "what follows the section is kept");
+assert.ok(!/research confirmed/.test(dropUnrelatedResearch(noisy.replace(/- Phone game.*\n/, ""))), "an emptied section goes");
+assert.equal(dropUnrelatedResearch("A plain brief."), "A plain brief.");
+
+// Self-heal: the latest build of each project that ended short is retried, once per builder version.
+const healDir = fs.mkdtempSync(path.join(os.tmpdir(), "ab-heal-"));
+const run = (over: Partial<BuildView>): BuildView =>
+  ({
+    buildId: "b", projectName: "Pgame", description: "", startedAt: "2026-10-05T10:00:00Z", finishedAt: "2026-10-05T11:00:00Z",
+    state: "completed", iterations: 3, qualityScore: 35, outputDir: healDir, startedBy: "user", orderId: null, profile: "deep",
+    qualityThreshold: 90, maxIterations: 60, continuedFrom: null, passed: false, bestScore: 35, outcome: null, stage: null,
+    repairAttempt: null, stageSince: null, passSince: null, guidance: [], iterationDetail: [], events: [], thoughts: [], audit: null, live: false,
+    ...over
+  }) as BuildView;
+const later = Date.parse("2026-10-05T12:00:00Z");
+const healRuns = [
+  run({ buildId: "pg-old", startedAt: "2026-10-04T10:00:00Z" }),
+  run({ buildId: "pg-new" }),
+  run({ buildId: "works", projectName: "Blog", bestScore: 100, passed: true }),
+  run({ buildId: "order", projectName: "Restaurant", orderId: "o1" }),
+  run({ buildId: "stopped", projectName: "Salon", state: "stopped" }),
+  run({ buildId: "yielded", projectName: "Quiz", state: "stopped", startedBy: "self-heal" }),
+  run({ buildId: "fresh", projectName: "Shop", finishedAt: "2026-10-05T11:55:00Z" }),
+  run({ buildId: "gone", projectName: "Old", outputDir: path.join(healDir, "missing") })
+];
+assert.deepEqual(candidates(healRuns, "v1", { healed: {} }, later).map((b) => b.buildId).sort(), ["pg-new", "yielded"], "the latest short build per project; not working, order, stopped, just-finished or missing ones");
+const healedOnV1 = { healed: { [projectKey(healRuns[1])]: { version: "v1", buildId: "x", at: "" } } };
+assert.deepEqual(candidates(healRuns, "v1", healedOnV1, later).map((b) => b.buildId), ["yielded"], "retried once per version");
+assert.ok(candidates(healRuns, "v2", healedOnV1, later).some((b) => b.buildId === "pg-new"), "a new builder version retries it again");
 
 console.log("builder guards: all checks passed");

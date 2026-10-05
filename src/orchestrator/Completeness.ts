@@ -69,6 +69,24 @@ export const requirementsFromBrief = (brief: string): Requirement[] => {
   return out;
 };
 
+/**
+ * The brief without research findings that have nothing to do with it. The
+ * prompt page remembers the last research topic picked, so a phone game's
+ * brief arrived with eight findings about LLM decoding and quantum annealing —
+ * read by a small model on every pass. A finding stays when it shares two
+ * words with the brief itself; a section left empty goes.
+ */
+export const dropUnrelatedResearch = (brief: string): string => {
+  const match = /\n(What our research confirmed[^\n]*\n)((?:[ \t]*[-*•][^\n]*(?:\n|$))+)/i.exec(brief);
+  if (!match) return brief;
+  const own = brief.slice(0, match.index) + brief.slice(match.index + match[0].length);
+  const words = (text: string) => new Set((text.replace(/\(https?:[^)]*\)/g, " ").match(/[A-Za-z]{3,}/g) ?? []).map((w) => w.toLowerCase()).filter((w) => !STOP.has(w)).map(stem));
+  const ownWords = words(own);
+  const kept = match[2].split("\n").filter((line) => line.trim() && Array.from(words(line)).filter((w) => ownWords.has(w)).length >= 2);
+  const section = kept.length > 0 ? `\n${match[1]}${kept.join("\n")}\n` : "\n";
+  return brief.slice(0, match.index) + section + brief.slice(match.index + match[0].length);
+};
+
 const SKIP = /(^|\/)(node_modules|dist|build|\.git)(\/|$)/;
 const APP_FILE = /\.(t|j)sx?$/;
 const TEST_FILE = /\.(test|spec)\.(t|j)sx?$/;

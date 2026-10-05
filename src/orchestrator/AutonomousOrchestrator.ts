@@ -1,7 +1,7 @@
 import { EventEmitter } from "events";
 import { CodeGuard } from "./CodeGuard.js";
 import { AutoFix } from "./AutoFix.js";
-import { appSource, coverage, engineUse, parseReview, reviewPrompt, stubs } from "./Completeness.js";
+import { appSource, coverage, dropUnrelatedResearch, engineUse, parseReview, reviewPrompt, stubs } from "./Completeness.js";
 import { applyFacts, readFacts, sampleFactsLeft } from "./Tailoring.js";
 import { ExemplarMemory, type Exemplar } from "../learning/ExemplarMemory.js";
 import { GameModeOnError } from "../utils/GameMode.js";
@@ -158,6 +158,8 @@ export class AutonomousOrchestrator extends EventEmitter {
 
   constructor(private config: AutonomousConfig) {
     super();
+    // What the model reads every pass: the brief, without research about something else.
+    this.config = { ...config, description: dropUnrelatedResearch(config.description) };
     this.buildId = `build_${Date.now()}`;
     this.outputDir = config.workingDir ?? `./builds/${this.buildId}`;
 
