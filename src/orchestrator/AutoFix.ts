@@ -483,7 +483,30 @@ export const AutoFix = {
           .map((name) => `- ${name}: ${SERVER_ONLY.get(name)}`)
           .join("\n")}\n`
       : "";
-    return missing + absentText + serverText + (await AutoFix.nameClashes(root));
+    return missing + absentText + serverText + (await AutoFix.nameClashes(root)) + (await AutoFix.duplicateTypes(root, errorOutput));
+  },
+
+  /**
+   * Two files each declaring their own GameState: "'GameState' is not
+   * assignable to 'GameState'", which a model reads as a typo and never
+   * resolves. Named in the repair prompt when the typecheck shows it, with
+   * the engine's (src/engine/) as the one to keep.
+   */
+  async duplicateTypes(root: string, errorOutput: string): Promise<string> {
+    const declared = new Map<string, string[]>();
+    for (const file of (await listFiles(path.join(root, "src"))).map((full) => posix(path.relative(root, full)))) {
+      if (!/\.(t|j)sx?$/.test(file) || TEST_FILE.test(file) || file.endsWith(".d.ts")) continue;
+      const text = await fs.readFile(path.join(root, file), "utf8");
+      for (const match of text.matchAll(/export\s+(?:interface|type)\s+([A-Z]\w*)/g)) declared.set(match[1], [...(declared.get(match[1]) ?? []), file]);
+    }
+    const lines: string[] = [];
+    for (const [name, files] of declared) {
+      if (files.length < 2 || !new RegExp(`\\b${name}\\b`).test(errorOutput)) continue;
+      const keep = files.find((file) => file.startsWith("src/engine/")) ?? files[0];
+      const others = files.filter((file) => file !== keep);
+      lines.push(`- ${name} is declared in ${files.join(" and ")}: keep only the one in ${keep}, delete it from ${others.join(", ")}, and import it from ${keep} everywhere.`);
+    }
+    return lines.length ? `\nThe same type is declared twice, so values of one are rejected where the other is expected:\n${lines.join("\n")}\n` : "";
   },
 
   /**

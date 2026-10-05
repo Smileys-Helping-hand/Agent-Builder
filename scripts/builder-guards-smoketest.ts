@@ -115,6 +115,17 @@ const absentHint = await AutoFix.missingModules(game, "src/components/Save.tsx(2
 assert.match(absentHint, /src\/engine\.ts does not export saveGame\. Add it to src\/engine\.ts .*\(step, GameState\)/);
 fs.rmSync(path.join(game, "src/engine.ts"));
 
+// The same type declared twice is named, with the engine's as the one to keep.
+fs.mkdirSync(path.join(game, "src/engine"), { recursive: true });
+fs.writeFileSync(path.join(game, "src/engine/game.ts"), "export interface GameState { score: number }\n");
+fs.writeFileSync(path.join(game, "src/lib/gameLogic.ts"), "export interface GameState { points: number }\n");
+assert.match(
+  await AutoFix.duplicateTypes(game, "src/App.tsx(43,34): error TS2345: Argument of type 'GameState' is not assignable to parameter of type 'GameState'."),
+  /GameState is declared in .*: keep only the one in src\/engine\/game\.ts, delete it from src\/lib\/gameLogic\.ts/
+);
+assert.equal(await AutoFix.duplicateTypes(game, "src/App.tsx(1,1): error TS2304: Cannot find name 'x'."), "", "only when the errors are about it");
+fs.rmSync(path.join(game, "src/engine"), { recursive: true });
+
 // An engine the build started from can grow but not be replaced.
 const engineBefore = "export const step = (s: number) => {\n  const next = s + 1;\n  return next;\n};\nexport const launch = () => {\n  return 1;\n};\nexport type State = { a: number };\n";
 assert.equal(CodeGuard.engineRewriteProblem(engineBefore, `${engineBefore}export const saveGame = () => 1;\n`), null, "adding an export is fine");
