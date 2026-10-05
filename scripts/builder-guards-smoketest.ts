@@ -16,7 +16,7 @@ import { AutoFix } from "../src/orchestrator/AutoFix.js";
 import { TypeFixer } from "../src/orchestrator/TypeFixer.js";
 import { Verifier } from "../src/orchestrator/Verifier.js";
 import { applyFacts, readFacts, sampleFactsLeft } from "../src/orchestrator/Tailoring.js";
-import { coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, requirementsFromBrief, stubs } from "../src/orchestrator/Completeness.js";
+import { coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, requirementsFromBrief, stubs, unshownComponents } from "../src/orchestrator/Completeness.js";
 import { candidates, projectKey } from "../src/orchestrator/SelfHeal.js";
 import type { BuildView } from "../src/orchestrator/BuildService.js";
 
@@ -357,6 +357,13 @@ assert.deepEqual(plan.map((file) => file.path), ["src/lib/progress.ts", "src/com
 assert.deepEqual(plan[0].exports, ["nextLevel(xp: number): number"]);
 assert.deepEqual(AutonomousOrchestrator.parsePlan("I think we should build a game.", new Set()), []);
 
+// With a playable board, the plan does not redo input, the loop or drawing; the rest of the app stays.
+assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/inputHandler.ts", purpose: "handles paddle movement and ball launch" }), true);
+assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/gameLoop.ts", purpose: "runs the frame loop" }), true);
+assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/storage.ts", purpose: "save and load the game in localStorage" }), false);
+assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/progression.ts", purpose: "unlock levels and track high scores" }), false);
+assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/components/Game.tsx", purpose: "the game screen with the canvas" }), false, "screens stay: the game screen is where the board goes");
+
 // A carried-on build knows how its predecessor ended, so its first pass repairs instead of rewriting.
 assert.equal(AutonomousOrchestrator.inheritedBlocker("Build Pgame.\n\nThis project was started by an earlier build and is already in the folder.\nCarry on.\n\nWhen it last ran, the typecheck check failed with:\nsrc/a.ts(1,1): error"), "typecheck");
 assert.equal(AutonomousOrchestrator.inheritedBlocker("Build Pgame.\n\nWhen it last ran, the test check failed with:\n1 failed"), undefined, "a failing test is not a reason to stop adding");
@@ -528,6 +535,15 @@ assert.equal(
 );
 assert.equal(CodeGuard.fragmentProblem(frag, "src/components/Save.tsx", saveScreen, saveScreen.replace("Saved", "Saved!")), null, "a real edit is fine");
 
+// Emotion's css prop needs its one line at the top of the file.
+const emotion = fs.mkdtempSync(path.join(os.tmpdir(), "ab-emotion-"));
+fs.mkdirSync(path.join(emotion, "src", "components"), { recursive: true });
+fs.writeFileSync(path.join(emotion, "src/components/Home.tsx"), "import { css } from '@emotion/react';\nconst box = css`padding: 1rem;`;\nexport default () => <div css={box}>Hi</div>;\n");
+fs.writeFileSync(path.join(emotion, "src/components/Plain.tsx"), "import { css } from '@emotion/react';\nexport const s = css`color: red;`;\n");
+assert.equal((await AutoFix.addEmotionPragma(emotion)).length, 1, "only the file that uses the css prop");
+assert.match(fs.readFileSync(path.join(emotion, "src/components/Home.tsx"), "utf8"), /^\/\*\* @jsxImportSource @emotion\/react \*\/\n/);
+assert.deepEqual(await AutoFix.addEmotionPragma(emotion), [], "added once");
+
 // `box-shadow:` in a style object is CSS where React wants boxShadow.
 const kebab = fs.mkdtempSync(path.join(os.tmpdir(), "ab-kebab-"));
 fs.mkdirSync(path.join(kebab, "src", "lib"), { recursive: true });
@@ -583,6 +599,83 @@ assert.match(play, /import \{ newGame \} from "\.\.\/engine\/game"|import \{ new
 assert.match(play, /import \{ updateGameState \} from ['"]\.\/gameLogic['"]/, "the real updateGameState is imported");
 assert.ok(!/Implementation of updateGameState/.test(fs.readFileSync(path.join(levels, "src/engine/game.ts"), "utf8")), "the empty stub is gone");
 assert.deepEqual(TypeFixer.run(levels), [], `nothing left: ${TypeFixer.run(levels).join(" | ")}`);
+// "Did you mean 'startLevel'?" when another file of ours exports startNewLevel itself.
+const didYouMean = fs.mkdtempSync(path.join(os.tmpdir(), "ab-dym-"));
+fs.mkdirSync(path.join(didYouMean, "src", "engine"), { recursive: true });
+fs.mkdirSync(path.join(didYouMean, "src", "lib"), { recursive: true });
+fs.mkdirSync(path.join(didYouMean, "node_modules"));
+fs.writeFileSync(path.join(didYouMean, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", noEmit: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(path.join(didYouMean, "src/engine/game.ts"), "export const startLevel = (n: number): number => n;\n");
+fs.writeFileSync(path.join(didYouMean, "src/lib/gameLogic.ts"), "export const startNewLevel = (n: number): number => n + 1;\n");
+fs.writeFileSync(path.join(didYouMean, "src/Game.ts"), "import { startLevel, startNewLevel } from './engine/game';\nexport const both = startLevel(1) + startNewLevel(1);\n");
+TypeFixer.run(didYouMean);
+assert.match(fs.readFileSync(path.join(didYouMean, "src/Game.ts"), "utf8"), /import \{ startNewLevel \} from ['"]\.\/lib\/gameLogic['"]/, "the real startNewLevel, not startLevel");
+assert.equal(TypeFixer.errorCount(didYouMean), 0, "and it compiles");
+const brokenCount = fs.mkdtempSync(path.join(os.tmpdir(), "ab-count-"));
+fs.mkdirSync(path.join(brokenCount, "src"));
+fs.mkdirSync(path.join(brokenCount, "node_modules"));
+fs.writeFileSync(path.join(brokenCount, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, noEmit: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(path.join(brokenCount, "src/a.ts"), "export const a: number = 'x';\nexport const b: string = 1;\n");
+assert.equal(TypeFixer.errorCount(brokenCount), 2, "errorCount counts what tsc would");
+fs.rmSync(path.join(brokenCount, "node_modules"), { recursive: true });
+assert.equal(TypeFixer.errorCount(brokenCount), null, "before install it cannot tell");
+
+// The playable board the build started with has to be on a screen; four buttons that fire events are not a game.
+const board = "export function GameBoard({ settings }: { settings: unknown }) { step(); return <canvas />; }\n";
+assert.deepEqual(
+  unshownComponents({ "src/engine/play.tsx": board, "src/components/Game.tsx": "export default () => <div><button>Hit Brick</button><button>Win Game</button></div>;\n" }, ["src/engine/game.ts", "src/engine/play.tsx"]),
+  [{ file: "src/engine/play.tsx", components: ["GameBoard"] }]
+);
+assert.deepEqual(
+  unshownComponents({ "src/engine/play.tsx": board, "src/components/Game.tsx": "export default () => <GameBoard settings={DEFAULT_SETTINGS} />;\n" }, ["src/engine/play.tsx"]),
+  [],
+  "rendered on the game screen"
+);
+
+// A dead button on a screen gets the exact wiring when App switches screens with state.
+const deadPlay = stubs({
+  "src/App.tsx": 'const App = () => {\n  const [screen, setScreen] = useState<"home" | "menu" | "game">("home");\n  return <div>{screen === "home" && <Home />}</div>;\n};\n',
+  "src/components/Home.tsx": "const Home = () => <div><h1>Pgame</h1><button onClick={() => {}}>Play Game</button></div>;\nexport default Home;\n"
+});
+assert.match(deadPlay[0], /give Home a prop onGame: \(\) => void, call it from the "Play Game" button \(onClick=\{onGame\}\), and in src\/App\.tsx render <Home onGame=\{\(\) => setScreen\("game"\)\} \/>/, deadPlay[0]);
+assert.match(stubs({ "src/a.tsx": "export const A = () => <button onClick={() => {}}>Go</button>;\n" })[0], /does nothing \(\{\(\) => \{\}\}\)$/, "without screen state, the plain message");
+
+// Screens kept in a type that means something else get named, with the fix.
+const screens = fs.mkdtempSync(path.join(os.tmpdir(), "ab-screens-"));
+fs.mkdirSync(path.join(screens, "src", "engine"), { recursive: true });
+fs.writeFileSync(path.join(screens, "src/engine/game.ts"), 'export type Status = "ready" | "playing" | "won" | "lost";\n');
+const screenHint = await AutoFix.literalsOutsideUnion(
+  screens,
+  "src/App.tsx(23,8): error TS2367: This comparison appears to be unintentional because the types 'Status' and '\"home\"' have no overlap.\nsrc/Menu.tsx(9,26): error TS2322: Type '\"game\"' is not assignable to type 'Status'.\n"
+);
+assert.match(screenHint, /Status \(in src\/engine\/game\.ts\) can only be "ready" \| "playing" \| "won" \| "lost"/);
+assert.match(screenHint, /useState<"home" \| "game">\("home"\)/, screenHint);
+assert.equal(await AutoFix.literalsOutsideUnion(screens, "src/a.ts(1,1): error TS2304: Cannot find name 'x'."), "", "no hint without the pattern");
+
+// Props a component from src/engine/ does not take are removed where it is rendered; the app's own components are left alone.
+const boardProps = fs.mkdtempSync(path.join(os.tmpdir(), "ab-boardprops-"));
+fs.mkdirSync(path.join(boardProps, "src", "engine"), { recursive: true });
+fs.mkdirSync(path.join(boardProps, "node_modules"));
+fs.writeFileSync(path.join(boardProps, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", jsx: "preserve", noEmit: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(path.join(boardProps, "src/jsx.d.ts"), "declare namespace JSX { interface Element {} interface IntrinsicElements { [name: string]: unknown } interface ElementAttributesProperty { props: {} } }\n");
+fs.writeFileSync(path.join(boardProps, "src/engine/play.tsx"), "export interface GameBoardProps { settings: number; onScore?: (s: number) => void }\nexport function GameBoard(props: GameBoardProps): JSX.Element { return <canvas />; }\n");
+fs.writeFileSync(path.join(boardProps, "src/Own.tsx"), "export function Own(props: { a: number }): JSX.Element { return <div />; }\n");
+fs.writeFileSync(path.join(boardProps, "src/Game.tsx"), "import { GameBoard } from './engine/play';\nimport { Own } from './Own';\nexport const Game = () => <div><GameBoard settings={1} onScore={() => {}} onWon={() => {}} onLost={() => {}} /><Own a={1} b={2} /></div>;\n");
+TypeFixer.run(boardProps);
+const gameScreen = fs.readFileSync(path.join(boardProps, "src/Game.tsx"), "utf8");
+assert.match(gameScreen, /<GameBoard settings=\{1\} onScore=\{\(\) => \{\}\} \/>/, gameScreen);
+assert.match(gameScreen, /<Own a=\{1\} b=\{2\} \/>/, "the app's own component keeps its props for the model to sort out");
+
+// { width: 70, radius: 6 } where the type says w and r.
+const shortKeys = fs.mkdtempSync(path.join(os.tmpdir(), "ab-short-"));
+fs.mkdirSync(path.join(shortKeys, "src"));
+fs.mkdirSync(path.join(shortKeys, "node_modules"));
+fs.writeFileSync(path.join(shortKeys, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", noEmit: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(path.join(shortKeys, "src/a.test.ts"), "type Paddle = { x: number; y: number; w: number; h: number };\nexport const p: Paddle = { x: 1, y: 2, width: 70, height: 10 };\nexport const q: { name: string } = { name: 'a', title: 'b' } as never;\n");
+TypeFixer.run(shortKeys);
+assert.match(fs.readFileSync(path.join(shortKeys, "src/a.test.ts"), "utf8"), /\{ x: 1, y: 2, w: 70, h: 10 \}/);
+assert.equal(TypeFixer.errorCount(shortKeys), 0);
+
 // An empty function is never merged into the engine.
 assert.equal(CodeGuard.mergeEngineAdditions("src/engine/game.ts", "export const a = 1;\n", "export function stub(): number {\n  // later\n}\n"), null);
 

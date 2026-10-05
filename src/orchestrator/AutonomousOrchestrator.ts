@@ -1,7 +1,8 @@
 import { EventEmitter } from "events";
 import { CodeGuard } from "./CodeGuard.js";
 import { AutoFix } from "./AutoFix.js";
-import { appSource, coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, reviewPrompt, stubs } from "./Completeness.js";
+import { TypeFixer } from "./TypeFixer.js";
+import { appSource, coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, reviewPrompt, stubs, unshownComponents } from "./Completeness.js";
 import { applyFacts, readFacts, sampleFactsLeft } from "./Tailoring.js";
 import { ExemplarMemory, type Exemplar } from "../learning/ExemplarMemory.js";
 import { GameModeOnError } from "../utils/GameMode.js";
@@ -361,7 +362,13 @@ export class AutonomousOrchestrator extends EventEmitter {
       // how that one ended: its first pass is held to the same rule. Pass 1
       // used to rewrite regardless, and took a Pgame left with 1 type error
       // to 7 (score 35 -> 20).
-      const inherited = iterationNum === 1 ? AutonomousOrchestrator.inheritedBlocker(this.config.description) : undefined;
+      // When the build it carries on from was cut off before a pass finished,
+      // there is no note: the inherited code is checked directly instead.
+      const inherited =
+        iterationNum === 1
+          ? AutonomousOrchestrator.inheritedBlocker(this.config.description) ??
+            (this.config.workingDir && this.isStarter() && !this.starterStillPlaceholder() && (TypeFixer.errorCount(this.workspace.root) ?? 0) > 0 ? "typecheck" : undefined)
+          : undefined;
       const lastBlocker = this.iterations[this.iterations.length - 1]?.verification?.blockingCheck?.name ?? inherited;
       const fixFirst =
         this.config.workingDir !== undefined &&
@@ -376,7 +383,8 @@ export class AutonomousOrchestrator extends EventEmitter {
 
       let currentFiles = this.guardFiles(generatedCode.files);
       const nothingWritten = Object.keys(currentFiles).length === 0;
-      if (nothingWritten && this.config.workingDir && this.isStarter() && !this.starterStillPlaceholder() && this.iterations.length > 0) {
+      // A pass that fixes first writes nothing on purpose, the first pass of a carried-on build included.
+      if (nothingWritten && this.config.workingDir && this.isStarter() && !this.starterStillPlaceholder() && (this.iterations.length > 0 || fixFirst)) {
         // The app is already there from an earlier pass: an empty answer is a
         // pass without new code, not a failed one. Check and repair what exists.
         if (!fixFirst) this.think(iterationNum, "decision", "No new code this pass", "The model returned no files, so this pass checks and repairs the app as it stands.");
@@ -1196,6 +1204,14 @@ ${lines}
    * (roughly 3.3 characters a token for code and English). Hosted models have
    * windows far larger than any prompt here.
    */
+  /** A planned logic file that would redo what a playable board does: input, controls, the loop, drawing, physics. */
+  static duplicatesBoard(file: { path: string; purpose: string }): boolean {
+    if (!/\.ts$/.test(file.path) || /\.test\./.test(file.path)) return false;
+    return /\b(input|controls?|keyboard|touch|pointer|game ?loop|frame loop|render(er|ing)?|draw(ing)?|canvas|physics|collisions?|paddle|ball movement)\b/i.test(
+      `${path.basename(file.path).replace(/([a-z])([A-Z])/g, "$1 $2")} ${file.purpose}`
+    );
+  }
+
   /** The compile-level check a build carried on from another left failing ("When it last ran, the typecheck check failed"), if any. */
   static inheritedBlocker(description: string): "install" | "typecheck" | "build" | undefined {
     return /When it last ran, the (install|typecheck|build) check failed/.exec(description)?.[1] as "install" | "typecheck" | "build" | undefined;
@@ -1400,8 +1416,18 @@ ${lines}
       const text = fs.existsSync(path.join(this.workspace.root, file)) ? fs.readFileSync(path.join(this.workspace.root, file), "utf8") : "";
       return { file, text, exports: CodeGuard.exportSignatures(text) };
     });
+    // A playable board (GameBoard: canvas, frame loop, touch and keys) means the
+    // game itself is done: a plan that added an input handler and its own loop
+    // around it fought the board for three passes.
+    const boards = engine
+      .filter((e) => e.file.endsWith(".tsx"))
+      .flatMap((e) => Array.from(e.text.matchAll(/export\s+function\s+([A-Z]\w*)/g)).map((m) => ({ name: m[1], file: e.file })));
     const engineNote = engine.length
-      ? `\nAlready in the project (a tested engine — use it, do not plan to rewrite it):\n${engine.map((e) => `- ${e.file}: ${e.exports.join("; ")}`).join("\n")}\n`
+      ? `\nAlready in the project (a tested engine — use it, do not plan to rewrite it):\n${engine.map((e) => `- ${e.file}: ${e.exports.join("; ")}`).join("\n")}\n${
+          boards.length
+            ? `The game itself already plays: ${boards.map((b) => `${b.name} in ${b.file}`).join(", ")} draws it, runs the loop and handles touch, mouse and keys. Plan no files for input, controls, a game loop, drawing or physics: the game screen renders <${boards[0].name} settings={DEFAULT_SETTINGS} onScore={...} /> and the rest of the app (menus, saving, progression) goes around it.\n`
+            : ""
+        }`
       : "";
     const rules = this.environmentRules();
 
@@ -1438,7 +1464,9 @@ Answer with JSON only:
         return { file, dupes, keep: file.exports.filter((signature) => !engineNames.has(exportName(signature))) };
       })
       .filter(({ file, dupes, keep }) => !(dupes.length > 0 && dupes.length >= keep.length && !/\.tsx$/.test(file.path)))
-      .map(({ file, keep }) => ({ ...file, exports: keep }));
+      .map(({ file, keep }) => ({ ...file, exports: keep }))
+      // With a playable board, logic files for what it already does are dropped.
+      .filter((file) => !(boards.length && AutonomousOrchestrator.duplicatesBoard(file)));
     // Tests for the logic, when the plan forgot them.
     const logic = plan.find((file) => /^src\/lib\/[^/]+\.ts$/.test(file.path) && !/\.test\./.test(file.path));
     if (logic && !plan.some((file) => /\.test\.tsx?$/.test(file.path))) {
@@ -1699,6 +1727,14 @@ No placeholders: where the brief does not give a detail, write realistic wording
         reasons.push(`the app barely uses the engine in ${engine.file}: it never calls ${engine.unused.join(", ")}`);
         todo.push(`drive the game with the engine in ${engine.file}: call ${engine.unused.join(", ")} from the app (the game loop, the controls, starting a level) so it really plays`);
       }
+    }
+    for (const unshown of unshownComponents(source, this.adoptedEngine)) {
+      const [component] = unshown.components;
+      const defaults = /export\s+const\s+(DEFAULT_[A-Z_]+)/.exec(Object.values(source).join("\n"))?.[1] ?? "settings";
+      reasons.push(`the playable game is never shown: no screen renders <${component} /> from ${unshown.file}`);
+      todo.push(
+        `show the real game: on the game screen render <${component} settings={${defaults}} onScore={(score) => ...} /> from ${unshown.file} (it is the whole game: canvas, frame loop, touch and keyboard), and remove any buttons that stand in for play`
+      );
     }
     if (missing.length > 0) {
       reasons.push(`the brief asks for ${missing.map((item) => `"${item.label}"`).join(", ")}, and nothing in the app's code has ${missing.length === 1 ? "it" : "them"}`);

@@ -262,7 +262,8 @@ export const ExemplarMemory = {
       const engines: Record<string, string> = {};
       const src = path.join(sitesDir, id, "src");
       for (const name of fs.existsSync(src) ? fs.readdirSync(src) : []) {
-        if (!/\.ts$/.test(name) || /\.(test|d)\.ts$/.test(name) || name === "content.ts") continue;
+        // A playable screen that needs only the engine (src/play.tsx) is tested code too.
+        if (!/\.tsx?$/.test(name) || /\.(test|d)\.tsx?$/.test(name) || name === "content.ts") continue;
         const text = fs.readFileSync(path.join(src, name), "utf8");
         // Only code that stands alone: an engine that imports the kit would teach the kit's imports.
         if (/from\s+["']\.\/(lib|content)/.test(text) || text.split("\n").length < 25) continue;
@@ -294,6 +295,7 @@ export const ExemplarMemory = {
     const documentFrequency = new Map<string, number>();
     for (const set of words.values()) for (const token of set) documentFrequency.set(token, (documentFrequency.get(token) ?? 0) + 1);
     let best: { exemplar: Exemplar; score: number } | null = null;
+    let bestSeed: { exemplar: Exemplar; score: number } | null = null;
     for (const row of rows) {
       // Only an app this builder made can wear out its welcome. A catalogue
       // example is our own tested code: four Pgame runs that were cut short by
@@ -301,11 +303,17 @@ export const ExemplarMemory = {
       // retired the game engine, and the next build started with nothing.
       const retired = row.origin === "build" && row.times_used >= RETIRE_AFTER_USES && (row.times_passed + 1) / (row.times_used + 2) < RETIRE_BELOW_RATE;
       if (retired) continue;
-      // A real build of this kind of app beats a catalogue seed at equal similarity.
-      const score = similarity(wanted, head, words.get(row.id)!, documentFrequency, rows.length) * (row.origin === "build" ? 1.15 : 1);
-      if (score >= MIN_SIMILARITY && (!best || score > best.score)) best = { exemplar: fromRow(row), score };
+      const score = similarity(wanted, head, words.get(row.id)!, documentFrequency, rows.length);
+      if (score < MIN_SIMILARITY) continue;
+      if (!best || score > best.score) best = { exemplar: fromRow(row), score };
+      if (row.origin !== "build" && (!bestSeed || score > bestSeed.score)) bestSeed = { exemplar: fromRow(row), score };
     }
-    return best?.exemplar ?? null;
+    // A catalogue example that fits goes into the project as tested code (the
+    // game engine and the board that plays it); a remembered build is only a
+    // description to follow. A Pgame that passed with four buttons instead of
+    // a game was remembered and preferred, and the next Pgame started with no
+    // engine. Remembered builds teach the kinds of app the catalogue lacks.
+    return (bestSeed ?? best)?.exemplar ?? null;
   },
 
   /**
@@ -318,7 +326,7 @@ export const ExemplarMemory = {
     const id = /^seed:(.+)$/.exec(exemplar.origin)?.[1];
     if (!id) return {};
     const out: Record<string, string> = {};
-    for (const match of exemplar.outline.matchAll(/^- (src\/[\w./-]+\.ts) \(/gm)) {
+    for (const match of exemplar.outline.matchAll(/^- (src\/[\w./-]+\.tsx?) \(/gm)) {
       const file = path.join(sitesDir, id, match[1]);
       if (!fs.existsSync(file)) continue;
       const text = fs.readFileSync(file, "utf8");
@@ -340,16 +348,32 @@ export const ExemplarMemory = {
 
   formatForPrompt(exemplar: Exemplar, adopted: string[] = []): string {
     if (adopted.length > 0) {
-      const modules = adopted.map((file) => `./${file.replace(/^src\//, "").replace(/\.ts$/, "")}`).join(", ");
+      const modules = adopted.map((file) => `./${file.replace(/^src\//, "").replace(/\.tsx?$/, "")}`).join(", ");
       // A model handed GameSettings tried `new GameSettings()`: say which values are ready to use.
       const defaults = Array.from(new Set(exemplar.outline.match(/\bDEFAULT_[A-Z_]+\b/g) ?? []));
+      // A screen that already plays (GameBoard) is the game: a model left to
+      // write its own drew four buttons that fired game events and called it done.
+      const components = adopted
+        .filter((file) => file.endsWith(".tsx"))
+        .flatMap((file) => {
+          const line = exemplar.outline.split("\n").find((entry) => entry.includes(`/${path.basename(file)} (`));
+          const names = /exports ([^)]+)\)/.exec(line ?? "")?.[1].split(", ").filter((name) => /^[A-Z]/.test(name) && !/Props$/.test(name)) ?? [];
+          return names.map((name) => ({ name, module: `./${file.replace(/^src\//, "").replace(/\.tsx$/, "")}` }));
+        });
+      const playable = components.length
+        ? `\nThe game itself is already built and plays (canvas, frame loop, touch, mouse and keyboard): ${components
+            .map((c) => `${c.name} from "${c.module}"`)
+            .join(", ")}. The game screen MUST render it, e.g. <${components[0].name} settings={${defaults[0] ?? "settings"}} onScore={...} />. Do not write your own game loop or canvas, and never stand in for play with buttons that fire game events.`
+        : "";
       return `Already in your project, complete, tested and working: ${adopted.join(", ")} (the engine from our
 "${exemplar.title}"). Build this app ON it: import from ${modules} and write the screens, navigation,
 saving and anything else the brief asks for around it. Change the engine only where the brief needs
 something different, and never rewrite it from scratch or import anything it does not export.
 Its interfaces and types are types only: never \`new\` them; pass plain objects of that shape.${
-        defaults.length ? `\nReady-made values to start from: ${defaults.join(", ")} (e.g. newGame(${defaults[0]})).` : ""
-      }
+        defaults.length
+          ? `\nReady-made values to start from: ${defaults.join(", ")} (e.g. newGame(${defaults[0]})). In tests, make a state the same way and change only what the test is about: { ...newGame(${defaults[0]}), score: 120 }. Never write the paddle, ball or bricks out by hand.`
+          : ""
+      }${playable}
 Its files:
 ${exemplar.outline}
 `;

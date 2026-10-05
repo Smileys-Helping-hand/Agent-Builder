@@ -66,6 +66,49 @@ const indentOf = (text: string, position: number): string => {
   return /^[ \t]*/.exec(text.slice(lineStart))?.[0] ?? "";
 };
 
+/** Attributes a component from src/engine/ does not accept, removed from where it is rendered. */
+const ExtraPropsFix = {
+  edits(ts: TsModule, program: import("typescript").Program | undefined, fileName: string, start: number, root: string): { edits: Edit[]; note: string } | null {
+    const source = program?.getSourceFile(fileName);
+    if (!program || !source) return null;
+    let element: import("typescript").JsxOpeningLikeElement | undefined;
+    const visit = (node: import("typescript").Node) => {
+      if (node.getStart(source) <= start && node.getEnd() > start) {
+        if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) element = node;
+        ts.forEachChild(node, visit);
+      }
+    };
+    ts.forEachChild(source, visit);
+    if (!element) return null;
+    const checker = program.getTypeChecker();
+    let symbol = checker.getSymbolAtLocation(element.tagName);
+    if (symbol && symbol.flags & ts.SymbolFlags.Alias) symbol = checker.getAliasedSymbol(symbol);
+    const declaration = symbol?.declarations?.[0];
+    if (!declaration) return null;
+    const declaredIn = path.relative(root, declaration.getSourceFile().fileName).split(path.sep).join("/");
+    if (!declaredIn.startsWith("src/engine/")) return null;
+    const signature = checker.getTypeOfSymbolAtLocation(symbol!, element.tagName).getCallSignatures()[0];
+    const propsParam = signature?.getParameters()[0];
+    if (!propsParam) return null;
+    const props = checker.getTypeOfSymbolAtLocation(propsParam, element);
+    const extra = element.attributes.properties.filter(
+      (attribute): attribute is import("typescript").JsxAttribute =>
+        ts.isJsxAttribute(attribute) && !["key", "ref"].includes(attribute.name.getText(source)) && !props.getProperty(attribute.name.getText(source))
+    );
+    if (extra.length === 0) return null;
+    const text = source.getFullText();
+    return {
+      edits: extra.map((attribute) => {
+        // The attribute with the space before it.
+        let from = attribute.getStart(source);
+        while (from > 0 && /\s/.test(text[from - 1])) from--;
+        return { start: from, end: attribute.getEnd(), text: "" };
+      }),
+      note: `${element.tagName.getText(source)} (${declaredIn}) does not take ${extra.map((a) => a.name.getText(source)).join(", ")}; removed`
+    };
+  }
+};
+
 /**
  * An import asking a file for a name it does not export, when exactly one
  * other file of ours does: the name moves to an import from that file.
@@ -264,6 +307,36 @@ export const TypeFixer = {
     }
   },
 
+  /**
+   * How many type errors the project's own files have, without changing
+   * anything: whether code a build inherits compiles. Null when it cannot tell.
+   */
+  errorCount(folder: string): number | null {
+    const root = path.resolve(folder);
+    const ts = loadTs();
+    const configPath = path.join(root, "tsconfig.json");
+    if (!ts || !fs.existsSync(configPath)) return null;
+    // Before install every import of a package is an error: that says nothing about the code.
+    if (!fs.existsSync(path.join(root, "node_modules"))) return null;
+    try {
+      const read = ts.readConfigFile(configPath, ts.sys.readFile);
+      if (read.error) return null;
+      const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, root);
+      const src = path.join(root, "src") + path.sep;
+      const options = { ...parsed.options, noEmit: true };
+      // Types resolve from the project's folder, not from wherever the builder runs.
+      const host = ts.createCompilerHost(options);
+      host.getCurrentDirectory = () => root;
+      const program = ts.createProgram({ rootNames: parsed.fileNames, options, host, projectReferences: parsed.projectReferences });
+      return program
+        .getSourceFiles()
+        .filter((file) => path.resolve(file.fileName).startsWith(src))
+        .reduce((sum, file) => sum + program.getSyntacticDiagnostics(file).length + program.getSemanticDiagnostics(file).length, 0);
+    } catch {
+      return null;
+    }
+  },
+
   fix(ts: TsModule, root: string, configPath: string): string[] {
     const read = ts.readConfigFile(configPath, ts.sys.readFile);
     if (read.error) return [];
@@ -410,11 +483,48 @@ export const TypeFixer = {
 
           // `import { newGame } from "./lib/gameLogic"` when only src/engine/game.ts
           // exports newGame: the import goes to the one file of ours that has it.
-          if (diagnostic.code === 2305) {
+          if (diagnostic.code === 2305 || diagnostic.code === 2724) {
             const edits = WrongModuleFix.edits(ts, service.getProgram(), fileName, start, ours);
             if (edits) {
               for (const edit of edits.edits) add(path.resolve(fileName), edit);
               notes.push(`${rel}:${line}: ${edits.note}`);
+              continue;
+            }
+          }
+
+          // <GameBoard settings={…} onWon={…} /> when GameBoard (tested code the
+          // build started with, in src/engine/) has no onWon: its props are a
+          // fixed contract, so what it does not take goes. A component the app
+          // wrote itself is left for the model, where adding the prop may be right.
+          if (diagnostic.code === 2322) {
+            const edits = ExtraPropsFix.edits(ts, service.getProgram(), fileName, start, root);
+            if (edits) {
+              for (const edit of edits.edits) add(path.resolve(fileName), edit);
+              notes.push(`${rel}:${line}: ${edits.note}`);
+              continue;
+            }
+          }
+
+          // { width: 70, radius: 6 } where the type says w and r: an object literal's
+          // key spelled out where the type uses its first letter.
+          if (diagnostic.code === 2353) {
+            const program = service.getProgram();
+            const source = program?.getSourceFile(fileName);
+            const written = text.slice(start, end);
+            let literal: import("typescript").ObjectLiteralExpression | undefined;
+            const visit = (node: import("typescript").Node) => {
+              if (node.getStart(source) <= start && node.getEnd() >= end) {
+                if (ts.isObjectLiteralExpression(node)) literal = node;
+                ts.forEachChild(node, visit);
+              }
+            };
+            if (source) ts.forEachChild(source, visit);
+            const expected = literal && program ? program.getTypeChecker().getContextualType(literal) : undefined;
+            const short = written[0];
+            const taken = new Set(literal?.properties.map((property) => property.name?.getText(source)) ?? []);
+            if (expected && written.length > 1 && /^[A-Za-z_$][\w$]*$/.test(written) && expected.getProperty(short) && !taken.has(short)) {
+              add(path.resolve(fileName), { start, end, text: short });
+              notes.push(`${rel}:${line}: ${written} is called ${short} here`);
               continue;
             }
           }

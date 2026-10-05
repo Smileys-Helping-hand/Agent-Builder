@@ -58,7 +58,9 @@ orchestrator.on("iteration-status", (info) => console.log(`  [${minutes()}m] pas
 orchestrator.on("thought", (thought) => {
   const review = /^Reviewed/.test(thought?.title ?? "");
   if (thought?.kind === "decision" || thought?.kind === "repair" || review || /^(Following a worked example|Remembered this app|Planned [0-9]+ files)/.test(thought?.title ?? "")) {
-    console.log(`  [${minutes()}m] ${thought.title}${review && thought.text ? `\n${thought.text}` : ""}`);
+    // A refused or kept file says why: the decision is only as good as its reason.
+    const detail = (review || /^Kept /.test(thought.title)) && thought.text ? `\n${thought.text}` : "";
+    console.log(`  [${minutes()}m] ${thought.title}${detail}`);
   }
 });
 orchestrator.on("iteration-complete", (iteration) => {
