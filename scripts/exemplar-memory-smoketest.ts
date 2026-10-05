@@ -108,12 +108,16 @@ assert.match(ExemplarMemory.formatForPrompt(game!), /Do NOT copy its names, cont
 
 // A catalogue engine can go into the new app whole; an app this builder made cannot.
 const engine = ExemplarMemory.engineFiles(game!, path.resolve("templates/sites"));
-assert.deepEqual(Object.keys(engine), ["src/game.ts"]);
+// The rules and the screen that plays them: a game, not just its engine.
+assert.deepEqual(Object.keys(engine).sort(), ["src/game.ts", "src/play.tsx"]);
 assert.equal(engine["src/game.ts"], fs.readFileSync(path.resolve("templates/sites/game/src/game.ts"), "utf8"), "the whole file, not the cut sample");
+assert.match(engine["src/play.tsx"], /export function GameBoard/);
 assert.deepEqual(ExemplarMemory.engineFiles(remembered, path.resolve("templates/sites")), {});
-const adoptedNote = ExemplarMemory.formatForPrompt(game!, ["src/game.ts"]);
-assert.match(adoptedNote, /Already in your project.*src\/game\.ts/s);
-assert.match(adoptedNote, /import from \.\/game/);
+const adoptedNote = ExemplarMemory.formatForPrompt(game!, ["src/engine/game.ts", "src/engine/play.tsx"]);
+assert.match(adoptedNote, /Already in your project.*src\/engine\/game\.ts/s);
+assert.match(adoptedNote, /import from \.\/engine\/game, \.\/engine\/play/);
+assert.match(adoptedNote, /The game screen MUST render it, e\.g\. <GameBoard settings=\{DEFAULT_SETTINGS\}/, adoptedNote);
+assert.ok(!/GameBoardProps from/.test(adoptedNote), "a props type is not a component");
 assert.ok(!adoptedNote.includes("FILE: src/game.ts"), "the engine is in the project: no need to repeat it in the prompt");
 
 console.log("exemplar memory: all checks passed");

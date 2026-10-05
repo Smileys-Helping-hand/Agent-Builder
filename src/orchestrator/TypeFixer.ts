@@ -264,6 +264,36 @@ export const TypeFixer = {
     }
   },
 
+  /**
+   * How many type errors the project's own files have, without changing
+   * anything: whether code a build inherits compiles. Null when it cannot tell.
+   */
+  errorCount(folder: string): number | null {
+    const root = path.resolve(folder);
+    const ts = loadTs();
+    const configPath = path.join(root, "tsconfig.json");
+    if (!ts || !fs.existsSync(configPath)) return null;
+    // Before install every import of a package is an error: that says nothing about the code.
+    if (!fs.existsSync(path.join(root, "node_modules"))) return null;
+    try {
+      const read = ts.readConfigFile(configPath, ts.sys.readFile);
+      if (read.error) return null;
+      const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, root);
+      const src = path.join(root, "src") + path.sep;
+      const options = { ...parsed.options, noEmit: true };
+      // Types resolve from the project's folder, not from wherever the builder runs.
+      const host = ts.createCompilerHost(options);
+      host.getCurrentDirectory = () => root;
+      const program = ts.createProgram({ rootNames: parsed.fileNames, options, host, projectReferences: parsed.projectReferences });
+      return program
+        .getSourceFiles()
+        .filter((file) => path.resolve(file.fileName).startsWith(src))
+        .reduce((sum, file) => sum + program.getSyntacticDiagnostics(file).length + program.getSemanticDiagnostics(file).length, 0);
+    } catch {
+      return null;
+    }
+  },
+
   fix(ts: TsModule, root: string, configPath: string): string[] {
     const read = ts.readConfigFile(configPath, ts.sys.readFile);
     if (read.error) return [];
@@ -410,7 +440,7 @@ export const TypeFixer = {
 
           // `import { newGame } from "./lib/gameLogic"` when only src/engine/game.ts
           // exports newGame: the import goes to the one file of ours that has it.
-          if (diagnostic.code === 2305) {
+          if (diagnostic.code === 2305 || diagnostic.code === 2724) {
             const edits = WrongModuleFix.edits(ts, service.getProgram(), fileName, start, ours);
             if (edits) {
               for (const edit of edits.edits) add(path.resolve(fileName), edit);

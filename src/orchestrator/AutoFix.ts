@@ -484,7 +484,7 @@ export const AutoFix = {
           .map((name) => `- ${name}: ${SERVER_ONLY.get(name)}`)
           .join("\n")}\n`
       : "";
-    return missing + absentText + serverText + (await AutoFix.nameClashes(root)) + (await AutoFix.duplicateTypes(root, errorOutput));
+    return missing + absentText + serverText + (await AutoFix.nameClashes(root)) + (await AutoFix.duplicateTypes(root, errorOutput)) + (await AutoFix.literalsOutsideUnion(root, errorOutput));
   },
 
   /**
@@ -508,6 +508,38 @@ export const AutoFix = {
       lines.push(`- ${name} is declared in ${files.join(" and ")}: keep only the one in ${keep}, delete it from ${others.join(", ")}, and import it from ${keep} everywhere.`);
     }
     return lines.length ? `\nThe same type is declared twice, so values of one are rejected where the other is expected:\n${lines.join("\n")}\n` : "";
+  },
+
+  /**
+   * Screens kept in a type that means something else: `state.status === 'home'`
+   * when Status is "ready" | "playing" | "won" | "lost". The errors ("no
+   * overlap", "'game' is not assignable to type 'Status'") do not say what to
+   * do; a small model undid its own repairs on it. This names the type's real
+   * values and the fix: a separate useState for which screen is showing.
+   */
+  async literalsOutsideUnion(root: string, errorOutput: string): Promise<string> {
+    const wanted = new Map<string, Set<string>>();
+    for (const match of errorOutput.matchAll(/types '(\w+)' and '"([^"]+)"' have no overlap|Type '"([^"]+)"' is not assignable to type '(\w+)'/g)) {
+      const type = match[1] ?? match[4];
+      const value = match[2] ?? match[3];
+      wanted.set(type, (wanted.get(type) ?? new Set()).add(value));
+    }
+    if (wanted.size === 0) return "";
+    const lines: string[] = [];
+    for (const file of (await listFiles(path.join(root, "src"))).filter((name) => /\.(t|j)sx?$/.test(name) && !TEST_FILE.test(name))) {
+      const text = await fs.readFile(file, "utf8");
+      for (const [type, values] of wanted) {
+        const declared = new RegExp(`type\\s+${type}\\s*=\\s*([^;]+);`).exec(text);
+        if (!declared) continue;
+        const allowed = Array.from(declared[1].matchAll(/["']([^"']+)["']/g)).map((m) => m[1]);
+        if (allowed.length === 0) continue;
+        lines.push(
+          `- ${type} (in ${posix(path.relative(root, file))}) can only be ${allowed.map((v) => `"${v}"`).join(" | ")}. The code also uses ${Array.from(values).map((v) => `"${v}"`).join(", ")}, which ${type} does not mean. If those are screens, keep them in their own state, e.g. const [screen, setScreen] = useState<${Array.from(values).map((v) => `"${v}"`).join(" | ")}>("${Array.from(values)[0]}"), and leave ${type} for what it is for.`
+        );
+        wanted.delete(type);
+      }
+    }
+    return lines.length ? `\nValues used where a type does not allow them:\n${lines.join("\n")}\n` : "";
   },
 
   /**

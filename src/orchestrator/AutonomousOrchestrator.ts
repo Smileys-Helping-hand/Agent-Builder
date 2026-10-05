@@ -1,7 +1,8 @@
 import { EventEmitter } from "events";
 import { CodeGuard } from "./CodeGuard.js";
 import { AutoFix } from "./AutoFix.js";
-import { appSource, coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, reviewPrompt, stubs } from "./Completeness.js";
+import { TypeFixer } from "./TypeFixer.js";
+import { appSource, coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, reviewPrompt, stubs, unshownComponents } from "./Completeness.js";
 import { applyFacts, readFacts, sampleFactsLeft } from "./Tailoring.js";
 import { ExemplarMemory, type Exemplar } from "../learning/ExemplarMemory.js";
 import { GameModeOnError } from "../utils/GameMode.js";
@@ -361,7 +362,13 @@ export class AutonomousOrchestrator extends EventEmitter {
       // how that one ended: its first pass is held to the same rule. Pass 1
       // used to rewrite regardless, and took a Pgame left with 1 type error
       // to 7 (score 35 -> 20).
-      const inherited = iterationNum === 1 ? AutonomousOrchestrator.inheritedBlocker(this.config.description) : undefined;
+      // When the build it carries on from was cut off before a pass finished,
+      // there is no note: the inherited code is checked directly instead.
+      const inherited =
+        iterationNum === 1
+          ? AutonomousOrchestrator.inheritedBlocker(this.config.description) ??
+            (this.config.workingDir && this.isStarter() && !this.starterStillPlaceholder() && (TypeFixer.errorCount(this.workspace.root) ?? 0) > 0 ? "typecheck" : undefined)
+          : undefined;
       const lastBlocker = this.iterations[this.iterations.length - 1]?.verification?.blockingCheck?.name ?? inherited;
       const fixFirst =
         this.config.workingDir !== undefined &&
@@ -376,7 +383,8 @@ export class AutonomousOrchestrator extends EventEmitter {
 
       let currentFiles = this.guardFiles(generatedCode.files);
       const nothingWritten = Object.keys(currentFiles).length === 0;
-      if (nothingWritten && this.config.workingDir && this.isStarter() && !this.starterStillPlaceholder() && this.iterations.length > 0) {
+      // A pass that fixes first writes nothing on purpose, the first pass of a carried-on build included.
+      if (nothingWritten && this.config.workingDir && this.isStarter() && !this.starterStillPlaceholder() && (this.iterations.length > 0 || fixFirst)) {
         // The app is already there from an earlier pass: an empty answer is a
         // pass without new code, not a failed one. Check and repair what exists.
         if (!fixFirst) this.think(iterationNum, "decision", "No new code this pass", "The model returned no files, so this pass checks and repairs the app as it stands.");
@@ -1699,6 +1707,14 @@ No placeholders: where the brief does not give a detail, write realistic wording
         reasons.push(`the app barely uses the engine in ${engine.file}: it never calls ${engine.unused.join(", ")}`);
         todo.push(`drive the game with the engine in ${engine.file}: call ${engine.unused.join(", ")} from the app (the game loop, the controls, starting a level) so it really plays`);
       }
+    }
+    for (const unshown of unshownComponents(source, this.adoptedEngine)) {
+      const [component] = unshown.components;
+      const defaults = /export\s+const\s+(DEFAULT_[A-Z_]+)/.exec(Object.values(source).join("\n"))?.[1] ?? "settings";
+      reasons.push(`the playable game is never shown: no screen renders <${component} /> from ${unshown.file}`);
+      todo.push(
+        `show the real game: on the game screen render <${component} settings={${defaults}} onScore={(score) => ...} /> from ${unshown.file} (it is the whole game: canvas, frame loop, touch and keyboard), and remove any buttons that stand in for play`
+      );
     }
     if (missing.length > 0) {
       reasons.push(`the brief asks for ${missing.map((item) => `"${item.label}"`).join(", ")}, and nothing in the app's code has ${missing.length === 1 ? "it" : "them"}`);

@@ -147,6 +147,34 @@ export interface CompletenessResult {
 }
 
 /**
+ * How to make a dead button on a screen real, when the app switches screens
+ * with state: the live Pgame build's Home had `<button onClick={() => {}}>Play
+ * Game</button>` while App held `const [screen, setScreen] = useState<"home" |
+ * "menu" | "game" | …>` and rendered `<Home />` with nothing to call. "A
+ * button that does nothing" did not get it fixed; the exact wiring does.
+ */
+const wiring = (source: Record<string, string>, file: string, text: string): string => {
+  const component = path.basename(file).replace(/\.(t|j)sx?$/, "");
+  const label = /<button[^>]*on[A-Z]\w*=\{\s*\(\s*\)\s*=>\s*\{\s*\}\s*\}[^>]*>\s*([^<{]+?)\s*</.exec(text)?.[1]?.trim();
+  for (const [owner, ownerText] of Object.entries(source)) {
+    if (owner === file || !new RegExp(`<${component}\\b`).test(ownerText)) continue;
+    const screens = /const\s*\[\s*(\w+)\s*,\s*(set\w+)\s*\]\s*=\s*useState<([^>]+)>/.exec(ownerText);
+    if (!screens) continue;
+    const values = Array.from(screens[3].matchAll(/["']([^"']+)["']/g)).map((m) => m[1]);
+    if (values.length < 2) continue;
+    const words = (label ?? "").toLowerCase();
+    const target =
+      values.find((value) => value !== component.toLowerCase() && words.includes(value.toLowerCase())) ??
+      (/play|start|begin|new game/.test(words) ? values.find((value) => /game|play/.test(value)) : undefined) ??
+      values.find((value) => value !== component.toLowerCase() && value !== values[0]) ??
+      values[1];
+    const prop = `on${target.charAt(0).toUpperCase()}${target.slice(1).replace(/[^\w]/g, "")}`;
+    return `. ${owner} switches screens with ${screens[2]}, but renders <${component} /> with nothing to call: give ${component} a prop ${prop}: () => void, call it from the ${label ? `"${label}" ` : ""}button (onClick={${prop}}), and in ${owner} render <${component} ${prop}={() => ${screens[2]}("${target}")} />`;
+  }
+  return "";
+};
+
+/**
  * Code that only looks finished, found without asking a model — the local
  * reviewer signed off on all of these in one real build:
  *  - a placeholder comment ("// Render game logic here", "// TODO", "// implement …");
@@ -170,7 +198,7 @@ export const stubs = (source: Record<string, string>): string[] => {
     for (const match of text.matchAll(/function\s+(\w+)\s*\(\s*(\w+)[^)]*\)\s*(?::[^{]+)?\{\s*return\s+\2\s*;?\s*\}/g)) {
       found.push(`${file}: ${match[1]}() only returns what it is given`);
     }
-    if (/on[A-Z]\w*=\{\s*\(\s*\)\s*=>\s*\{\s*\}\s*\}/.test(text)) found.push(`${file} has a button or handler that does nothing ({() => {}})`);
+    if (/on[A-Z]\w*=\{\s*\(\s*\)\s*=>\s*\{\s*\}\s*\}/.test(text)) found.push(`${file} has a button or handler that does nothing ({() => {}})${wiring(source, file, text)}`);
   }
   // A screen that "navigates" by changing the address (`window.location.hash = '/game'`)
   // in an app that switches screens with state: nothing reads the address, so the
@@ -207,6 +235,28 @@ export const engineUse = (source: Record<string, string>, engineFiles: string[])
       const used = functions.filter((name) => new RegExp(`\\b${name}\\s*\\(`).test(others));
       return { file, used, unused: functions.filter((name) => !used.includes(name)) };
     });
+
+/**
+ * Components the build started with (GameBoard: the canvas, loop and
+ * controls) that no screen of the app renders. The engine calls itself from
+ * inside them, so "the engine is used" holds even when the app shows four
+ * buttons instead of the game; this is the check that does not.
+ */
+export const unshownComponents = (source: Record<string, string>, engineFiles: string[]): { file: string; components: string[] }[] => {
+  const app = Object.entries(source)
+    .filter(([file]) => !engineFiles.includes(file))
+    .map(([, text]) => text)
+    .join("\n");
+  return engineFiles
+    .filter((file) => file.endsWith(".tsx") && file in source)
+    .map((file) => ({
+      file,
+      components: Array.from(source[file].matchAll(/export\s+(?:default\s+)?(?:function\s+([A-Z]\w*)|const\s+([A-Z]\w*)\s*=)/g))
+        .map((match) => match[1] ?? match[2])
+        .filter((name) => !new RegExp(`<${name}\\b`).test(app))
+    }))
+    .filter((entry) => entry.components.length > 0);
+};
 
 /** The brief's pages and must-haves that never appear in the app, and how much app there is. */
 export const coverage = (brief: string, source: Record<string, string>, minLines?: number, engineFiles: string[] = []): CompletenessResult => {
