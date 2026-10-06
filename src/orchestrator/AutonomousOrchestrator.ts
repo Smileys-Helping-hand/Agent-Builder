@@ -1204,6 +1204,48 @@ ${lines}
    * (roughly 3.3 characters a token for code and English). Hosted models have
    * windows far larger than any prompt here.
    */
+  /** Marks a file the builder wrote itself; repairs leave such files as they are. */
+  static readonly BUILT_IN_MARK = "Written by the builder, not the model";
+
+  /**
+   * The game screen for an engine with a playable board: the board with the
+   * engine's own settings, and the score and state passed up. Null when the
+   * engine lacks what it needs (a board component, DEFAULT_SETTINGS, GameState).
+   */
+  static builtInGameScreen(engine: { file: string; text: string }[]): ((file: string) => string) | null {
+    const board = engine.find((e) => e.file.endsWith(".tsx") && /export\s+function\s+[A-Z]\w*/.test(e.text));
+    const rules = engine.find((e) => e.file.endsWith(".ts") && /export\s+const\s+DEFAULT_SETTINGS\b/.test(e.text) && /export\s+(interface|type)\s+GameState\b/.test(e.text));
+    if (!board || !rules) return null;
+    const boardName = /export\s+function\s+([A-Z]\w*)/.exec(board.text)![1];
+    const from = (file: string, target: string) => {
+      let rel = path.posix.relative(path.posix.dirname(file), target.replace(/\.tsx?$/, ""));
+      if (!rel.startsWith(".")) rel = `./${rel}`;
+      return rel;
+    };
+    return (file: string) => {
+      const name = path.basename(file, ".tsx");
+      return `/**
+ * The game itself: the tested board, playing with the engine's own settings.
+ * ${AutonomousOrchestrator.BUILT_IN_MARK}: every move, battle and score is the
+ * board's. Other screens follow the game through onScore and onChange.
+ */
+import { ${boardName} } from "${from(file, board.file)}";
+import { DEFAULT_SETTINGS, type GameState } from "${from(file, rules.file)}";
+
+export interface ${name}Props {
+  /** Called with the final score when a game is won or lost. */
+  onScore?: (score: number) => void;
+  /** Called whenever the game changes: score, lives, level, status. */
+  onChange?: (state: GameState) => void;
+}
+
+export default function ${name}({ onScore, onChange }: ${name}Props) {
+  return <${boardName} settings={DEFAULT_SETTINGS} onScore={onScore} onChange={onChange} />;
+}
+`;
+    };
+  }
+
   /** A planned logic file that would redo what a playable board does: input, controls, the loop, drawing, physics. */
   static duplicatesBoard(file: { path: string; purpose: string }): boolean {
     if (/\.test\./.test(file.path)) return false;
@@ -1491,6 +1533,20 @@ Answer with JSON only:
       return null;
     }
 
+    // With a playable board, the game screen is the board and nothing else, so
+    // the builder writes it: told and hinted, a 7B model still rebuilt every
+    // move and battle around the board (setHero(move(state))) in three RPG
+    // builds out of three. The plan gets one, with props the app can rely on.
+    const gameScreen = boards.length ? AutonomousOrchestrator.builtInGameScreen(engine.map((e) => ({ file: e.file, text: e.text }))) : null;
+    if (gameScreen) {
+      const existing = plan.find((file) => /\.tsx$/.test(file.path) && /^(Game|Play|Main)(Screen|Page|View)?$/.test(path.basename(file.path, ".tsx")));
+      const entry = existing ?? { path: "src/components/GameScreen.tsx", purpose: "", exports: [] as string[] };
+      if (!existing) plan.push(entry);
+      const name = path.basename(entry.path, ".tsx");
+      entry.purpose = "the game itself: renders the tested board (already written by the builder — use it as it is)";
+      entry.exports = [`default ${name}(props: { onScore?: (score: number) => void; onChange?: (state: GameState) => void })`];
+    }
+
     // Logic first, then screens, App.tsx, and tests last: each file is written
     // after the ones it is likely to import.
     const rank = (file: string) => (/\.test\.tsx?$/.test(file) ? 3 : file === "src/App.tsx" ? 2 : /\.tsx$/.test(file) ? 1 : 0);
@@ -1510,6 +1566,11 @@ The plan for the whole app:
 ${planText}
 `;
     for (const [index, file] of plan.entries()) {
+      if (gameScreen && /^(Game|Play|Main)(Screen|Page|View)?$/.test(path.basename(file.path, ".tsx")) && file.path.endsWith(".tsx")) {
+        written[file.path] = gameScreen(file.path);
+        this.emit("iteration-status", { iteration, status: "writing", attempt: index + 1 });
+        continue;
+      }
       const others = Object.entries(written)
         .map(([name, text]) => (text.length > 6000 ? `FILE: ${name} (exports: ${CodeGuard.exportSignatures(text).join("; ")})` : `FILE: ${name}\n\`\`\`\n${text}\n\`\`\``))
         .join("\n\n");
@@ -1919,6 +1980,12 @@ Rules that keep this build passing its checks (install, typecheck, build, tests)
       try {
         before = fs.readFileSync(path.join(this.workspace.root, file), "utf8");
       } catch {
+        continue;
+      }
+      // A file the builder wrote itself (the game screen around a board) stays as it is.
+      if (before.includes(AutonomousOrchestrator.BUILT_IN_MARK) && files[file] !== before) {
+        files[file] = before;
+        fragments.push(`• ${file}: written by the builder (it renders the tested board), so it stays as it is — change the screens around it instead.`);
         continue;
       }
       const problem = CodeGuard.fragmentProblem(this.workspace.root, file, before, files[file]);

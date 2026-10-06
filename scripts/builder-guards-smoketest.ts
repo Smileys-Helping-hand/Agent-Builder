@@ -369,6 +369,19 @@ assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/components/Game
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/components/CharacterSheet.tsx", purpose: "hero stats" }), false, "other screens stay");
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/components/HallOfHeroes.tsx", purpose: "high scores" }), false);
 
+// With a playable board, the builder writes the game screen itself: the board, nothing else.
+const screenFor = AutonomousOrchestrator.builtInGameScreen([
+  { file: "src/engine/game.ts", text: "export interface GameState { score: number }\nexport const DEFAULT_SETTINGS = {};\n" },
+  { file: "src/engine/play.tsx", text: "export function GameBoard() { return null; }\n" }
+]);
+assert.ok(screenFor, "an engine with a board, settings and a state gets a built-in game screen");
+const builtScreen = screenFor!("src/components/GameScreen.tsx");
+assert.match(builtScreen, /import \{ GameBoard \} from "\.\.\/engine\/play";/);
+assert.match(builtScreen, /import \{ DEFAULT_SETTINGS, type GameState \} from "\.\.\/engine\/game";/);
+assert.match(builtScreen, /<GameBoard settings=\{DEFAULT_SETTINGS\} onScore=\{onScore\} onChange=\{onChange\} \/>/);
+assert.ok(builtScreen.includes(AutonomousOrchestrator.BUILT_IN_MARK), "marked, so repairs leave it alone");
+assert.equal(AutonomousOrchestrator.builtInGameScreen([{ file: "src/engine/game.ts", text: "export const x = 1;\n" }]), null, "no board, no built-in screen");
+
 // A carried-on build knows how its predecessor ended, so its first pass repairs instead of rewriting.
 assert.equal(AutonomousOrchestrator.inheritedBlocker("Build Pgame.\n\nThis project was started by an earlier build and is already in the folder.\nCarry on.\n\nWhen it last ran, the typecheck check failed with:\nsrc/a.ts(1,1): error"), "typecheck");
 assert.equal(AutonomousOrchestrator.inheritedBlocker("Build Pgame.\n\nWhen it last ran, the test check failed with:\n1 failed"), undefined, "a failing test is not a reason to stop adding");
