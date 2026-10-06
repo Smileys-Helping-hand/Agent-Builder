@@ -2,7 +2,7 @@ import { EventEmitter } from "events";
 import { CodeGuard } from "./CodeGuard.js";
 import { AutoFix } from "./AutoFix.js";
 import { TypeFixer } from "./TypeFixer.js";
-import { appSource, coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, reviewPrompt, stubs, unshownComponents } from "./Completeness.js";
+import { appSource, coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, reviewPrompt, stubs, unreachableScreens, unshownComponents } from "./Completeness.js";
 import { applyFacts, readFacts, sampleFactsLeft } from "./Tailoring.js";
 import { ExemplarMemory, type Exemplar } from "../learning/ExemplarMemory.js";
 import { GameModeOnError } from "../utils/GameMode.js";
@@ -1836,6 +1836,16 @@ No placeholders: where the brief does not give a detail, write realistic wording
         reasons.push(`the app barely uses the engine in ${engine.file}: it never calls ${engine.unused.join(", ")}`);
         todo.push(`drive the game with the engine in ${engine.file}: call ${engine.unused.join(", ")} from the app (the game loop, the controls, starting a level) so it really plays`);
       }
+    }
+    const unreachable = unreachableScreens(source);
+    if (unreachable.length > 0) {
+      const named = unreachable.map((u) => `${u.screen} (nothing calls ${u.handler})`).join(", ");
+      reasons.push(`these screens can never be opened: ${named}`);
+      todo.push(
+        `make every screen reachable: ${unreachable
+          .map((u) => `a button that calls ${u.handler} (for the ${u.screen} screen)`)
+          .join(" and ")}, e.g. on the title or menu screen (pass the handlers to it as props and render a button for each), and give every screen a Back button to the title`
+      );
     }
     for (const unshown of unshownComponents(source, this.adoptedEngine)) {
       const [component] = unshown.components;

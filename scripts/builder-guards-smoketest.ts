@@ -16,7 +16,7 @@ import { AutoFix } from "../src/orchestrator/AutoFix.js";
 import { TypeFixer } from "../src/orchestrator/TypeFixer.js";
 import { Verifier } from "../src/orchestrator/Verifier.js";
 import { applyFacts, readFacts, sampleFactsLeft } from "../src/orchestrator/Tailoring.js";
-import { coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, requirementsFromBrief, stubs, unshownComponents } from "../src/orchestrator/Completeness.js";
+import { coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, requirementsFromBrief, stubs, unreachableScreens, unshownComponents } from "../src/orchestrator/Completeness.js";
 import { candidates, projectKey } from "../src/orchestrator/SelfHeal.js";
 import type { BuildView } from "../src/orchestrator/BuildService.js";
 
@@ -266,6 +266,31 @@ const rpgUse = engineUse(
 );
 assert.deepEqual(rpgUse[0].used.sort(), ["attack", "flee", "newGame"]);
 assert.deepEqual(rpgUse[0].unused, [], "random and enterFloor are the engine's own helpers");
+
+// Screens nothing can switch to are named; a screen reached another way is not.
+const screensApp = [
+  "const App = () => {",
+  "  const [screen, setScreen] = useState<'title' | 'game' | 'sheet' | 'hall'>('title');",
+  "  const handlePlay = () => {",
+  "    setScreen('game');",
+  "  };",
+  "  const handleSheet = () => {",
+  "    setScreen('sheet');",
+  "  };",
+  "  const handleHall = () => {",
+  "    setScreen('hall');",
+  "  };",
+  "  const goHall = () => {",
+  "    setScreen('hall');",
+  "  };",
+  "  if (screen === 'title') return <Title onPlay={handlePlay} onScores={goHall} />;",
+  "  return null;",
+  "};",
+  ""
+].join("\n");
+assert.deepEqual(unreachableScreens({ "src/App.tsx": screensApp }), [{ screen: "sheet", handler: "handleSheet" }], "the hall is reached through goHall; the sheet never is");
+assert.deepEqual(unreachableScreens({ "src/App.tsx": screensApp.replace("onScores={goHall}", "onScores={goHall} onSheet={handleSheet}") }), [], "every screen reachable");
+assert.deepEqual(unreachableScreens({ "src/Other.tsx": "x" }), [], "no App, nothing to say");
 assert.deepEqual(engineUse({ "src/engine/game.ts": "export function attack() {}\n", "src/App.tsx": "import { attack } from './engine/game';\n" }, ["src/engine/game.ts"])[0].unused, ["attack"], "an import alone is not use");
 assert.equal(coverage("x", shipped, undefined, ["src/game.ts"]).lines < coverage("x", shipped).lines, true, "the engine's own lines are not the app's");
 

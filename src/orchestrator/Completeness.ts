@@ -246,6 +246,36 @@ export const engineUse = (source: Record<string, string>, engineFiles: string[])
  * inside them, so "the engine is used" holds even when the app shows four
  * buttons instead of the game; this is the check that does not.
  */
+/**
+ * Screens App.tsx can switch to but nothing ever switches it to: an RPG build
+ * scored 100 with `handleCharacterSheet` and `handleHallOfHeroes` written and
+ * never handed to a button, so two of the brief's four pages could not be
+ * opened. A handler that sets the screen and is never used, for a screen no
+ * other code reaches, is a page nobody can get to.
+ */
+export const unreachableScreens = (source: Record<string, string>): { screen: string; handler: string }[] => {
+  const app = source["src/App.tsx"];
+  if (!app) return [];
+  const target = (text: string) =>
+    Array.from(text.matchAll(/\bscreen\s*:\s*['"](\w+)['"]|setScreen\(\s*['"](\w+)['"]|setScreen\(\s*\w+\.(\w+)\s*\)/g)).map((match) => (match[1] ?? match[2] ?? match[3]).toLowerCase());
+  const handlers: { name: string; start: number; end: number; targets: string[] }[] = [];
+  for (const match of app.matchAll(/const\s+(\w+)\s*=\s*(?:useCallback\(\s*)?(?:\([^)]*\)|\w+)\s*(?::[^=]+)?=>\s*\{/g)) {
+    const start = match.index!;
+    const close = /\n\s*\}\s*(?:,\s*\[[^\]]*\]\s*\))?\s*;/.exec(app.slice(start));
+    const end = close ? start + close.index + close[0].length : app.length;
+    handlers.push({ name: match[1], start, end, targets: target(app.slice(start, end)) });
+  }
+  const unused = handlers.filter((h) => /^[a-z]/.test(h.name) && h.targets.length > 0 && (app.match(new RegExp(`\\b${h.name}\\b`, "g")) ?? []).length === 1);
+  // Everything that can still switch screens: the app without the unused handlers, and every other file.
+  let rest = app;
+  for (const h of [...unused].sort((a, b) => b.start - a.start)) rest = rest.slice(0, h.start) + rest.slice(h.end);
+  const reached = new Set([...target(rest), ...Object.entries(source).filter(([file]) => file !== "src/App.tsx").flatMap(([, text]) => target(text))]);
+  // The first screen shown counts as reached.
+  const first = /useState(?:<[^>]*>)?\(\s*(?:\{\s*screen\s*:\s*)?['"](\w+)['"]/.exec(app)?.[1]?.toLowerCase();
+  if (first) reached.add(first);
+  return unused.flatMap((h) => h.targets.filter((screen) => !reached.has(screen)).map((screen) => ({ screen, handler: h.name })));
+};
+
 export const unshownComponents = (source: Record<string, string>, engineFiles: string[]): { file: string; components: string[] }[] => {
   const app = Object.entries(source)
     .filter(([file]) => !engineFiles.includes(file))
