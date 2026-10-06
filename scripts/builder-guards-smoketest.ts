@@ -362,6 +362,9 @@ assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/inputHandle
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/gameLoop.ts", purpose: "runs the frame loop" }), true);
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/storage.ts", purpose: "save and load the game in localStorage" }), false);
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/progression.ts", purpose: "unlock levels and track high scores" }), false);
+assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/gameLogic.ts", purpose: "handles game events and updates the game state" }), true, "a reducer around the board's own actions");
+assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/combat.ts", purpose: "turn-based battle rules" }), true);
+assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/gameSave.ts", purpose: "save and load the hero and high scores" }), false, "saving stays");
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/components/Game.tsx", purpose: "the game screen with the canvas" }), false, "screens stay: the game screen is where the board goes");
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/components/GameScreen.tsx", purpose: "the battle and the map" }), false);
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/components/BattleScreen.tsx", purpose: "turn-based battles" }), true, "the board has its own battle panel");

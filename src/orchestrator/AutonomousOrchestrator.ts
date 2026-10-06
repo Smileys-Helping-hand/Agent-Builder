@@ -1259,7 +1259,10 @@ export default function ${name}({ onScore, onChange }: ${name}Props) {
       return /^(Battle|Combat|Fight|Arena|Controls?|GameControls|Dpad|DPad|Joystick|Hud|HUD|Canvas|Board|GameBoard|Map|MapView|Dungeon|Field|Playfield)(Screen|Panel|View|Page)?$/.test(name);
     }
     if (!/\.ts$/.test(file.path)) return false;
-    return /\b(input|controls?|keyboard|touch|pointer|game ?loop|frame loop|render(er|ing)?|draw(ing)?|canvas|physics|collisions?|paddle|ball movement)\b/i.test(
+    // Also a reducer over the game's events or actions, battles, turns or
+    // movement: an RPG build's gameLogic.ts dispatched "moved"/"battle" events
+    // back into the engine and clashed with it. Saving, scores and progression stay.
+    return /\b(input|controls?|keyboard|touch|pointer|game ?loop|frame loop|render(er|ing)?|draw(ing)?|canvas|physics|collisions?|paddle|ball movement|reducer|dispatch(es|ing)?|update(s)? the game( state)?|game state updates?|handles? (game |player )?(events|actions|moves)|process(es)? (player )?actions|battles?|combat|turns?|movement)\b/i.test(
       `${path.basename(file.path).replace(/([a-z])([A-Z])/g, "$1 $2")} ${file.purpose}`
     );
   }
