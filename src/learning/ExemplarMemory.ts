@@ -384,7 +384,7 @@ export const ExemplarMemory = {
       const playable = components.length
         ? `\nThe game itself is already built and plays (canvas, frame loop, touch, mouse and keyboard): ${components
             .map((c) => `${c.name} from "${c.module}"`)
-            .join(", ")}. The game screen MUST render it, e.g. <${components[0].name} settings={${defaults[0] ?? "settings"}} onScore={...} />. Do not write your own game loop or canvas, and never stand in for play with buttons that fire game events.`
+            .join(", ")}. The game screen MUST render it, e.g. <${components[0].name} settings={${defaults[0] ?? "settings"}} onScore={...} />. It already handles every player action (moving, shooting, building, fighting — whatever this game has) and keeps the game's state itself: do not write your own game loop or canvas, do not call the engine's actions from a screen, do not keep a copy of the game state, and never stand in for play with buttons that fire game events. To show the score or stats on other screens, use its onScore={(score) => …} and onChange={(state) => …} props.`
         : "";
       return `Already in your project, complete, tested and working: ${adopted.join(", ")} (the engine from our
 "${exemplar.title}"). Build this app ON it: import from ${modules} and write the screens, navigation,

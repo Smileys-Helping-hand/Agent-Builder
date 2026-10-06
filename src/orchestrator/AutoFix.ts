@@ -484,7 +484,7 @@ export const AutoFix = {
           .map((name) => `- ${name}: ${SERVER_ONLY.get(name)}`)
           .join("\n")}\n`
       : "";
-    return missing + absentText + serverText + (await AutoFix.nameClashes(root)) + (await AutoFix.duplicateTypes(root, errorOutput)) + (await AutoFix.literalsOutsideUnion(root, errorOutput));
+    return missing + absentText + serverText + (await AutoFix.nameClashes(root)) + (await AutoFix.duplicateTypes(root, errorOutput)) + (await AutoFix.literalsOutsideUnion(root, errorOutput)) + (await AutoFix.engineActionsInScreens(root, errorOutput));
   },
 
   /**
@@ -508,6 +508,27 @@ export const AutoFix = {
       lines.push(`- ${name} is declared in ${files.join(" and ")}: keep only the one in ${keep}, delete it from ${others.join(", ")}, and import it from ${keep} everywhere.`);
     }
     return lines.length ? `\nThe same type is declared twice, so values of one are rejected where the other is expected:\n${lines.join("\n")}\n` : "";
+  },
+
+  /**
+   * A screen that drives the engine itself: `setGameState((s) => attack(s))`
+   * when attack(state) changes the state in place and returns what happened.
+   * The board the build started with already does all of it; the screen
+   * should render it, not redo it (a live RPG build rebuilt every action and
+   * turned finding gold into newGame()).
+   */
+  async engineActionsInScreens(root: string, errorOutput: string): Promise<string> {
+    const files = Array.from(
+      new Set(Array.from(errorOutput.matchAll(/([\w./\\-]+\.tsx)\(\d+,\d+\): error TS2345: Argument of type '\(state: \w+\) => \w*Event\[\]/g)).map((m) => posix(m[1])))
+    );
+    if (files.length === 0) return "";
+    const board = (await listFiles(path.join(root, "src", "engine")).catch(() => [] as string[])).find((file) => file.endsWith(".tsx"));
+    const name = board ? /export\s+function\s+([A-Z]\w*)/.exec(await fs.readFile(board, "utf8"))?.[1] : undefined;
+    return `\nThe engine's actions (move, attack, launch, …) change the game state in place and return what happened (a list of events); they are not React state updaters, so setState(action) is always wrong.${
+      name
+        ? ` ${name} from src/engine/${path.basename(board!)} already calls them for every player action: in ${files.join(", ")}, delete that handling and render <${name} settings={DEFAULT_SETTINGS} onScore={…} onChange={(state) => …} /> instead.`
+        : ""
+    }\n`;
   },
 
   /**
