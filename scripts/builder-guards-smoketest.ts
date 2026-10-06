@@ -694,6 +694,46 @@ const homeHint = await AutoFix.fieldHomes(homes, "src/a.ts(1,1): error TS2339: P
 assert.match(homeHint, /score is a field of GameState \(src\/engine\/game\.ts\), not of Hero/, homeHint);
 assert.equal(await AutoFix.fieldHomes(homes, "src/a.ts(1,1): error TS2339: Property 'mana' does not exist on type 'Hero'.\n"), "", "nothing to say when no engine type has it");
 
+// What the engine already makes, named when a build makes its own badly.
+const made = fs.mkdtempSync(path.join(os.tmpdir(), "ab-made-"));
+fs.mkdirSync(path.join(made, "src", "engine"), { recursive: true });
+fs.mkdirSync(path.join(made, "src", "lib"), { recursive: true });
+fs.writeFileSync(path.join(made, "src/engine/game.ts"), "export interface Hero {\n  name: string;\n  x: number;\n}\n\nexport interface GameState {\n  hero: Hero;\n}\n\nexport const DEFAULT_SETTINGS = {};\nexport function newGame(settings: object): GameState { return { hero: { name: '', x: 0 } }; }\n");
+fs.writeFileSync(path.join(made, "src/lib/logic.test.ts"), "import { loadScores } from '../engine/scores';\nvi.spyOn(loadScores, 'loadScores');\n");
+const madeHint = await AutoFix.engineMadeValues(
+  made,
+  "src/lib/logic.test.ts(2,28): error TS2345: Argument of type '\"loadScores\"' is not assignable to parameter of type 'never'.\nsrc/App.tsx(12,42): error TS2345: Argument of type '{ name: string; }' is not assignable to parameter of type 'Hero | (() => Hero)'.\n  Type '{ name: string; }' is missing the following properties from type 'Hero': x\n"
+);
+assert.match(madeHint, /Do not spy on or mock the engine's functions/, madeHint);
+assert.match(madeHint, /A whole Hero comes from the engine: newGame\(DEFAULT_SETTINGS\)\.hero/, madeHint);
+assert.equal(await AutoFix.engineMadeValues(made, "src/a.ts(1,1): error TS2304: Cannot find name 'x'.\n"), "", "no hint without the pattern");
+
+// Fields a type cannot hold are dropped; a test's object a field short is filled in.
+const extra = fs.mkdtempSync(path.join(os.tmpdir(), "ab-extra-"));
+fs.mkdirSync(path.join(extra, "src"));
+fs.writeFileSync(path.join(extra, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", noEmit: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(
+  path.join(extra, "src/game.ts"),
+  [
+    'export interface Battle { name: string; hp: number; xp: number; gold: number; boss: boolean; kind: "slime" | "orc"; log: string[] }',
+    "export interface GameState { score: number; battle: Battle | null }",
+    "export function addScore(entry: { name: string; score: number }): number { return entry.score; }",
+    "export function lose(state: GameState, scores: number[]): GameState {",
+    "  addScore({ name: 'Ana', score: 3, at: 'now' });",
+    "  return { ...state, scores, place: 1 };",
+    "}",
+    ""
+  ].join("\n")
+);
+fs.writeFileSync(path.join(extra, "src/game.test.ts"), "import type { GameState } from './game';\nexport const state: GameState = { score: 0, battle: { name: 'Slime', hp: 3, boss: false } };\n");
+const extraNotes = TypeFixer.run(extra);
+const extraGame = fs.readFileSync(path.join(extra, "src/game.ts"), "utf8");
+assert.match(extraGame, /addScore\(\{ name: 'Ana', score: 3 \}\)/, extraGame);
+assert.match(extraGame, /return \{ \.\.\.state \};/, extraGame);
+assert.match(fs.readFileSync(path.join(extra, "src/game.test.ts"), "utf8"), /boss: false, xp: 0, gold: 0, kind: "slime", log: \[\] \}/);
+assert.ok(extraNotes.some((note) => /dropped scores/.test(note)) && extraNotes.some((note) => /missing xp, gold, kind, log/.test(note)), extraNotes.join(" | "));
+assert.deepEqual(TypeFixer.run(extra), [], "nothing left to fix");
+
 // Screens kept in a type that means something else get named, with the fix.
 const screens = fs.mkdtempSync(path.join(os.tmpdir(), "ab-screens-"));
 fs.mkdirSync(path.join(screens, "src", "engine"), { recursive: true });

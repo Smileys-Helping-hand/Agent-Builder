@@ -60,8 +60,8 @@ export function loadScores(key: string = SCORES_KEY): ScoreEntry[] {
  * Add a finished game's score and keep the best MAX_SCORES. Returns the new
  * table and the entry's place in it (1 = top), or 0 when it did not make it.
  */
-export function addScore(entry: { name: string; score: number; detail?: string }, key: string = SCORES_KEY): { scores: ScoreEntry[]; place: number } {
-  const added: ScoreEntry = { name: entry.name.trim() || "Player", score: Math.round(entry.score), detail: entry.detail, at: new Date().toISOString() };
+export function addScore(entry: { name: string; score: number; detail?: string; at?: string }, key: string = SCORES_KEY): { scores: ScoreEntry[]; place: number } {
+  const added: ScoreEntry = { name: entry.name.trim() || "Player", score: Math.round(entry.score), detail: entry.detail, at: entry.at ?? new Date().toISOString() };
   const scores = [...loadScores(key), added].sort((a, b) => b.score - a.score).slice(0, MAX_SCORES);
   try {
     storage().setItem(key, JSON.stringify(scores));

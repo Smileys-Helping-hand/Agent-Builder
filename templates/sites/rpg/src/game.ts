@@ -69,6 +69,9 @@ export interface Battle {
   maxHp: number;
   attack: number;
   defence: number;
+  /** What beating it earns. */
+  xp: number;
+  gold: number;
   boss: boolean;
 }
 
@@ -244,7 +247,7 @@ export function move(state: GameState, dx: number, dy: number): GameEvent[] {
   if (tile === undefined || tile === "#") return ["blocked"];
   const monster = state.settings.monsters[tile];
   if (monster) {
-    state.battle = { key: tile, x, y, name: monster.name, hp: monster.hp, maxHp: monster.hp, attack: monster.attack, defence: monster.defence, boss: Boolean(monster.boss) };
+    state.battle = { key: tile, x, y, name: monster.name, hp: monster.hp, maxHp: monster.hp, attack: monster.attack, defence: monster.defence, xp: monster.xp, gold: monster.gold, boss: Boolean(monster.boss) };
     state.status = "battle";
     note(state, `A ${monster.name} blocks the way!`);
     return ["battle"];

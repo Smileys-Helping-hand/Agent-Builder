@@ -484,7 +484,7 @@ export const AutoFix = {
           .map((name) => `- ${name}: ${SERVER_ONLY.get(name)}`)
           .join("\n")}\n`
       : "";
-    return missing + absentText + serverText + (await AutoFix.nameClashes(root)) + (await AutoFix.duplicateTypes(root, errorOutput)) + (await AutoFix.literalsOutsideUnion(root, errorOutput)) + (await AutoFix.engineActionsInScreens(root, errorOutput)) + (await AutoFix.fieldHomes(root, errorOutput));
+    return missing + absentText + serverText + (await AutoFix.nameClashes(root)) + (await AutoFix.duplicateTypes(root, errorOutput)) + (await AutoFix.literalsOutsideUnion(root, errorOutput)) + (await AutoFix.engineActionsInScreens(root, errorOutput)) + (await AutoFix.fieldHomes(root, errorOutput)) + (await AutoFix.engineMadeValues(root, errorOutput));
   },
 
   /**
@@ -508,6 +508,43 @@ export const AutoFix = {
       lines.push(`- ${name} is declared in ${files.join(" and ")}: keep only the one in ${keep}, delete it from ${others.join(", ")}, and import it from ${keep} everywhere.`);
     }
     return lines.length ? `\nThe same type is declared twice, so values of one are rejected where the other is expected:\n${lines.join("\n")}\n` : "";
+  },
+
+  /**
+   * Two an RPG build carried through every repair, both settled by saying
+   * what the engine already offers:
+   *  - `vi.spyOn(loadScores, "loadScores")`: spying on a property of a
+   *    function the test imported by name ("parameter of type 'never'");
+   *  - `useState<Hero>({ ...DEFAULT_SETTINGS.hero })`: a Hero built by hand
+   *    from the starting stats, short of x, y, maxHp and level, where
+   *    newGame(...).hero is a whole one.
+   */
+  async engineMadeValues(root: string, errorOutput: string): Promise<string> {
+    const lines: string[] = [];
+    const spied = new Set<string>();
+    for (const file of (await listFiles(path.join(root, "src"))).filter((full) => TEST_FILE.test(posix(full)))) {
+      const text = await fs.readFile(file, "utf8");
+      for (const match of text.matchAll(/vi\.spyOn\(\s*(\w+)\s*,\s*['"](\w+)['"]/g)) {
+        const named = new RegExp(`import\\s*\\{[^}]*\\b${match[1]}\\b[^}]*\\}\\s*from`).test(text);
+        if (named && new RegExp(`'"${match[2]}"'[^\\n]*'never'|Property '${match[2]}' does not exist on type '\\(`).test(errorOutput)) spied.add(match[1]);
+      }
+    }
+    if (spied.size) {
+      lines.push(
+        `- vi.spyOn(${Array.from(spied)[0]}, "…") spies on a property of an object, and ${Array.from(spied).join(", ")} ${spied.size > 1 ? "are functions" : "is a function"} imported by name. Do not spy on or mock the engine's functions: they work in tests as they are (the score table keeps scores in memory there). Call them and check what they return, e.g. expect(loadScores()[0].score).toBe(100).`
+      );
+    }
+    const engineFiles = (await listFiles(path.join(root, "src", "engine")).catch(() => [] as string[])).filter((file) => /\.ts$/.test(file));
+    const engineText = (await Promise.all(engineFiles.map((file) => fs.readFile(file, "utf8")))).join("\n");
+    const state = /export\s+interface\s+GameState\s*\{([\s\S]*?)\n\}/.exec(engineText)?.[1] ?? "";
+    const short = new Set(Array.from(errorOutput.matchAll(/is missing the following propert(?:y|ies) from type '(\w+)'/g)).map((match) => match[1]));
+    for (const type of short) {
+      const field = new RegExp(`^\\s*(\\w+)\\??\\s*:\\s*${type}\\b`, "m").exec(state)?.[1];
+      if (!field || !/export\s+function\s+newGame\b/.test(engineText)) continue;
+      const defaults = /export\s+const\s+(DEFAULT_\w+)/.exec(engineText)?.[1] ?? "settings";
+      lines.push(`- A whole ${type} comes from the engine: newGame(${defaults}).${field} (or state.${field} from the game). Do not build a ${type} by hand from the settings: the settings only hold its starting values, not every field a ${type} needs.`);
+    }
+    return lines.length ? `\nThe engine already makes these; use it:\n${lines.join("\n")}\n` : "";
   },
 
   /**

@@ -560,6 +560,42 @@ export const TypeFixer = {
               notes.push(`${rel}:${line}: removed an empty stand-in for ${name}; the real one is in ${path.relative(root, real.fileName).split(path.sep).join("/")}`);
               continue;
             }
+
+            // A test's hand-made object a field or two short ({ …a battle without
+            // xp and gold }): the missing fields get plain values (0, "", false, [],
+            // the first allowed word). Only in tests, and only for plain fields:
+            // app code that leaves a field out is the model's to fix.
+            const literal = value && ts.isObjectLiteralExpression(value) ? value : at && ts.isObjectLiteralExpression(at) ? at : undefined;
+            if (literal && source && checker && /\.test\.tsx?$/.test(fileName)) {
+              const contextual = checker.getContextualType(literal);
+              const expected = contextual ? checker.getNonNullableType(contextual) : undefined;
+              const given = new Set(literal.properties.map((property) => property.name?.getText(source)));
+              const plain = (type: import("typescript").Type): string | undefined => {
+                if (type.isUnion()) {
+                  if (type.types.some((part) => part.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined))) return "null";
+                  const first = type.types.find((part) => part.isStringLiteral() || part.isNumberLiteral());
+                  if (first) return JSON.stringify((first as import("typescript").LiteralType).value);
+                  if (type.types.every((part) => part.flags & ts.TypeFlags.BooleanLiteral)) return "false";
+                  return undefined;
+                }
+                if (type.flags & ts.TypeFlags.Number) return "0";
+                if (type.flags & ts.TypeFlags.String) return '""';
+                if (type.flags & (ts.TypeFlags.Boolean | ts.TypeFlags.BooleanLiteral)) return "false";
+                if (type.isStringLiteral() || type.isNumberLiteral()) return JSON.stringify(type.value);
+                if (checker.isArrayType(type)) return "[]";
+                return undefined;
+              };
+              const missing = (expected?.getProperties() ?? []).filter((property) => !given.has(property.name) && !(property.flags & ts.SymbolFlags.Optional));
+              const filled = missing.map((property) => ({ name: property.name, value: plain(checker.getTypeOfSymbolAtLocation(property, literal)) }));
+              if (filled.length > 0 && filled.length <= 6 && filled.every((field) => field.value !== undefined)) {
+                const list = literal.properties;
+                const after = list.length ? list[list.length - 1].getEnd() : literal.getStart(source) + 1;
+                const lead = list.length ? ", " : " ";
+                add(path.resolve(fileName), { start: after, end: after, text: `${lead}${filled.map((field) => `${field.name}: ${field.value}`).join(", ")}` });
+                notes.push(`${rel}:${line}: gave the test's object its missing ${filled.map((field) => field.name).join(", ")}`);
+                continue;
+              }
+            }
           }
 
           // { width: 70, radius: 6 } where the type says w and r: an object literal's
@@ -582,6 +618,43 @@ export const TypeFixer = {
             if (expected && written.length > 1 && /^[A-Za-z_$][\w$]*$/.test(written) && expected.getProperty(short) && !taken.has(short)) {
               add(path.resolve(fileName), { start, end, text: short });
               notes.push(`${rel}:${line}: ${written} is called ${short} here`);
+              continue;
+            }
+          }
+
+          // `return { ...state, scores, place }` or addScore({ …, at }) where the
+          // type has no such field: an RPG build carried both through every
+          // repair. The type cannot hold the value, so the property goes; code
+          // that reads it back fails on its own line, where it can be seen. A
+          // near-miss spelling ("Did you mean 'score'?") goes only when the
+          // right field is already given (by a spread or by name): otherwise the
+          // spelling fix is the better one.
+          if (diagnostic.code === 2353 || diagnostic.code === 2561) {
+            const program = service.getProgram();
+            const source = program?.getSourceFile(fileName);
+            let property: import("typescript").PropertyAssignment | import("typescript").ShorthandPropertyAssignment | undefined;
+            const visit = (node: import("typescript").Node) => {
+              if (node.getStart(source) <= start && node.getEnd() >= end) {
+                if ((ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) && node.name.getStart(source) === start) property = node;
+                ts.forEachChild(node, visit);
+              }
+            };
+            if (source) ts.forEachChild(source, visit);
+            const literal = property && ts.isObjectLiteralExpression(property.parent) ? property.parent : undefined;
+            const meant = /Did you mean to write '([^']+)'/.exec(ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"))?.[1];
+            const given = Boolean(
+              literal && meant && literal.properties.some((other) => ts.isSpreadAssignment(other) || other.name?.getText(source) === meant)
+            );
+            if (property && literal && source && (diagnostic.code === 2353 || given)) {
+              const list = literal.properties;
+              const index = list.indexOf(property);
+              let from = property.getFullStart();
+              let to = property.getEnd();
+              if (index < list.length - 1) to = list[index + 1].getFullStart();
+              else if (index > 0) from = list[index - 1].getEnd();
+              else if (list.hasTrailingComma) to = text.indexOf(",", to) + 1;
+              add(path.resolve(fileName), { start: from, end: to, text: "" });
+              notes.push(`${rel}:${line}: dropped ${property.name.getText(source)}, which the type has no field for`);
               continue;
             }
           }
