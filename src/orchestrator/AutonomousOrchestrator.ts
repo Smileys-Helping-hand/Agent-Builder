@@ -1865,7 +1865,15 @@ No placeholders: where the brief does not give a detail, write realistic wording
     // for one thing, it builds that thing properly. So: one at a time.
     todo.unshift(...missing.map((item) => `"${item.label}" from the brief, as a real, working part of the app`));
     if (lines < minLines && todo.length === 0) {
-      todo.push("the app's main feature, done properly: real rules, states and feedback (levels, rewards, winning and losing for a game; validation and saved records for a booking app), not a counter or a list");
+      // With a playable board the game itself is done and tested: told to build
+      // "real rules, levels, rewards", a model rewrote the engine's battles
+      // beside it. What is thin is everything around the game.
+      const board = this.adoptedEngine.some((file) => /\.tsx$/.test(file));
+      todo.push(
+        board
+          ? "the screens around the game, done properly (the game itself is already built and tested: do not rewrite its rules, battles, moves or loop): show the real numbers from the game's onScore and onChange (the score, the hero or player and their stats, the level, wave or floor), a results screen when it is won or lost that saves the score with the engine's score table (addScore), a high-score table from loadScores(), and a how-to-play section on the title screen"
+          : "the app's main feature, done properly: real rules, states and feedback (levels, rewards, winning and losing for a game; validation and saved records for a booking app), not a counter or a list"
+      );
     }
     const passed = reasons.length === 0;
     return {
