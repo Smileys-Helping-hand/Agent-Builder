@@ -309,9 +309,20 @@ export const coverage = (brief: string, source: Record<string, string>, minLines
 };
 
 /** The prompt for the reviewer: the brief and the code, and a strict answer format. */
-export const reviewPrompt = (brief: string, source: Record<string, string>, budget = 14_000): string => {
+export const reviewPrompt = (brief: string, source: Record<string, string>, budget = 14_000, engineFiles: string[] = []): string => {
   let used = 0;
+  // The engine the app started from is described, not shown: a long engine
+  // pushed past the budget left the reviewer sure an RPG "has no turn-based
+  // battles" that its game.ts tested and its board played.
+  const engine = engineFiles
+    .filter((file) => file in source)
+    .map((file) => {
+      const about = (/^\s*\/\*\*([\s\S]*?)\*\//.exec(source[file])?.[1] ?? "").replace(/^\s*\* ?/gm, "").replace(/\s+/g, " ").trim();
+      const names = Array.from(source[file].matchAll(/export\s+(?:async\s+)?(?:function|const)\s+(\w+)/g)).map((match) => match[1]);
+      return `- ${file}: ${about || "part of the engine"} (exports ${names.join(", ")})`;
+    });
   const files = Object.entries(source)
+    .filter(([file]) => !engine.length || !engineFiles.includes(file))
     .sort(([a], [b]) => (a.endsWith("App.tsx") ? -1 : b.endsWith("App.tsx") ? 1 : a.localeCompare(b)))
     .map(([file, content]) => {
       if (used >= budget) return `FILE: ${file} (not shown)`;
@@ -325,7 +336,7 @@ export const reviewPrompt = (brief: string, source: Record<string, string>, budg
 What they asked for:
 ${brief.split(/\nWhat our research confirmed/i)[0].slice(0, 3500)}
 
-The app's code:
+${engine.length ? `Already in the app, complete and tested (what these do is done: do not list it as missing):\n${engine.join("\n")}\n\n` : ""}The app's code:
 ${files}
 
 List only the things the brief clearly asks for that this code does NOT really do. A stub, a hard-coded

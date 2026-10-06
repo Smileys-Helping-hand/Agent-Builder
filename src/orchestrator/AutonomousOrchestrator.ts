@@ -1870,7 +1870,7 @@ No placeholders: where the brief does not give a detail, write realistic wording
       let gaps = this.lastReview && head && this.lastReview.head === head ? this.lastReview.missing : null;
       if (!gaps) {
         try {
-          gaps = parseReview(await ModelRouter.generate(reviewPrompt(brief, source))) ?? [];
+          gaps = parseReview(await ModelRouter.generate(reviewPrompt(brief, source, undefined, this.adoptedEngine))) ?? [];
         } catch (error: any) {
           // Game mode switched on mid-pass: that is not a verdict. The pass
           // fails and is tried again once the build resumes.

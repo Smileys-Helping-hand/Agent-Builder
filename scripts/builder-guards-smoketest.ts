@@ -16,7 +16,7 @@ import { AutoFix } from "../src/orchestrator/AutoFix.js";
 import { TypeFixer } from "../src/orchestrator/TypeFixer.js";
 import { Verifier } from "../src/orchestrator/Verifier.js";
 import { applyFacts, readFacts, sampleFactsLeft } from "../src/orchestrator/Tailoring.js";
-import { coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, requirementsFromBrief, stubs, unreachableScreens, unshownComponents } from "../src/orchestrator/Completeness.js";
+import { coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, requirementsFromBrief, reviewPrompt, stubs, unreachableScreens, unshownComponents } from "../src/orchestrator/Completeness.js";
 import { candidates, projectKey } from "../src/orchestrator/SelfHeal.js";
 import type { BuildView } from "../src/orchestrator/BuildService.js";
 
@@ -297,6 +297,18 @@ assert.equal(coverage("x", shipped, undefined, ["src/game.ts"]).lines < coverage
 assert.deepEqual(parseReview('Here you go: {"missing": ["Real gameplay: the bar fills on a timer"]}'), ["Real gameplay: the bar fills on a timer"]);
 assert.deepEqual(parseReview('{"missing": []}'), []);
 assert.equal(parseReview("Looks fine to me."), null, "an answer without the format is not a verdict");
+// The engine is described to the reviewer (what it does, what it exports), never cut off by the budget.
+const reviewed = reviewPrompt(
+  "Build an RPG with turn-based battles",
+  {
+    "src/App.tsx": "export default function App() { return null; }\n",
+    "src/engine/game.ts": `/**\n * Turn-based battles, levels and a boss.\n */\nexport function attack() {}\n${"// rule\n".repeat(3000)}`
+  },
+  2_000,
+  ["src/engine/game.ts"]
+);
+assert.match(reviewed, /Already in the app, complete and tested[^\n]*\n- src\/engine\/game\.ts: Turn-based battles, levels and a boss\. \(exports attack\)/, reviewed.slice(0, 600));
+assert.ok(!reviewed.includes("FILE: src/engine/game.ts"), "the engine's code is not spent from the budget");
 
 // TypeFixer: type errors with a mechanical fix are fixed by TypeScript, not the model.
 const typed = fs.mkdtempSync(path.join(os.tmpdir(), "ab-types-"));
