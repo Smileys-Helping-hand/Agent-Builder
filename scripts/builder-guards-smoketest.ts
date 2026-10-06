@@ -720,6 +720,28 @@ TypeFixer.run(standIn);
 assert.ok(!/const DEFAULT_SETTINGS = \{ width/.test(fs.readFileSync(path.join(standIn, "src/Other.tsx"), "utf8")), "a partial copy of the engine's constant is replaced by the real one");
 assert.equal(TypeFixer.errorCount(standIn), 0);
 
+// Three a live RPG build carried for a pass: a default import of a named export,
+// a list of words used as an enum, and a setting read from the state itself.
+const rpgSlips = fs.mkdtempSync(path.join(os.tmpdir(), "ab-rpgslips-"));
+fs.mkdirSync(path.join(rpgSlips, "src", "engine"), { recursive: true });
+fs.mkdirSync(path.join(rpgSlips, "node_modules"));
+fs.writeFileSync(path.join(rpgSlips, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", noEmit: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(
+  path.join(rpgSlips, "src/engine/game.ts"),
+  'export type Status = "exploring" | "battle" | "won-game";\nexport interface GameSettings { chestGold: number; potionHeal: number }\nexport interface GameState { status: Status; settings: GameSettings; gold: number }\nexport function GameBoard(): number { return 1; }\n'
+);
+fs.writeFileSync(
+  path.join(rpgSlips, "src/use.ts"),
+  "import GameBoard from './engine/game';\nimport { Status, type GameState } from './engine/game';\nexport const board = GameBoard();\nexport const next = (s: GameState): GameState => ({ ...s, status: Status.exploring, gold: s.gold + s.chestGold });\nexport const won: Status = Status.WonGame;\n"
+);
+const slipNotes = TypeFixer.run(rpgSlips);
+const slipped = fs.readFileSync(path.join(rpgSlips, "src/use.ts"), "utf8");
+assert.match(slipped, /^import \{ GameBoard \} from '\.\/engine\/game';/, slipNotes.join(" | "));
+assert.match(slipped, /status: "exploring"/);
+assert.match(slipped, /won: Status = "won-game"/, "matched without case or dashes");
+assert.match(slipped, /s\.settings\.chestGold/);
+assert.equal(TypeFixer.errorCount(rpgSlips), 0, slipped);
+
 // An empty function is never merged into the engine.
 assert.equal(CodeGuard.mergeEngineAdditions("src/engine/game.ts", "export const a = 1;\n", "export function stub(): number {\n  // later\n}\n"), null);
 

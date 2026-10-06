@@ -581,6 +581,71 @@ export const TypeFixer = {
             }
           }
 
+          // Three a live RPG build carried for a whole pass, each settled by the types:
+          //  - `import GameBoard from './engine/play'` where play exports GameBoard by name;
+          //  - `Status.Playing` where Status is "ready" | "playing" | …: the word is the value;
+          //  - `state.chestGold` where it is `state.settings.chestGold`.
+          {
+            const program = service.getProgram();
+            const source = program?.getSourceFile(fileName);
+            const checker = program?.getTypeChecker();
+            let at: import("typescript").Node | undefined;
+            const find = (node: import("typescript").Node) => {
+              if (node.getStart(source) <= start && node.getEnd() >= end) {
+                at = node;
+                ts.forEachChild(node, find);
+              }
+            };
+            if (source) ts.forEachChild(source, find);
+
+            if (diagnostic.code === 2613 && source && at && checker) {
+              const declaration = source.statements.find(
+                (s): s is import("typescript").ImportDeclaration => ts.isImportDeclaration(s) && s.getStart(source) <= start && s.getEnd() >= end
+              );
+              const name = declaration?.importClause?.name?.text;
+              const target = declaration && checker.getSymbolAtLocation(declaration.moduleSpecifier);
+              if (declaration && name && target && checker.getExportsOfModule(target).some((exported) => exported.name === name)) {
+                const clause = declaration.importClause!;
+                const named = clause.namedBindings && ts.isNamedImports(clause.namedBindings) ? clause.namedBindings.elements.map((e) => e.getText(source)) : [];
+                add(path.resolve(fileName), { start: clause.getStart(source), end: clause.getEnd(), text: `{ ${[name, ...named].join(", ")} }` });
+                notes.push(`${rel}:${line}: ${name} is a named export; imported by name`);
+                continue;
+              }
+            }
+
+            if (diagnostic.code === 2693 && at && checker && at.parent && ts.isPropertyAccessExpression(at.parent) && at.parent.expression === at) {
+              const access = at.parent;
+              // A type used as a value has no value type: read the type it declares.
+              const typeName = at.getText(source);
+              let symbol = checker.getSymbolsInScope(at, ts.SymbolFlags.Type | ts.SymbolFlags.Alias).find((candidate) => candidate.name === typeName);
+              if (symbol && symbol.flags & ts.SymbolFlags.Alias) symbol = checker.getAliasedSymbol(symbol);
+              const type = symbol ? checker.getDeclaredTypeOfSymbol(symbol) : checker.getTypeAtLocation(at);
+              const literals = (type.isUnion() ? type.types : [type]).filter((t) => t.isStringLiteral()).map((t) => (t as import("typescript").StringLiteralType).value);
+              const flat = (word: string) => word.toLowerCase().replace(/[^a-z0-9]/g, "");
+              const match = literals.filter((value) => flat(value) === flat(access.name.text));
+              if (match.length === 1) {
+                add(path.resolve(fileName), { start: access.getStart(source), end: access.getEnd(), text: JSON.stringify(match[0]) });
+                notes.push(`${rel}:${line}: ${access.getText(source)} is the word ${JSON.stringify(match[0])} (${at.getText(source)} is a list of words, not an enum)`);
+                continue;
+              }
+            }
+
+            if (diagnostic.code === 2339 && at && checker && at.parent && ts.isPropertyAccessExpression(at.parent) && at.parent.name === at) {
+              const access = at.parent;
+              const owner = checker.getTypeAtLocation(access.expression);
+              const wanted = access.name.text;
+              const homes = owner.getProperties().filter((property) => {
+                const inner = checker.getTypeOfSymbolAtLocation(property, access);
+                return Boolean(inner.flags & ts.TypeFlags.Object) && !inner.getNumberIndexType() && Boolean(inner.getProperty(wanted));
+              });
+              if (homes.length === 1) {
+                add(path.resolve(fileName), { start: access.name.getStart(source), end: access.name.getStart(source), text: `${homes[0].name}.` });
+                notes.push(`${rel}:${line}: ${wanted} lives in ${access.expression.getText(source)}.${homes[0].name}`);
+                continue;
+              }
+            }
+          }
+
           // A number used as a list ("can't be used to index type 'Number'", "'length' does not exist on type 'number'").
           if (diagnostic.code === 7053 || diagnostic.code === 2339 || diagnostic.code === 2345) {
             const edit = NumberAsListFix.edit(ts, service.getProgram(), service.getProgram()?.getSourceFile(fileName), start, end, diagnostic.code);
