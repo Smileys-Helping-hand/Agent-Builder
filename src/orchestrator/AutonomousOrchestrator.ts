@@ -1824,6 +1824,14 @@ No placeholders: where the brief does not give a detail, write realistic wording
       todo.push(...fakes.map((fake) => `make this real: ${fake}`));
     }
     for (const engine of engineUse(source, this.adoptedEngine)) {
+      // The score table is not driven like a game: what matters is that a finished game is saved to it.
+      if (/\/scores\.ts$/.test(engine.file)) {
+        if (!engine.used.includes("addScore") && /high.?scores?|leader.?boards?|hall of|best scores?|top scores?/i.test(brief)) {
+          reasons.push(`no score is ever saved: nothing calls addScore from ${engine.file}`);
+          todo.push(`save each finished game's score: when the game screen's onScore fires (the game is won or lost), call addScore({ name, score, detail }) from ${engine.file.replace(/^src\//, "./").replace(/\.ts$/, "")} and show the high-score table with loadScores()`);
+        }
+        continue;
+      }
       if (engine.used.length < Math.ceil((engine.used.length + engine.unused.length) / 2)) {
         reasons.push(`the app barely uses the engine in ${engine.file}: it never calls ${engine.unused.join(", ")}`);
         todo.push(`drive the game with the engine in ${engine.file}: call ${engine.unused.join(", ")} from the app (the game loop, the controls, starting a level) so it really plays`);

@@ -230,11 +230,14 @@ export const engineUse = (source: Record<string, string>, engineFiles: string[])
       ).map((m) => m[1] ?? m[2]);
       const others = Object.entries(source)
         .filter(([name]) => name !== file)
-        .map(([, text]) => text)
+        .map(([, text]) => text.replace(/^\s*import\b[^;]*;?$/gm, ""))
         .join("\n");
-      // Called, or for a component (GameBoard), rendered: <GameBoard … /> is how a board is used.
-      const used = functions.filter((name) => new RegExp(`\\b${name}\\s*\\(|<${name}\\b`).test(others));
-      return { file, used, unused: functions.filter((name) => !used.includes(name)) };
+      // Called, rendered (<GameBoard … />), or handed over to be called: the
+      // RPG board drives its battles with act(attack) and act(usePotion).
+      const used = functions.filter((name) => new RegExp(`\\b${name}\\s*\\(|<${name}\\b|[(,=]\\s*${name}\\s*[),;]`).test(others));
+      // The engine's own helpers (random, enterFloor), called inside it, are not the app's to call.
+      const helpers = functions.filter((name) => (source[file].match(new RegExp(`\\b${name}\\s*\\(`, "g")) ?? []).length > 1);
+      return { file, used, unused: functions.filter((name) => !used.includes(name) && !helpers.includes(name)) };
     });
 
 /**

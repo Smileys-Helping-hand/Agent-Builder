@@ -255,6 +255,18 @@ assert.deepEqual(stubs({ "src/a.ts": "// Score goes up by ten for each brick.\ne
 const use = engineUse(shipped, ["src/game.ts"])[0];
 assert.deepEqual(use.used, ["newGame"]);
 assert.deepEqual(use.unused, ["step", "launch", "movePaddle"], "an engine imported and never driven is caught");
+// A board that hands the engine's actions over (act(attack)) drives it; the engine's own helpers are not the app's to call.
+const rpgUse = engineUse(
+  {
+    "src/engine/game.ts": "export function random(s: number) { return s; }\nexport function enterFloor(state: object) { random(1); }\nexport function newGame() { enterFloor({}); return {}; }\nexport function attack(state: object) { return []; }\nexport function flee(state: object) { return []; }\n",
+    "src/engine/play.tsx": "import { attack, flee, newGame } from './game';\nexport function GameBoard() { const s = newGame(); act(attack); return <button onClick={() => act(flee)} />; }\n",
+    "src/App.tsx": "import { GameBoard } from './engine/play';\nexport default () => <GameBoard />;\n"
+  },
+  ["src/engine/game.ts", "src/engine/play.tsx"]
+);
+assert.deepEqual(rpgUse[0].used.sort(), ["attack", "flee", "newGame"]);
+assert.deepEqual(rpgUse[0].unused, [], "random and enterFloor are the engine's own helpers");
+assert.deepEqual(engineUse({ "src/engine/game.ts": "export function attack() {}\n", "src/App.tsx": "import { attack } from './engine/game';\n" }, ["src/engine/game.ts"])[0].unused, ["attack"], "an import alone is not use");
 assert.equal(coverage("x", shipped, undefined, ["src/game.ts"]).lines < coverage("x", shipped).lines, true, "the engine's own lines are not the app's");
 
 assert.deepEqual(parseReview('Here you go: {"missing": ["Real gameplay: the bar fills on a timer"]}'), ["Real gameplay: the bar fills on a timer"]);
