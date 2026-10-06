@@ -734,6 +734,30 @@ assert.match(fs.readFileSync(path.join(extra, "src/game.test.ts"), "utf8"), /bos
 assert.ok(extraNotes.some((note) => /dropped scores/.test(note)) && extraNotes.some((note) => /missing xp, gold, kind, log/.test(note)), extraNotes.join(" | "));
 assert.deepEqual(TypeFixer.run(extra), [], "nothing left to fix");
 
+// A test's settings missing a non-plain field start from the engine's defaults;
+// a copy of a value that may be null keeps the null.
+const nulls = fs.mkdtempSync(path.join(os.tmpdir(), "ab-nulls-"));
+fs.mkdirSync(path.join(nulls, "src", "engine"), { recursive: true });
+fs.writeFileSync(path.join(nulls, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", noEmit: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(
+  path.join(nulls, "src/engine/game.ts"),
+  [
+    "export interface GameSettings { potionHeal: number; colors: { wall: string } }",
+    "export const DEFAULT_SETTINGS: GameSettings = { potionHeal: 20, colors: { wall: '#000' } };",
+    "export interface Battle { name: string; hp: number }",
+    "export interface GameState { settings: GameSettings; battle: Battle | null }",
+    ""
+  ].join("\n")
+);
+fs.writeFileSync(path.join(nulls, "src/logic.ts"), "import type { GameState } from './engine/game';\nexport function hit(state: GameState): GameState {\n  let battle = { ...state.battle };\n  if (battle.hp! <= 0) battle = null;\n  return { ...state, battle: battle };\n}\n");
+fs.writeFileSync(path.join(nulls, "src/logic.test.ts"), "import type { GameState } from './engine/game';\nexport const state: GameState = { settings: { potionHeal: 5 }, battle: null };\n");
+const nullNotes = TypeFixer.run(nulls);
+assert.match(fs.readFileSync(path.join(nulls, "src/logic.ts"), "utf8"), /let battle = state\.battle \? \{ \.\.\.state\.battle \} : null;/, nullNotes.join(" | "));
+const nullTest = fs.readFileSync(path.join(nulls, "src/logic.test.ts"), "utf8");
+assert.match(nullTest, /settings: \{ \.\.\.DEFAULT_SETTINGS, potionHeal: 5 \}/, nullTest);
+assert.match(nullTest, /^import \{ DEFAULT_SETTINGS \} from "\.\/engine\/game";/, nullTest);
+assert.deepEqual(TypeFixer.run(nulls), [], "nothing left to fix");
+
 // Screens kept in a type that means something else get named, with the fix.
 const screens = fs.mkdtempSync(path.join(os.tmpdir(), "ab-screens-"));
 fs.mkdirSync(path.join(screens, "src", "engine"), { recursive: true });

@@ -595,6 +595,74 @@ export const TypeFixer = {
                 notes.push(`${rel}:${line}: gave the test's object its missing ${filled.map((field) => field.name).join(", ")}`);
                 continue;
               }
+              // Fields that are not plain (colors: { wall, floor, … }): the test's
+              // settings start from the engine's own defaults, and its fields win.
+              const typeName = expected?.aliasSymbol?.name ?? expected?.getSymbol()?.name;
+              let defaults: { name: string; file: string } | undefined;
+              for (const other of typeName && program && missing.length > 0 ? program.getSourceFiles() : []) {
+                if (!ours(other.fileName) || /\.test\.tsx?$/.test(other.fileName)) continue;
+                for (const statement of other.statements) {
+                  if (!ts.isVariableStatement(statement) || !statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) continue;
+                  for (const declaration of statement.declarationList.declarations) {
+                    if (!ts.isIdentifier(declaration.name) || !/^DEFAULT_/.test(declaration.name.text)) continue;
+                    const type = checker.getTypeAtLocation(declaration.name);
+                    if ((type.aliasSymbol?.name ?? type.getSymbol()?.name) === typeName) defaults = { name: declaration.name.text, file: other.fileName };
+                  }
+                }
+              }
+              const spreads = literal.properties.some((property) => ts.isSpreadAssignment(property));
+              if (defaults && !spreads) {
+                add(path.resolve(fileName), { start: literal.getStart(source) + 1, end: literal.getStart(source) + 1, text: ` ...${defaults.name},` });
+                const imported = source.statements.some(
+                  (statement) =>
+                    ts.isImportDeclaration(statement) &&
+                    statement.importClause?.namedBindings &&
+                    ts.isNamedImports(statement.importClause.namedBindings) &&
+                    statement.importClause.namedBindings.elements.some((element) => element.name.text === defaults!.name)
+                );
+                if (!imported) {
+                  let specifier = path.relative(path.dirname(fileName), defaults.file).split(path.sep).join("/").replace(/\.tsx?$/, "");
+                  if (!specifier.startsWith(".")) specifier = `./${specifier}`;
+                  add(path.resolve(fileName), { start: 0, end: 0, text: `import { ${defaults.name} } from "${specifier}";\n` });
+                }
+                notes.push(`${rel}:${line}: the test's ${typeName} starts from ${defaults.name} (it was missing ${missing.map((property) => property.name).join(", ")})`);
+                continue;
+              }
+            }
+          }
+
+          // `let battle = { ...state.battle }` where state.battle may be null:
+          // every field turns optional, `battle = null` and `battle: battle` stop
+          // compiling, and at run time a missing battle becomes {}. The copy
+          // keeps the null: `state.battle ? { ...state.battle } : null`.
+          if (diagnostic.code === 2322 || diagnostic.code === 2345) {
+            const program = service.getProgram();
+            const source = program?.getSourceFile(fileName);
+            const checker = program?.getTypeChecker();
+            let at: import("typescript").Node | undefined;
+            const find = (node: import("typescript").Node) => {
+              if (node.getStart(source) <= start && node.getEnd() >= end) {
+                at = node;
+                ts.forEachChild(node, find);
+              }
+            };
+            if (source) ts.forEachChild(source, find);
+            const node = at as import("typescript").Node | undefined;
+            let id = node && ts.isIdentifier(node) ? node : undefined;
+            if (id && node!.parent && ts.isPropertyAssignment(node!.parent) && node!.parent.name === node) id = ts.isIdentifier(node!.parent.initializer) ? node!.parent.initializer : undefined;
+            const declaration = id && checker ? checker.getSymbolAtLocation(id)?.valueDeclaration : undefined;
+            const copy =
+              declaration && ts.isVariableDeclaration(declaration) && !declaration.type && declaration.initializer && ts.isObjectLiteralExpression(declaration.initializer)
+                ? declaration.initializer
+                : undefined;
+            const spread = copy?.properties.length === 1 && ts.isSpreadAssignment(copy.properties[0]) ? copy.properties[0].expression : undefined;
+            const spreadType = spread && checker ? checker.getTypeAtLocation(spread) : undefined;
+            const empty = spreadType?.isUnion() ? spreadType.types.find((part) => part.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) : undefined;
+            if (copy && spread && empty && source && copy.getSourceFile() === source) {
+              const written = spread.getText(source);
+              add(path.resolve(fileName), { start: copy.getStart(source), end: copy.getEnd(), text: `${written} ? { ...${written} } : ${empty.flags & ts.TypeFlags.Null ? "null" : "undefined"}` });
+              notes.push(`${rel}:${line}: the copy of ${written} keeps its ${empty.flags & ts.TypeFlags.Null ? "null" : "undefined"}`);
+              continue;
             }
           }
 
