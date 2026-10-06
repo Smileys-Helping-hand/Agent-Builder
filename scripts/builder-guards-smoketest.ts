@@ -680,6 +680,14 @@ const deadPlay = stubs({
 assert.match(deadPlay[0], /give Home a prop onGame: \(\) => void, call it from the "Play Game" button \(onClick=\{onGame\}\), and in src\/App\.tsx render <Home onGame=\{\(\) => setScreen\("game"\)\} \/>/, deadPlay[0]);
 assert.match(stubs({ "src/a.tsx": "export const A = () => <button onClick={() => {}}>Go</button>;\n" })[0], /does nothing \(\{\(\) => \{\}\}\)$/, "without screen state, the plain message");
 
+// A field read from the wrong type is pointed at the engine type that has it.
+const homes = fs.mkdtempSync(path.join(os.tmpdir(), "ab-homes-"));
+fs.mkdirSync(path.join(homes, "src", "engine"), { recursive: true });
+fs.writeFileSync(path.join(homes, "src/engine/game.ts"), "export interface Hero {\n  name: string;\n  hp: number;\n}\n\nexport interface GameState {\n  hero: Hero;\n  score: number;\n}\n");
+const homeHint = await AutoFix.fieldHomes(homes, "src/a.ts(1,1): error TS2339: Property 'score' does not exist on type 'Hero'.\n");
+assert.match(homeHint, /score is a field of GameState \(src\/engine\/game\.ts\), not of Hero/, homeHint);
+assert.equal(await AutoFix.fieldHomes(homes, "src/a.ts(1,1): error TS2339: Property 'mana' does not exist on type 'Hero'.\n"), "", "nothing to say when no engine type has it");
+
 // Screens kept in a type that means something else get named, with the fix.
 const screens = fs.mkdtempSync(path.join(os.tmpdir(), "ab-screens-"));
 fs.mkdirSync(path.join(screens, "src", "engine"), { recursive: true });

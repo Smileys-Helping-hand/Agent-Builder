@@ -484,7 +484,7 @@ export const AutoFix = {
           .map((name) => `- ${name}: ${SERVER_ONLY.get(name)}`)
           .join("\n")}\n`
       : "";
-    return missing + absentText + serverText + (await AutoFix.nameClashes(root)) + (await AutoFix.duplicateTypes(root, errorOutput)) + (await AutoFix.literalsOutsideUnion(root, errorOutput)) + (await AutoFix.engineActionsInScreens(root, errorOutput));
+    return missing + absentText + serverText + (await AutoFix.nameClashes(root)) + (await AutoFix.duplicateTypes(root, errorOutput)) + (await AutoFix.literalsOutsideUnion(root, errorOutput)) + (await AutoFix.engineActionsInScreens(root, errorOutput)) + (await AutoFix.fieldHomes(root, errorOutput));
   },
 
   /**
@@ -508,6 +508,32 @@ export const AutoFix = {
       lines.push(`- ${name} is declared in ${files.join(" and ")}: keep only the one in ${keep}, delete it from ${others.join(", ")}, and import it from ${keep} everywhere.`);
     }
     return lines.length ? `\nThe same type is declared twice, so values of one are rejected where the other is expected:\n${lines.join("\n")}\n` : "";
+  },
+
+  /**
+   * A field read from the wrong type: `hero.score` when the score is the
+   * game's (GameState.score), not the hero's. "Property 'score' does not exist
+   * on type 'Hero'" does not say where it does exist; three RPG repairs in a
+   * row did not find it. This names the engine types that have it.
+   */
+  async fieldHomes(root: string, errorOutput: string): Promise<string> {
+    const wanted = new Map<string, Set<string>>();
+    for (const match of errorOutput.matchAll(/Property '(\w+)' does not exist on type '(\w+)'/g)) {
+      wanted.set(match[1], (wanted.get(match[1]) ?? new Set()).add(match[2]));
+    }
+    if (wanted.size === 0) return "";
+    const engineFiles = (await listFiles(path.join(root, "src", "engine")).catch(() => [] as string[])).filter((file) => /\.tsx?$/.test(file));
+    const lines: string[] = [];
+    for (const file of engineFiles) {
+      const text = await fs.readFile(file, "utf8");
+      for (const declaration of text.matchAll(/export\s+interface\s+(\w+)\s*\{([\s\S]*?)\n\}/g)) {
+        for (const [field, missingFrom] of wanted) {
+          if (missingFrom.has(declaration[1]) || !new RegExp(`^\\s*${field}\\??\\s*:`, "m").test(declaration[2])) continue;
+          lines.push(`- ${field} is a field of ${declaration[1]} (${posix(path.relative(root, file))}), not of ${Array.from(missingFrom).join(" or ")}: read it from the ${declaration[1]} (e.g. ${declaration[1].charAt(0).toLowerCase() + declaration[1].slice(1).replace(/^gameState$/, "state")}.${field}), or add it to a type of your own.`);
+        }
+      }
+    }
+    return lines.length ? `\nFields read from the wrong type:\n${Array.from(new Set(lines)).join("\n")}\n` : "";
   },
 
   /**
