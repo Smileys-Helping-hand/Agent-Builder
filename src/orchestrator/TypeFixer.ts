@@ -252,14 +252,14 @@ const AutonomousVoidFix = {
       const call = statement.expression;
       const first = call.arguments[0];
       if (!first || !ts.isIdentifier(first)) return null;
-      return { start, end, text: `${call.getText(file)};\n${indentOf(file.text, start)}return ${first.text};`, note: `${call.expression.getText(file)}() changes ${first.text} in place and returns nothing: called it, then returned ${first.text}` };
+      return { start, end, text: `${call.getText(file)};\n${indentOf(file.text, start)}return ${first.text};`, note: `${call.expression.getText(file)}() changes ${first.text} in place (it does not return the new state): called it, then returned ${first.text}` };
     }
     if (ts.isExpressionStatement(statement) && ts.isBinaryExpression(statement.expression) && statement.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
       const { left, right } = statement.expression;
       if (!ts.isCallExpression(right)) return null;
       const first = right.arguments[0];
       if (!first || first.getText(file) !== left.getText(file)) return null;
-      return { start, end, text: `${right.getText(file)};`, note: `${right.expression.getText(file)}() changes ${left.getText(file)} in place and returns nothing: no longer assigned` };
+      return { start, end, text: `${right.getText(file)};`, note: `${right.expression.getText(file)}() changes ${left.getText(file)} in place (it does not return the new state): no longer assigned` };
     }
     return null;
   }
@@ -444,7 +444,12 @@ export const TypeFixer = {
 
           // "Type 'void' is not assignable": a function that changes the state in
           // place (launch(state): void) used as if it returned the new state.
-          if (diagnostic.code === 2322 && /Type 'void' is not assignable/.test(ts.flattenDiagnosticMessageText(diagnostic.messageText, " "))) {
+          // The same for an action that changes the state in place and returns
+          // what happened (move(state) → GameEvent[]): `s = move(s, 1, 0)`.
+          if (
+            (diagnostic.code === 2322 || diagnostic.code === 2739 || diagnostic.code === 2740) &&
+            /Type '(void|\w*Event\[\])' (is not assignable|is missing)/.test(ts.flattenDiagnosticMessageText(diagnostic.messageText, " "))
+          ) {
             const edit = AutonomousVoidFix.edit(ts, service.getProgram()?.getSourceFile(fileName), start);
             if (edit) {
               add(path.resolve(fileName), edit);

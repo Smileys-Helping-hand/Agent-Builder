@@ -476,6 +476,18 @@ assert.equal(
 );
 assert.deepEqual(await AutoFix.dedupeImports(dup), [], "nothing left to remove");
 
+// The same for an action that changes the state and returns what happened (events), as the RPG engine's do.
+const eventsDir = fs.mkdtempSync(path.join(os.tmpdir(), "ab-events-"));
+fs.mkdirSync(path.join(eventsDir, "src", "engine"), { recursive: true });
+fs.mkdirSync(path.join(eventsDir, "node_modules"));
+fs.writeFileSync(path.join(eventsDir, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", noEmit: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(path.join(eventsDir, "src/engine/game.ts"), 'export type GameEvent = "moved" | "healed";\nexport interface GameState { hp: number; potions: number }\nexport function usePotion(state: GameState): GameEvent[] { state.hp += 5; return ["healed"]; }\n');
+fs.writeFileSync(path.join(eventsDir, "src/logic.ts"), "import { usePotion, type GameState } from './engine/game';\nexport function heal(state: GameState): GameState {\n  let next = state;\n  next = usePotion(next);\n  return usePotion(next);\n}\n");
+TypeFixer.run(eventsDir);
+const healed = fs.readFileSync(path.join(eventsDir, "src/logic.ts"), "utf8");
+assert.match(healed, /\n  usePotion\(next\);\n  usePotion\(next\);\n  return next;\n/, healed);
+assert.equal(TypeFixer.errorCount(eventsDir), 0);
+
 // A spelling fix never swaps in a browser global: an undefined TOP is not `top` (window.top).
 const globalsDir = fs.mkdtempSync(path.join(os.tmpdir(), "ab-globals-"));
 fs.mkdirSync(path.join(globalsDir, "src"));
