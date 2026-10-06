@@ -132,6 +132,15 @@ const rebase = (html: string, root: string, requested: string): string => {
  */
 const STORAGE_SHIM = `<script data-agent-builder-storage>(function(){try{window.localStorage.getItem("__ab");return}catch(e){}function make(){var d={};return{getItem:function(k){return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null},setItem:function(k,v){d[String(k)]=String(v)},removeItem:function(k){delete d[k]},clear:function(){d={}},key:function(i){return Object.keys(d)[i]||null},get length(){return Object.keys(d).length}}}try{Object.defineProperty(window,"localStorage",{value:make(),configurable:true});Object.defineProperty(window,"sessionStorage",{value:make(),configurable:true})}catch(e){}})();</script>`;
 
+/**
+ * Only the storage shim, first in <head>: for a page served sandboxed
+ * anywhere else. A build's own preview link (/api/preview/<token>/<build>/)
+ * is served by the build routes; without this the saved-game Pgame opened
+ * from it — from the app or from a link Jarvis sends — stayed blank.
+ */
+export const withStorageShim = (html: string): string =>
+  /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (head) => `${head}${STORAGE_SHIM}`) : `${STORAGE_SHIM}${html}`;
+
 /** The error reporter goes first in <head>; the live editor's hands at the end of <body>. */
 const withReporter = (html: string): string => {
   const reported = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (head) => `${head}${STORAGE_SHIM}${REPORTER}`) : `${STORAGE_SHIM}${REPORTER}${html}`;

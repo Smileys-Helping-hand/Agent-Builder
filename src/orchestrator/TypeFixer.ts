@@ -505,6 +505,58 @@ export const TypeFixer = {
             }
           }
 
+          // `const DEFAULT_SETTINGS = { /* default settings from src/engine/game */ };`
+          // — a stand-in for something another file of ours exports for real.
+          // The stand-in goes; the next round imports the real one.
+          if (diagnostic.code === 2740 || diagnostic.code === 2739 || diagnostic.code === 2741) {
+            const program = service.getProgram();
+            const source = program?.getSourceFile(fileName);
+            // The error sits on the value, or on the attribute or key it is given to: settings={DEFAULT_SETTINGS}.
+            let at: import("typescript").Node | undefined;
+            const find = (node: import("typescript").Node) => {
+              if (node.getStart(source) <= start && node.getEnd() >= end) {
+                at = node;
+                ts.forEachChild(node, find);
+              }
+            };
+            if (source) ts.forEachChild(source, find);
+            let value: import("typescript").Node | undefined = at;
+            if (at?.parent && ts.isJsxAttribute(at.parent)) value = at.parent.initializer && ts.isJsxExpression(at.parent.initializer) ? at.parent.initializer.expression : undefined;
+            else if (at?.parent && ts.isPropertyAssignment(at.parent) && at.parent.name === at) value = at.parent.initializer;
+            const name = value && ts.isIdentifier(value) ? value.text : text.slice(start, end).trim();
+            let stub: import("typescript").VariableStatement | undefined;
+            const visit = (node: import("typescript").Node) => {
+              if (ts.isVariableStatement(node)) {
+                const only = node.declarationList.declarations.length === 1 ? node.declarationList.declarations[0] : undefined;
+                // Empty, or a local copy of one of the engine's constants (DEFAULT_SETTINGS with half its fields).
+                const empty = only?.initializer && ts.isObjectLiteralExpression(only.initializer) && only.initializer.properties.length === 0;
+                const constantCopy = /^[A-Z][A-Z0-9_]+$/.test(name) && !node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+                if (only && ts.isIdentifier(only.name) && only.name.text === name && only.initializer && (empty || constantCopy)) stub = node;
+              }
+              ts.forEachChild(node, visit);
+            };
+            if (source && /^[A-Za-z_$][\w$]*$/.test(name)) ts.forEachChild(source, visit);
+            const checker = program?.getTypeChecker();
+            const real =
+              stub && program && checker
+                ? program.getSourceFiles().find((other) => {
+                    if (other === source || !ours(other.fileName)) return false;
+                    const symbol = checker.getSymbolAtLocation(other);
+                    return Boolean(symbol && checker.getExportsOfModule(symbol).some((exported) => exported.name === name));
+                  })
+                : undefined;
+            // A filled-in copy is only replaced by the engine's own (tested) constant, never by another file the model wrote.
+            const fromEngine = real ? path.relative(root, real.fileName).split(path.sep).join("/").startsWith("src/engine/") : false;
+            const isEmpty = stub?.declarationList.declarations[0]?.initializer && ts.isObjectLiteralExpression(stub.declarationList.declarations[0].initializer) && stub.declarationList.declarations[0].initializer.properties.length === 0;
+            if (stub && source && real && (isEmpty || fromEngine)) {
+              const from = text.lastIndexOf("\n", stub.getStart(source) - 1) + 1;
+              const to = text.indexOf("\n", stub.getEnd());
+              add(path.resolve(fileName), { start: from, end: to === -1 ? text.length : to + 1, text: "" });
+              notes.push(`${rel}:${line}: removed an empty stand-in for ${name}; the real one is in ${path.relative(root, real.fileName).split(path.sep).join("/")}`);
+              continue;
+            }
+          }
+
           // { width: 70, radius: 6 } where the type says w and r: an object literal's
           // key spelled out where the type uses its first letter.
           if (diagnostic.code === 2353) {

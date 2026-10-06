@@ -632,6 +632,13 @@ assert.deepEqual(
   "rendered on the game screen"
 );
 
+// A component from the engine counts as used when a screen renders it.
+assert.deepEqual(
+  engineUse({ "src/engine/play.tsx": board, "src/components/Game.tsx": "export default () => <GameBoard settings={DEFAULT_SETTINGS} />;\n" }, ["src/engine/play.tsx"])[0].unused,
+  [],
+  "<GameBoard /> is using it"
+);
+
 // A dead button on a screen gets the exact wiring when App switches screens with state.
 const deadPlay = stubs({
   "src/App.tsx": 'const App = () => {\n  const [screen, setScreen] = useState<"home" | "menu" | "game">("home");\n  return <div>{screen === "home" && <Home />}</div>;\n};\n',
@@ -675,6 +682,38 @@ fs.writeFileSync(path.join(shortKeys, "src/a.test.ts"), "type Paddle = { x: numb
 TypeFixer.run(shortKeys);
 assert.match(fs.readFileSync(path.join(shortKeys, "src/a.test.ts"), "utf8"), /\{ x: 1, y: 2, w: 70, h: 10 \}/);
 assert.equal(TypeFixer.errorCount(shortKeys), 0);
+
+// Saved data is cleared between tests, in the starter and in builds made before it was.
+const setupDir = fs.mkdtempSync(path.join(os.tmpdir(), "ab-setup-"));
+fs.mkdirSync(path.join(setupDir, "src", "lib"), { recursive: true });
+fs.writeFileSync(path.join(setupDir, "src/lib/setup-tests.ts"), 'import { cleanup } from "@testing-library/react";\nimport { afterEach } from "vitest";\n\nafterEach(() => cleanup());\n');
+assert.equal((await AutoFix.clearStorageBetweenTests(setupDir)).length, 1);
+assert.match(fs.readFileSync(path.join(setupDir, "src/lib/setup-tests.ts"), "utf8"), /cleanup\(\);\n  globalThis\.localStorage\?\.clear\(\);/);
+assert.deepEqual(await AutoFix.clearStorageBetweenTests(setupDir), [], "once");
+assert.match(fs.readFileSync(path.resolve("templates/starters/web/src/lib/setup-tests.ts"), "utf8"), /localStorage\?\.clear\(\)/, "the starter does it from the start");
+
+// An empty stand-in for something the engine exports goes, and the real one is imported.
+const standIn = fs.mkdtempSync(path.join(os.tmpdir(), "ab-standin-"));
+fs.mkdirSync(path.join(standIn, "src", "engine"), { recursive: true });
+fs.mkdirSync(path.join(standIn, "node_modules"));
+fs.writeFileSync(path.join(standIn, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", jsx: "preserve", noEmit: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(path.join(standIn, "src/jsx.d.ts"), "declare namespace JSX { interface Element {} interface IntrinsicElements { [name: string]: unknown } interface ElementAttributesProperty { props: {} } }\n");
+fs.writeFileSync(path.join(standIn, "src/engine/game.ts"), "export interface GameSettings { width: number; lives: number }\nexport const DEFAULT_SETTINGS: GameSettings = { width: 320, lives: 3 };\n");
+fs.writeFileSync(path.join(standIn, "src/engine/play.tsx"), "import type { GameSettings } from './game';\nexport function GameBoard(props: { settings: GameSettings }): JSX.Element { return <canvas />; }\n");
+fs.writeFileSync(
+  path.join(standIn, "src/GameScreen.tsx"),
+  "import { GameBoard } from './engine/play';\nexport const GameScreen = () => {\n  const DEFAULT_SETTINGS = { /* default settings from src/engine/game */ };\n  return <GameBoard settings={DEFAULT_SETTINGS} />;\n};\n"
+);
+TypeFixer.run(standIn);
+const screenText = fs.readFileSync(path.join(standIn, "src/GameScreen.tsx"), "utf8");
+assert.ok(!/const DEFAULT_SETTINGS = \{/.test(screenText), `the stand-in is gone: ${screenText}`);
+assert.match(screenText, /import \{ DEFAULT_SETTINGS \} from ['"]\.\/engine\/game['"]/, "the real one is imported");
+assert.equal(TypeFixer.errorCount(standIn), 0);
+// A filled-in copy with half the engine constant's fields goes the same way.
+fs.writeFileSync(path.join(standIn, "src/Other.tsx"), "import { GameBoard } from './engine/play';\nexport const Other = () => {\n  const DEFAULT_SETTINGS = { width: 800 };\n  return <GameBoard settings={DEFAULT_SETTINGS} />;\n};\n");
+TypeFixer.run(standIn);
+assert.ok(!/const DEFAULT_SETTINGS = \{ width/.test(fs.readFileSync(path.join(standIn, "src/Other.tsx"), "utf8")), "a partial copy of the engine's constant is replaced by the real one");
+assert.equal(TypeFixer.errorCount(standIn), 0);
 
 // An empty function is never merged into the engine.
 assert.equal(CodeGuard.mergeEngineAdditions("src/engine/game.ts", "export const a = 1;\n", "export function stub(): number {\n  // later\n}\n"), null);
