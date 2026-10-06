@@ -1839,11 +1839,11 @@ No placeholders: where the brief does not give a detail, write realistic wording
     }
     const unreachable = unreachableScreens(source);
     if (unreachable.length > 0) {
-      const named = unreachable.map((u) => `${u.screen} (nothing calls ${u.handler})`).join(", ");
+      const named = unreachable.map((u) => (u.handler ? `${u.screen} (nothing calls ${u.handler})` : `${u.screen} (nothing switches to it)`)).join(", ");
       reasons.push(`these screens can never be opened: ${named}`);
       todo.push(
         `make every screen reachable: ${unreachable
-          .map((u) => `a button that calls ${u.handler} (for the ${u.screen} screen)`)
+          .map((u) => (u.handler ? `a button that calls ${u.handler} (for the ${u.screen} screen)` : `a button that switches to the ${u.screen} screen`))
           .join(" and ")}, e.g. on the title or menu screen (pass the handlers to it as props and render a button for each), and give every screen a Back button to the title. Change only App.tsx and those screens: the game screen and board already exist, do not write new ones`
       );
     }

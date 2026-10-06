@@ -257,7 +257,7 @@ export const unreachableScreens = (source: Record<string, string>): { screen: st
   const app = source["src/App.tsx"];
   if (!app) return [];
   const target = (text: string) =>
-    Array.from(text.matchAll(/\bscreen\s*:\s*['"](\w+)['"]|setScreen\(\s*['"](\w+)['"]|setScreen\(\s*\w+\.(\w+)\s*\)/g)).map((match) => (match[1] ?? match[2] ?? match[3]).toLowerCase());
+    Array.from(text.matchAll(/\bscreen\s*:\s*['"](\w+)['"]|set\w*Screen\(\s*['"](\w+)['"]|set\w*Screen\(\s*\w+\.(\w+)\s*\)/g)).map((match) => (match[1] ?? match[2] ?? match[3]).toLowerCase());
   const handlers: { name: string; start: number; end: number; targets: string[] }[] = [];
   for (const match of app.matchAll(/const\s+(\w+)\s*=\s*(?:useCallback\(\s*)?(?:\([^)]*\)|\w+)\s*(?::[^=]+)?=>\s*\{/g)) {
     const start = match.index!;
@@ -273,7 +273,11 @@ export const unreachableScreens = (source: Record<string, string>): { screen: st
   // The first screen shown counts as reached.
   const first = /useState(?:<[^>]*>)?\(\s*(?:\{\s*screen\s*:\s*)?['"](\w+)['"]/.exec(app)?.[1]?.toLowerCase();
   if (first) reached.add(first);
-  return unused.flatMap((h) => h.targets.filter((screen) => !reached.has(screen)).map((screen) => ({ screen, handler: h.name })));
+  // Every screen App shows (screen === "hall", case "hall":) that nothing switches to,
+  // whether or not a handler was written for it.
+  const shown = Array.from(app.matchAll(/\b\w*[sS]creen\s*===\s*['"](\w+)['"]|\bcase\s+['"](\w+)['"]\s*:/g)).map((match) => (match[1] ?? match[2]).toLowerCase());
+  const wanted = Array.from(new Set([...unused.flatMap((h) => h.targets), ...shown])).filter((screen) => !reached.has(screen));
+  return wanted.map((screen) => ({ screen, handler: unused.find((h) => h.targets.includes(screen))?.name ?? "" }));
 };
 
 export const unshownComponents = (source: Record<string, string>, engineFiles: string[]): { file: string; components: string[] }[] => {

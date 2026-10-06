@@ -291,6 +291,22 @@ const screensApp = [
 assert.deepEqual(unreachableScreens({ "src/App.tsx": screensApp }), [{ screen: "sheet", handler: "handleSheet" }], "the hall is reached through goHall; the sheet never is");
 assert.deepEqual(unreachableScreens({ "src/App.tsx": screensApp.replace("onScores={goHall}", "onScores={goHall} onSheet={handleSheet}") }), [], "every screen reachable");
 assert.deepEqual(unreachableScreens({ "src/Other.tsx": "x" }), [], "no App, nothing to say");
+// No handler at all: a screen App shows that nothing switches to (the hall's own Back button goes elsewhere).
+const inlineApp = [
+  "function App() {",
+  "  const [currentScreen, setCurrentScreen] = React.useState<'title' | 'game' | 'hall'>('title');",
+  "  return (",
+  "    <div>",
+  "      {currentScreen === 'title' && <TitleScreen onPlay={() => setCurrentScreen('game')} />}",
+  "      {currentScreen === 'game' && <GameScreen />}",
+  "      {currentScreen === 'hall' && <HallOfHeroes onBack={() => setCurrentScreen('title')} />}",
+  "    </div>",
+  "  );",
+  "}",
+  ""
+].join("\n");
+assert.deepEqual(unreachableScreens({ "src/App.tsx": inlineApp }), [{ screen: "hall", handler: "" }]);
+assert.deepEqual(unreachableScreens({ "src/App.tsx": inlineApp.replace("<TitleScreen onPlay={() => setCurrentScreen('game')} />", "<TitleScreen onPlay={() => setCurrentScreen('game')} onScores={() => setCurrentScreen('hall')} />") }), []);
 assert.deepEqual(engineUse({ "src/engine/game.ts": "export function attack() {}\n", "src/App.tsx": "import { attack } from './engine/game';\n" }, ["src/engine/game.ts"])[0].unused, ["attack"], "an import alone is not use");
 assert.equal(coverage("x", shipped, undefined, ["src/game.ts"]).lines < coverage("x", shipped).lines, true, "the engine's own lines are not the app's");
 
