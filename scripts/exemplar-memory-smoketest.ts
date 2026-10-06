@@ -62,6 +62,25 @@ Quality bar:
 - Works offline`;
 assert.equal(ExemplarMemory.relevant(pgameBrief)?.title, "Arcade Promo Game", "the real Pgame brief finds the game engine, not the restaurant's Menu");
 
+// Each kind of game goes to the engine (and playable board) built for it.
+for (const [brief, title] of [
+  ["Build Star Raid: a space shooter where you blast waves of alien invaders", "Space Shooter Game"],
+  ["Build Zombie Siege: an action game where you shoot zombies", "Space Shooter Game"],
+  ["Build Blaster: a fun arcade shooting game for my shop", "Space Shooter Game"],
+  ["Build Keep Guard: a tower defense game", "Tower Defense Strategy Game"],
+  ["Build Kingdoms: a strategy game where you defend your castle", "Tower Defense Strategy Game"],
+  ["Build Dungeon Quest: an RPG with a hero and monsters", "Fantasy RPG Adventure"],
+  ["Build Hero's Journey: an adventure game with battles and levelling up", "Fantasy RPG Adventure"],
+  ["Build Brick Bash: a brick breaker game", "Arcade Promo Game"]
+] as const) {
+  assert.equal(ExemplarMemory.relevant(brief)?.title, title, brief);
+}
+for (const genre of ["Space Shooter Game", "Tower Defense Strategy Game", "Fantasy RPG Adventure"]) {
+  const seed = ExemplarMemory.list().find((e) => e.title === genre)!;
+  assert.deepEqual(Object.keys(ExemplarMemory.engineFiles(seed, path.resolve("templates/sites"))).sort(), ["src/game.ts", "src/play.tsx"], `${genre} brings its engine and its board`);
+  assert.match(ExemplarMemory.formatForPrompt(seed, ["src/engine/game.ts", "src/engine/play.tsx"]), /The game screen MUST render it, e\.g\. <GameBoard settings=\{DEFAULT_SETTINGS\}/);
+}
+
 // Our own catalogue engine is never retired: runs cut short are not its failures.
 const arcade = ExemplarMemory.relevant(pgameBrief)!;
 assert.equal(arcade.title, "Arcade Promo Game");
@@ -92,7 +111,7 @@ fs.writeFileSync(path.join(app, "src", "lib", "testing.tsx"), "export const kit 
 const id = ExemplarMemory.recordSuccess(app, "Pocket Levels", "A fun phone game with levels, score and progression, saved in the browser.", 100);
 assert.ok(id);
 const remembered = ExemplarMemory.list().find((e) => e.id === id)!;
-assert.match(remembered.outline, /src\/levels\.ts .*exports Level, nextLevel/);
+assert.match(remembered.outline, /src\/levels\.ts .*exports nextLevel, Level/, "values and functions first, then types");
 assert.ok(!/App\.test|lib\/testing/.test(remembered.sample), "tests and kit are not part of the example");
 assert.ok(remembered.sample.indexOf("levels.ts") < remembered.sample.indexOf("App.tsx"), "logic first: it is what small models leave out");
 // Where the catalogue has tested code for this kind of app, that wins: it goes into the project whole.

@@ -242,6 +242,66 @@ const BUILT_IN_ITEMS: TemplateDefinition[] = [
     keywords: ["game", "arcade", "promo", "competition", "gamification", "fun", "play"]
   },
   {
+    id: "shooter",
+    name: "Space Shooter Game",
+    kind: "app",
+    category: "Games",
+    description: "A fast action game in your brand: waves of invaders, power-ups (rapid fire, shields, extra lives), lives and a high score, played with touch or keys, plus a prize form for top scorers.",
+    price: 7500,
+    currency: "ZAR",
+    timeframe: "1-2 weeks",
+    icon: "🚀",
+    features: [
+      "Arcade action on phones, tablets and desktops",
+      "Waves of enemies, power-ups and boss-tough tanks",
+      "Your name, colours, waves and prize",
+      "Prize claim form that captures leads",
+      "Opens from a single file: host it anywhere"
+    ],
+    techStack: ["React", "TypeScript", "Canvas", "Vite"],
+    keywords: ["shooter", "shoot", "space", "invaders", "action", "arcade", "waves", "spaceship", "blaster", "game"]
+  },
+  {
+    id: "strategy",
+    name: "Tower Defense Strategy Game",
+    kind: "app",
+    category: "Games",
+    description: "A strategy game people come back to: build and upgrade towers along a road to stop waves of raiders, manage gold and lives, and chase a high score, plus a prize form for the best defenders.",
+    price: 8500,
+    currency: "ZAR",
+    timeframe: "2-3 weeks",
+    icon: "🏰",
+    features: [
+      "Three tower types to build, upgrade and sell",
+      "Five waves that get harder, gold and lives to manage",
+      "Your name, colours, map and prize",
+      "Prize claim form that captures leads",
+      "Plays on phones, tablets and desktops"
+    ],
+    techStack: ["React", "TypeScript", "Canvas", "Vite"],
+    keywords: ["strategy", "tower", "defense", "defence", "td", "towers", "waves", "build", "castle", "game"]
+  },
+  {
+    id: "rpg",
+    name: "Fantasy RPG Adventure",
+    kind: "app",
+    category: "Games",
+    description: "A role-playing adventure in your brand: explore a dungeon, fight turn-based battles, level up, collect potions and gold, and defeat the boss, plus a prize form for heroes who win.",
+    price: 9500,
+    currency: "ZAR",
+    timeframe: "2-3 weeks",
+    icon: "⚔️",
+    features: [
+      "Three dungeon floors to explore",
+      "Turn-based battles, experience, levels and a boss",
+      "Your name, colours, hero, monsters and prize",
+      "Prize claim form that captures leads",
+      "Keyboard and on-screen controls for phones"
+    ],
+    techStack: ["React", "TypeScript", "Canvas", "Vite"],
+    keywords: ["rpg", "role-playing", "roleplaying", "adventure", "dungeon", "quest", "fantasy", "hero", "battle", "turn-based", "game"]
+  },
+  {
     id: "event",
     name: "Event & Invitation",
     kind: "template",
