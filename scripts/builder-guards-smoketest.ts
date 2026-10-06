@@ -389,6 +389,7 @@ assert.match(builtScreen, /import \{ GameBoard \} from "\.\.\/engine\/play";/);
 assert.match(builtScreen, /import \{ DEFAULT_SETTINGS, type GameState \} from "\.\.\/engine\/game";/);
 assert.match(builtScreen, /<GameBoard settings=\{DEFAULT_SETTINGS\} onScore=\{onScore\} onChange=\{onChange\} \/>/);
 assert.ok(builtScreen.includes(AutonomousOrchestrator.BUILT_IN_MARK), "marked, so repairs leave it alone");
+assert.match(builtScreen, /onBack\?: \(\) => void;[\s\S]*\{onBack && \(/, "a way back to the menu when the app gives one");
 assert.equal(AutonomousOrchestrator.builtInGameScreen([{ file: "src/engine/game.ts", text: "export const x = 1;\n" }]), null, "no board, no built-in screen");
 
 // A carried-on build knows how its predecessor ended, so its first pass repairs instead of rewriting.
@@ -756,6 +757,12 @@ assert.match(fs.readFileSync(path.join(nulls, "src/logic.ts"), "utf8"), /let bat
 const nullTest = fs.readFileSync(path.join(nulls, "src/logic.test.ts"), "utf8");
 assert.match(nullTest, /settings: \{ \.\.\.DEFAULT_SETTINGS, potionHeal: 5 \}/, nullTest);
 assert.match(nullTest, /^import \{ DEFAULT_SETTINGS \} from "\.\/engine\/game";/, nullTest);
+const settingsDir = fs.mkdtempSync(path.join(os.tmpdir(), "ab-settings-"));
+fs.cpSync(path.join(nulls, "src", "engine"), path.join(settingsDir, "src", "engine"), { recursive: true });
+fs.copyFileSync(path.join(nulls, "tsconfig.json"), path.join(settingsDir, "tsconfig.json"));
+fs.writeFileSync(path.join(settingsDir, "src/settings.test.ts"), "import type { GameSettings } from './engine/game';\nexport const settings: GameSettings = { potionHeal: 5 };\n");
+TypeFixer.run(settingsDir);
+assert.match(fs.readFileSync(path.join(settingsDir, "src/settings.test.ts"), "utf8"), /settings: GameSettings = \{ \.\.\.DEFAULT_SETTINGS, potionHeal: 5 \}/, "a test's settings variable starts from the defaults too");
 assert.deepEqual(TypeFixer.run(nulls), [], "nothing left to fix");
 
 // A test's hero copied from the settings inside the state being declared: it

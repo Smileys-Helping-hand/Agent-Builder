@@ -1237,10 +1237,21 @@ export interface ${name}Props {
   onScore?: (score: number) => void;
   /** Called whenever the game changes: score, lives, level, status. */
   onChange?: (state: GameState) => void;
+  /** When given, a Menu button above the game calls it (back to the title screen). */
+  onBack?: () => void;
 }
 
-export default function ${name}({ onScore, onChange }: ${name}Props) {
-  return <${boardName} settings={DEFAULT_SETTINGS} onScore={onScore} onChange={onChange} />;
+export default function ${name}({ onScore, onChange, onBack }: ${name}Props) {
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      {onBack && (
+        <button type="button" className="btn btn-ghost" onClick={onBack} style={{ justifySelf: "start" }}>
+          ← Menu
+        </button>
+      )}
+      <${boardName} settings={DEFAULT_SETTINGS} onScore={onScore} onChange={onChange} />
+    </div>
+  );
 }
 `;
     };
@@ -1563,7 +1574,7 @@ Answer with JSON only:
       if (!existing) plan.push(entry);
       const name = path.basename(entry.path, ".tsx");
       entry.purpose = "the game itself: renders the tested board (already written by the builder — use it as it is)";
-      entry.exports = [`default ${name}(props: { onScore?: (score: number) => void; onChange?: (state: GameState) => void })`];
+      entry.exports = [`default ${name}(props: { onScore?: (score: number) => void; onChange?: (state: GameState) => void; onBack?: () => void })`];
     }
 
     // Logic first, then screens, App.tsx, and tests last: each file is written

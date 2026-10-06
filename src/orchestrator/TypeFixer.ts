@@ -528,6 +528,7 @@ export const TypeFixer = {
             let value: import("typescript").Node | undefined = at;
             if (at?.parent && ts.isJsxAttribute(at.parent)) value = at.parent.initializer && ts.isJsxExpression(at.parent.initializer) ? at.parent.initializer.expression : undefined;
             else if (at?.parent && ts.isPropertyAssignment(at.parent) && at.parent.name === at) value = at.parent.initializer;
+            else if (at?.parent && ts.isVariableDeclaration(at.parent) && at.parent.name === at) value = at.parent.initializer;
             const name = value && ts.isIdentifier(value) ? value.text : text.slice(start, end).trim();
             let stub: import("typescript").VariableStatement | undefined;
             const visit = (node: import("typescript").Node) => {
