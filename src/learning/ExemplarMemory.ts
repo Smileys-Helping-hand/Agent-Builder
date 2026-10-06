@@ -386,6 +386,14 @@ export const ExemplarMemory = {
             .map((c) => `${c.name} from "${c.module}"`)
             .join(", ")}. The game screen MUST render it, e.g. <${components[0].name} settings={${defaults[0] ?? "settings"}} onScore={...} />. It already handles every player action (moving, shooting, building, fighting — whatever this game has) and keeps the game's state itself: do not write your own game loop or canvas, do not call the engine's actions from a screen, do not keep a copy of the game state, and never stand in for play with buttons that fire game events. To show the score or stats on other screens, use its onScore={(score) => …} and onChange={(state) => …} props.`
         : "";
+      // A model left to keep its own high scores stored the hero (which has no
+      // score) and sorted by hero.score: six type errors it never untangled.
+      const scoresFile = adopted.find((file) => /\/scores\.ts$/.test(file));
+      const scores = scoresFile
+        ? `\nHigh scores, leaderboards and a "hall of fame" are already handled: use addScore({ name, score, detail }) and loadScores() from "./${scoresFile
+            .replace(/^src\//, "")
+            .replace(/\.ts$/, "")}" (entries are ScoreEntry { name, score, detail?, at }). Never store the player, hero or game state as a score entry, and do not write your own high-score storage.`
+        : "";
       return `Already in your project, complete, tested and working: ${adopted.join(", ")} (the engine from our
 "${exemplar.title}"). Build this app ON it: import from ${modules} and write the screens, navigation,
 saving and anything else the brief asks for around it. Change the engine only where the brief needs
@@ -394,7 +402,7 @@ Its interfaces and types are types only: never \`new\` them; pass plain objects 
         defaults.length
           ? `\nReady-made values to start from: ${defaults.join(", ")} (e.g. newGame(${defaults[0]})). In tests, make a state the same way and change only what the test is about: { ...newGame(${defaults[0]}), score: 120 }. Never write the paddle, ball or bricks out by hand.`
           : ""
-      }${playable}
+      }${playable}${scores}
 Its files:
 ${exemplar.outline}
 `;

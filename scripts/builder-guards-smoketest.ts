@@ -363,6 +363,12 @@ assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/gameLoop.ts
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/storage.ts", purpose: "save and load the game in localStorage" }), false);
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/progression.ts", purpose: "unlock levels and track high scores" }), false);
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/gameLogic.ts", purpose: "handles game events and updates the game state" }), true, "a reducer around the board's own actions");
+assert.equal(AutonomousOrchestrator.duplicatesScores({ path: "src/lib/highScores.ts", purpose: "keeps the best heroes" }), true, "the engine's score table does this");
+assert.equal(AutonomousOrchestrator.duplicatesScores({ path: "src/lib/leaderboard.ts", purpose: "top ten" }), true);
+assert.equal(AutonomousOrchestrator.duplicatesScores({ path: "src/lib/hallOfFame.ts", purpose: "" }), true);
+assert.equal(AutonomousOrchestrator.duplicatesScores({ path: "src/components/HallOfHeroes.tsx", purpose: "shows the best scores" }), false, "a screen that shows the table stays");
+assert.equal(AutonomousOrchestrator.duplicatesScores({ path: "src/lib/progression.ts", purpose: "unlock levels and track high scores" }), false, "a module with other work stays");
+assert.equal(AutonomousOrchestrator.duplicatesScores({ path: "src/lib/highScores.test.ts", purpose: "" }), false);
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/combat.ts", purpose: "turn-based battle rules" }), true);
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/gameSave.ts", purpose: "save and load the hero and high scores" }), false, "saving stays");
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/components/Game.tsx", purpose: "the game screen with the canvas" }), false, "screens stay: the game screen is where the board goes");

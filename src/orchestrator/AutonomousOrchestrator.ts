@@ -1267,6 +1267,20 @@ export default function ${name}({ onScore, onChange }: ${name}Props) {
     );
   }
 
+  /**
+   * A logic file that keeps high scores, when the engine's score table already
+   * does: an RPG build stored the hero (which has no score) as its high score
+   * and sorted by hero.score, six type errors five repairs never untangled.
+   * Screens that show the table stay.
+   */
+  static duplicatesScores(file: { path: string; purpose: string }): boolean {
+    if (!/\.ts$/.test(file.path) || /\.test\./.test(file.path)) return false;
+    // By the file's name: a progression module that also tracks scores keeps its other work.
+    return /^(high ?scores?|best ?scores?|leader ?boards?|scores?( ?(board|table|store|storage|history))?|hall ?of ?(fame|heroes|champions))$/i.test(
+      path.basename(file.path, ".ts").replace(/([a-z])([A-Z])/g, "$1 $2")
+    );
+  }
+
   /** The compile-level check a build carried on from another left failing ("When it last ran, the typecheck check failed"), if any. */
   static inheritedBlocker(description: string): "install" | "typecheck" | "build" | undefined {
     return /When it last ran, the (install|typecheck|build) check failed/.exec(description)?.[1] as "install" | "typecheck" | "build" | undefined;
@@ -1521,7 +1535,9 @@ Answer with JSON only:
       .filter(({ file, dupes, keep }) => !(dupes.length > 0 && dupes.length >= keep.length && !/\.tsx$/.test(file.path)))
       .map(({ file, keep }) => ({ ...file, exports: keep }))
       // With a playable board, logic files for what it already does are dropped.
-      .filter((file) => !(boards.length && AutonomousOrchestrator.duplicatesBoard(file)));
+      .filter((file) => !(boards.length && AutonomousOrchestrator.duplicatesBoard(file)))
+      // And with the engine's score table, a store of the model's own.
+      .filter((file) => !(engine.some((e) => /\/scores\.ts$/.test(e.file)) && AutonomousOrchestrator.duplicatesScores(file)));
     // Tests for the logic, when the plan forgot them.
     const logic = plan.find((file) => /^src\/lib\/[^/]+\.ts$/.test(file.path) && !/\.test\./.test(file.path));
     if (logic && !plan.some((file) => /\.test\.tsx?$/.test(file.path))) {
