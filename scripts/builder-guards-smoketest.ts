@@ -363,6 +363,11 @@ assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/gameLoop.ts
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/storage.ts", purpose: "save and load the game in localStorage" }), false);
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/progression.ts", purpose: "unlock levels and track high scores" }), false);
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/components/Game.tsx", purpose: "the game screen with the canvas" }), false, "screens stay: the game screen is where the board goes");
+assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/components/GameScreen.tsx", purpose: "the battle and the map" }), false);
+assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/components/BattleScreen.tsx", purpose: "turn-based battles" }), true, "the board has its own battle panel");
+assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/components/GameControls.tsx", purpose: "on-screen buttons" }), true);
+assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/components/CharacterSheet.tsx", purpose: "hero stats" }), false, "other screens stay");
+assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/components/HallOfHeroes.tsx", purpose: "high scores" }), false);
 
 // A carried-on build knows how its predecessor ended, so its first pass repairs instead of rewriting.
 assert.equal(AutonomousOrchestrator.inheritedBlocker("Build Pgame.\n\nThis project was started by an earlier build and is already in the folder.\nCarry on.\n\nWhen it last ran, the typecheck check failed with:\nsrc/a.ts(1,1): error"), "typecheck");

@@ -1206,7 +1206,17 @@ ${lines}
    */
   /** A planned logic file that would redo what a playable board does: input, controls, the loop, drawing, physics. */
   static duplicatesBoard(file: { path: string; purpose: string }): boolean {
-    if (!/\.ts$/.test(file.path) || /\.test\./.test(file.path)) return false;
+    if (/\.test\./.test(file.path)) return false;
+    // Screens for what the board already shows: an RPG build planned a
+    // BattleScreen and GameControls beside a board with its own battle panel
+    // and pad, and they fought it. The game screen itself, where the board
+    // goes, and every other screen (menus, saves, scores) stay.
+    if (/\.tsx$/.test(file.path)) {
+      const name = path.basename(file.path, ".tsx");
+      if (/^(Game|Play|Main)(Screen|Page|View)?$/.test(name)) return false;
+      return /^(Battle|Combat|Fight|Arena|Controls?|GameControls|Dpad|DPad|Joystick|Hud|HUD|Canvas|Board|GameBoard|Map|MapView|Dungeon|Field|Playfield)(Screen|Panel|View|Page)?$/.test(name);
+    }
+    if (!/\.ts$/.test(file.path)) return false;
     return /\b(input|controls?|keyboard|touch|pointer|game ?loop|frame loop|render(er|ing)?|draw(ing)?|canvas|physics|collisions?|paddle|ball movement)\b/i.test(
       `${path.basename(file.path).replace(/([a-z])([A-Z])/g, "$1 $2")} ${file.purpose}`
     );
@@ -1425,7 +1435,7 @@ ${lines}
     const engineNote = engine.length
       ? `\nAlready in the project (a tested engine — use it, do not plan to rewrite it):\n${engine.map((e) => `- ${e.file}: ${e.exports.join("; ")}`).join("\n")}\n${
           boards.length
-            ? `The game itself already plays: ${boards.map((b) => `${b.name} in ${b.file}`).join(", ")} draws it, runs the loop and handles touch, mouse and keys. Plan no files for input, controls, a game loop, drawing or physics: the game screen renders <${boards[0].name} settings={DEFAULT_SETTINGS} onScore={...} /> and the rest of the app (menus, saving, progression) goes around it.\n`
+            ? `The game itself already plays: ${boards.map((b) => `${b.name} in ${b.file}`).join(", ")} draws it, runs the loop, handles touch, mouse and keys, and has its own in-game panels (battles, controls, the map, the score bar). Plan no files for input, controls, a game loop, drawing, physics, battles or the map: the game screen renders <${boards[0].name} settings={DEFAULT_SETTINGS} onScore={...} /> and the rest of the app (menus, saving, progression) goes around it.\n`
             : ""
         }`
       : "";
