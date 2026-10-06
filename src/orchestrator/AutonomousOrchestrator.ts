@@ -1844,7 +1844,7 @@ No placeholders: where the brief does not give a detail, write realistic wording
       todo.push(
         `make every screen reachable: ${unreachable
           .map((u) => `a button that calls ${u.handler} (for the ${u.screen} screen)`)
-          .join(" and ")}, e.g. on the title or menu screen (pass the handlers to it as props and render a button for each), and give every screen a Back button to the title`
+          .join(" and ")}, e.g. on the title or menu screen (pass the handlers to it as props and render a button for each), and give every screen a Back button to the title. Change only App.tsx and those screens: the game screen and board already exist, do not write new ones`
       );
     }
     for (const unshown of unshownComponents(source, this.adoptedEngine)) {
@@ -2048,6 +2048,30 @@ Rules that keep this build passing its checks (install, typecheck, build, tests)
       if (problem) {
         files[file] = before;
         fragments.push(`• ${file}: the new version ${problem}, so the working one stays.`);
+      }
+    }
+    // With a playable board, a repair may not add a second one: asked to make
+    // two screens reachable, a model wrote its own GameBoard.tsx and Game.tsx
+    // calling the engine's actions, and the build stopped compiling. New files
+    // that redo the board, or a second game screen beside the builder's, go.
+    if (this.adoptedEngine.some((file) => /\.tsx$/.test(file))) {
+      const builtIn = (() => {
+        try {
+          return fs
+            .readdirSync(path.join(this.workspace.root, "src", "components"))
+            .some((name) => fs.readFileSync(path.join(this.workspace.root, "src", "components", name), "utf8").includes(AutonomousOrchestrator.BUILT_IN_MARK));
+        } catch {
+          return false;
+        }
+      })();
+      for (const file of Object.keys(files)) {
+        if (fs.existsSync(path.join(this.workspace.root, file)) || this.adoptedEngine.includes(file)) continue;
+        const name = path.basename(file).replace(/\.tsx?$/, "");
+        const secondScreen = builtIn && /\.tsx$/.test(file) && /^(Game|Play|Main)(Screen|Page|View)?$/.test(name);
+        if (secondScreen || AutonomousOrchestrator.duplicatesBoard({ path: file, purpose: "" })) {
+          delete files[file];
+          fragments.push(`• ${file}: the game is already built (the tested board in src/engine/, shown by the builder's game screen), so a new copy of it is not added — change the screens around it instead.`);
+        }
       }
     }
     if (fragments.length > 0) {
