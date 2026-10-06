@@ -43,7 +43,7 @@ export interface GameSettings {
   colors: { wall: string; floor: string; hero: string; stairs: string; item: string };
 }
 
-export type Status = "exploring" | "battle" | "won" | "lost";
+export type Status = "playing" | "battle" | "won" | "lost";
 
 export interface Hero {
   name: string;
@@ -182,9 +182,12 @@ export function random(state: GameState): number {
   return state.seed / 4294967296;
 }
 
-/** Experience needed to reach the next level from here. */
-export function xpToNext(state: GameState): number {
-  return state.settings.xpPerLevel * state.hero.level;
+/**
+ * Experience needed to reach the next level from here. Takes the game, or
+ * just a hero (with the settings it plays under, the defaults otherwise).
+ */
+export function xpToNext(of: GameState | Hero, settings: GameSettings = DEFAULT_SETTINGS): number {
+  return "hero" in of ? of.settings.xpPerLevel * of.hero.level : settings.xpPerLevel * of.level;
 }
 
 function note(state: GameState, line: string): void {
@@ -210,7 +213,7 @@ export function enterFloor(state: GameState, floor: number): GameState {
     }
   }
   state.battle = null;
-  state.status = "exploring";
+  state.status = "playing";
   note(state, `You enter ${spec.name}.`);
   rescore(state);
   return state;
@@ -223,7 +226,7 @@ export function newGame(settings: GameSettings, seed = 11): GameState {
     floor: 0,
     map: [],
     hero: { name: hero.name, x: 0, y: 0, hp: hero.hp, maxHp: hero.hp, attack: hero.attack, defence: hero.defence, level: 1, xp: 0, gold: 0, potions: hero.potions },
-    status: "exploring",
+    status: "playing",
     battle: null,
     log: [],
     score: 0,
@@ -240,7 +243,7 @@ function blow(state: GameState, attack: number, defence: number): number {
 
 /** Take a step. Walking into a monster starts a battle; into a wall does nothing. */
 export function move(state: GameState, dx: number, dy: number): GameEvent[] {
-  if (state.status !== "exploring") return [];
+  if (state.status !== "playing") return [];
   const x = state.hero.x + dx;
   const y = state.hero.y + dy;
   const tile = state.map[y]?.[x];
@@ -311,7 +314,7 @@ export function attack(state: GameState): GameEvent[] {
   state.hero.gold += spec.gold;
   state.defeated += 1;
   state.battle = null;
-  state.status = "exploring";
+  state.status = "playing";
   note(state, `The ${battle.name} is defeated: +${spec.xp} XP, +${spec.gold} gold.`);
   events.push("enemy-down");
   while (state.hero.xp >= xpToNext(state)) {
@@ -335,7 +338,7 @@ export function attack(state: GameState): GameEvent[] {
 
 /** Drink a potion, in a battle or out of one. In a battle the monster gets its turn. */
 export function usePotion(state: GameState): GameEvent[] {
-  if ((state.status !== "battle" && state.status !== "exploring") || state.hero.potions === 0) return [];
+  if ((state.status !== "battle" && state.status !== "playing") || state.hero.potions === 0) return [];
   const events: GameEvent[] = [];
   state.hero.potions -= 1;
   const healed = Math.min(state.settings.potionHeal, state.hero.maxHp - state.hero.hp);
@@ -354,7 +357,7 @@ export function flee(state: GameState): GameEvent[] {
   if (!state.battle.boss && random(state) < 0.55) {
     note(state, `You escape the ${state.battle.name}.`);
     state.battle = null;
-    state.status = "exploring";
+    state.status = "playing";
     events.push("fled");
     return events;
   }

@@ -115,7 +115,7 @@ export function GameBoard({ settings, accent = "#f59e0b", onScore, onChange }: G
       const k = event.key.toLowerCase();
       const state = game.current;
       const moves: Record<string, [number, number]> = { arrowup: [0, -1], w: [0, -1], arrowdown: [0, 1], s: [0, 1], arrowleft: [-1, 0], a: [-1, 0], arrowright: [1, 0], d: [1, 0] };
-      if (state.status === "exploring" && moves[k]) act((s) => move(s, ...moves[k]));
+      if (state.status === "playing" && moves[k]) act((s) => move(s, ...moves[k]));
       else if (state.status === "battle" && (k === "1" || k === "enter")) act(attack);
       else if (k === "2" || k === "h") act(usePotion);
       else if (state.status === "battle" && k === "3") act(flee);
@@ -137,7 +137,7 @@ export function GameBoard({ settings, accent = "#f59e0b", onScore, onChange }: G
   const columns = state.map[0]?.length ?? 15;
   const rows = state.map.length;
   const pad = (label: string, dx: number, dy: number) => (
-    <button className="btn btn-ghost" aria-label={label} onClick={() => act((s) => move(s, dx, dy))} disabled={state.status !== "exploring"} style={{ minWidth: 48 }}>
+    <button className="btn btn-ghost" aria-label={label} onClick={() => act((s) => move(s, dx, dy))} disabled={state.status !== "playing"} style={{ minWidth: 48 }}>
       {label}
     </button>
   );
@@ -200,7 +200,7 @@ export function GameBoard({ settings, accent = "#f59e0b", onScore, onChange }: G
         {pad("↑", 0, -1)}
         <span />
         {pad("←", -1, 0)}
-        <button className="btn btn-ghost" onClick={() => act(usePotion)} disabled={hero.potions === 0 || state.status !== "exploring" || hero.hp === hero.maxHp} aria-label="Drink a potion">
+        <button className="btn btn-ghost" onClick={() => act(usePotion)} disabled={hero.potions === 0 || state.status !== "playing" || hero.hp === hero.maxHp} aria-label="Drink a potion">
           🧪
         </button>
         {pad("→", 1, 0)}

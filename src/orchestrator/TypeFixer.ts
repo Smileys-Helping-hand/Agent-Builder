@@ -674,6 +674,26 @@ export const TypeFixer = {
             }
           }
 
+          // `import { ScoreEntry } from "../engine/scores"` in ScoreEntry.tsx, whose
+          // component is also ScoreEntry: the imported one is only a type, so
+          // the import says so and both names live side by side.
+          if (diagnostic.code === 2865) {
+            const source = service.getProgram()?.getSourceFile(fileName);
+            let specifier: import("typescript").ImportSpecifier | undefined;
+            const visit = (node: import("typescript").Node) => {
+              if (node.getStart(source) <= start && node.getEnd() >= end) {
+                if (ts.isImportSpecifier(node)) specifier = node;
+                ts.forEachChild(node, visit);
+              }
+            };
+            if (source) ts.forEachChild(source, visit);
+            if (specifier && source && !specifier.isTypeOnly && !specifier.parent.parent.isTypeOnly) {
+              add(path.resolve(fileName), { start: specifier.getStart(source), end: specifier.getStart(source), text: "type " });
+              notes.push(`${rel}:${line}: ${specifier.name.text} is imported as a type`);
+              continue;
+            }
+          }
+
           // `let battle = { ...state.battle }` where state.battle may be null:
           // every field turns optional, `battle = null` and `battle: battle` stop
           // compiling, and at run time a missing battle becomes {}. The copy

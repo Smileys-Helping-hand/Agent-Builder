@@ -81,10 +81,17 @@ describe("the RPG", () => {
     let events: string[] = [];
     for (let i = 0; i < 20 && state.status === "battle"; i++) events = attack(state);
     expect(events).toContain("enemy-down");
-    expect(state.status).toBe("exploring");
+    expect(state.status).toBe("playing");
     expect(state.hero.xp).toBe(DEFAULT_SETTINGS.monsters.s.xp);
     expect(state.hero.gold).toBe(DEFAULT_SETTINGS.monsters.s.gold);
     expect(move(state, 1, 0)).toEqual(["moved"]);
+  });
+
+  it("tells the experience to the next level from the game or from a hero", () => {
+    const state = newGame(DEFAULT_SETTINGS);
+    expect(xpToNext(state)).toBe(DEFAULT_SETTINGS.xpPerLevel);
+    expect(xpToNext(state.hero)).toBe(DEFAULT_SETTINGS.xpPerLevel);
+    expect(xpToNext({ ...state.hero, level: 3 })).toBe(DEFAULT_SETTINGS.xpPerLevel * 3);
   });
 
   it("levels up with enough experience: stronger and fully healed", () => {

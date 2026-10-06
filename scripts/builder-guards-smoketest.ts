@@ -784,6 +784,16 @@ assert.match(selfTest, /hero: \{ \.\.\.newGame\(DEFAULT_SETTINGS\)\.hero \}/, `$
 assert.match(selfTest, /import \{ newGame \} from "\.\/engine\/game";/, selfTest);
 assert.deepEqual(TypeFixer.run(selfRef), [], "nothing left to fix");
 
+// A component named like the type it imports: the import becomes type-only.
+const typeClash = fs.mkdtempSync(path.join(os.tmpdir(), "ab-typeClash-"));
+fs.mkdirSync(path.join(typeClash, "src", "engine"), { recursive: true });
+fs.writeFileSync(path.join(typeClash, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", noEmit: true, isolatedModules: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(path.join(typeClash, "src/engine/scores.ts"), "export interface ScoreEntry { name: string; score: number }\n");
+fs.writeFileSync(path.join(typeClash, "src/ScoreEntry.ts"), "import { ScoreEntry } from './engine/scores';\nconst ScoreEntry = (entry: ScoreEntry): string => entry.name;\nexport default ScoreEntry;\n");
+const typeClashNotes = TypeFixer.run(typeClash);
+assert.match(fs.readFileSync(path.join(typeClash, "src/ScoreEntry.ts"), "utf8"), /^import \{ type ScoreEntry \} from '\.\/engine\/scores';/, typeClashNotes.join(" | "));
+assert.deepEqual(TypeFixer.run(typeClash), [], "nothing left to fix");
+
 // Screens kept in a type that means something else get named, with the fix.
 const screens = fs.mkdtempSync(path.join(os.tmpdir(), "ab-screens-"));
 fs.mkdirSync(path.join(screens, "src", "engine"), { recursive: true });
