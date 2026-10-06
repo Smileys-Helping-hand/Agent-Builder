@@ -758,6 +758,32 @@ assert.match(nullTest, /settings: \{ \.\.\.DEFAULT_SETTINGS, potionHeal: 5 \}/, 
 assert.match(nullTest, /^import \{ DEFAULT_SETTINGS \} from "\.\/engine\/game";/, nullTest);
 assert.deepEqual(TypeFixer.run(nulls), [], "nothing left to fix");
 
+// A test's hero copied from the settings inside the state being declared: it
+// starts from newGame(DEFAULT_SETTINGS).hero and the self-reference goes.
+const selfRef = fs.mkdtempSync(path.join(os.tmpdir(), "ab-self-"));
+fs.mkdirSync(path.join(selfRef, "src", "engine"), { recursive: true });
+fs.writeFileSync(path.join(selfRef, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", noEmit: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(
+  path.join(selfRef, "src/engine/game.ts"),
+  [
+    "export interface HeroSettings { name: string; hp: number }",
+    "export interface GameSettings { hero: HeroSettings }",
+    "export const DEFAULT_SETTINGS: GameSettings = { hero: { name: 'Hero', hp: 30 } };",
+    "export interface Hero { name: string; hp: number; x: number; y: number; level: number; xp: number; gold: number; maxHp: number }",
+    "export interface GameState { settings: GameSettings; hero: Hero }",
+    "export function newGame(settings: GameSettings): GameState {",
+    "  return { settings, hero: { ...settings.hero, x: 1, y: 1, level: 1, xp: 0, gold: 0, maxHp: settings.hero.hp } };",
+    "}",
+    ""
+  ].join("\n")
+);
+fs.writeFileSync(path.join(selfRef, "src/logic.test.ts"), "import { DEFAULT_SETTINGS, type GameState } from './engine/game';\nexport const state: GameState = { settings: DEFAULT_SETTINGS, hero: { ...state.settings.hero } };\n");
+const selfNotes = TypeFixer.run(selfRef);
+const selfTest = fs.readFileSync(path.join(selfRef, "src/logic.test.ts"), "utf8");
+assert.match(selfTest, /hero: \{ \.\.\.newGame\(DEFAULT_SETTINGS\)\.hero \}/, `${selfTest}\n${selfNotes.join(" | ")}`);
+assert.match(selfTest, /import \{ newGame \} from "\.\/engine\/game";/, selfTest);
+assert.deepEqual(TypeFixer.run(selfRef), [], "nothing left to fix");
+
 // Screens kept in a type that means something else get named, with the fix.
 const screens = fs.mkdtempSync(path.join(os.tmpdir(), "ab-screens-"));
 fs.mkdirSync(path.join(screens, "src", "engine"), { recursive: true });

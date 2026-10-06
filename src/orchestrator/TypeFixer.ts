@@ -595,39 +595,82 @@ export const TypeFixer = {
                 notes.push(`${rel}:${line}: gave the test's object its missing ${filled.map((field) => field.name).join(", ")}`);
                 continue;
               }
-              // Fields that are not plain (colors: { wall, floor, … }): the test's
-              // settings start from the engine's own defaults, and its fields win.
+              // Fields that are not plain (colors: { wall, floor, … }), or a hero
+              // copied from the settings' starting stats: the test's object starts
+              // from what the engine makes (DEFAULT_SETTINGS, newGame(…).hero),
+              // and its own fields win.
               const typeName = expected?.aliasSymbol?.name ?? expected?.getSymbol()?.name;
-              let defaults: { name: string; file: string } | undefined;
+              const exported = new Map<string, { file: string; type: import("typescript").Type; kind: "const" | "function" }>();
               for (const other of typeName && program && missing.length > 0 ? program.getSourceFiles() : []) {
                 if (!ours(other.fileName) || /\.test\.tsx?$/.test(other.fileName)) continue;
                 for (const statement of other.statements) {
-                  if (!ts.isVariableStatement(statement) || !statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) continue;
+                  if (!(ts.canHaveModifiers(statement) && ts.getModifiers(statement)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword))) continue;
+                  if (ts.isFunctionDeclaration(statement) && statement.name) exported.set(statement.name.text, { file: other.fileName, type: checker.getTypeAtLocation(statement.name), kind: "function" });
+                  if (!ts.isVariableStatement(statement)) continue;
                   for (const declaration of statement.declarationList.declarations) {
-                    if (!ts.isIdentifier(declaration.name) || !/^DEFAULT_/.test(declaration.name.text)) continue;
-                    const type = checker.getTypeAtLocation(declaration.name);
-                    if ((type.aliasSymbol?.name ?? type.getSymbol()?.name) === typeName) defaults = { name: declaration.name.text, file: other.fileName };
+                    if (ts.isIdentifier(declaration.name)) exported.set(declaration.name.text, { file: other.fileName, type: checker.getTypeAtLocation(declaration.name), kind: "const" });
                   }
                 }
               }
-              const spreads = literal.properties.some((property) => ts.isSpreadAssignment(property));
-              if (defaults && !spreads) {
-                add(path.resolve(fileName), { start: literal.getStart(source) + 1, end: literal.getStart(source) + 1, text: ` ...${defaults.name},` });
-                const imported = source.statements.some(
-                  (statement) =>
-                    ts.isImportDeclaration(statement) &&
-                    statement.importClause?.namedBindings &&
-                    ts.isNamedImports(statement.importClause.namedBindings) &&
-                    statement.importClause.namedBindings.elements.some((element) => element.name.text === defaults!.name)
+              const named = (type: import("typescript").Type) => type.aliasSymbol?.name ?? type.getSymbol()?.name;
+              let base: { text: string; uses: string[] } | undefined;
+              for (const [name, entry] of exported) {
+                if (/^DEFAULT_/.test(name) && entry.kind === "const" && named(entry.type) === typeName) base = { text: name, uses: [name] };
+              }
+              // A type the game state holds (GameState.hero: Hero): newGame(DEFAULT_SETTINGS).hero.
+              const newGame = exported.get("newGame");
+              const settingsName = Array.from(exported.keys()).find((name) => /^DEFAULT_SETTINGS$/.test(name));
+              if (!base && newGame?.kind === "function" && settingsName) {
+                const made = newGame.type.getCallSignatures()[0]?.getReturnType();
+                const field = made?.getProperties().find((property) => named(checker.getNonNullableType(checker.getTypeOfSymbolAtLocation(property, literal))) === typeName);
+                if (field) base = { text: `newGame(${settingsName}).${field.name}`, uses: ["newGame", settingsName] };
+              }
+              const startsFrom = literal.properties[0] && ts.isSpreadAssignment(literal.properties[0]) && literal.properties[0].expression.getText(source) === base?.text;
+              if (base && !startsFrom) {
+                add(path.resolve(fileName), { start: literal.getStart(source) + 1, end: literal.getStart(source) + 1, text: ` ...${base.text},` });
+                const importedNames = new Set(
+                  source.statements.flatMap((statement) =>
+                    ts.isImportDeclaration(statement) && statement.importClause?.namedBindings && ts.isNamedImports(statement.importClause.namedBindings)
+                      ? statement.importClause.namedBindings.elements.map((element) => element.name.text)
+                      : []
+                  )
                 );
-                if (!imported) {
-                  let specifier = path.relative(path.dirname(fileName), defaults.file).split(path.sep).join("/").replace(/\.tsx?$/, "");
+                for (const use of base.uses.filter((name) => !importedNames.has(name))) {
+                  let specifier = path.relative(path.dirname(fileName), exported.get(use)!.file).split(path.sep).join("/").replace(/\.tsx?$/, "");
                   if (!specifier.startsWith(".")) specifier = `./${specifier}`;
-                  add(path.resolve(fileName), { start: 0, end: 0, text: `import { ${defaults.name} } from "${specifier}";\n` });
+                  add(path.resolve(fileName), { start: 0, end: 0, text: `import { ${use} } from "${specifier}";\n` });
                 }
-                notes.push(`${rel}:${line}: the test's ${typeName} starts from ${defaults.name} (it was missing ${missing.map((property) => property.name).join(", ")})`);
+                notes.push(`${rel}:${line}: the test's ${typeName} starts from ${base.text} (it was missing ${missing.map((property) => property.name).join(", ")})`);
                 continue;
               }
+            }
+          }
+
+          // `const state: GameState = { …, hero: { ...state.settings.hero } }` in a
+          // test: the object read from itself before it existed. The spread goes
+          // (the object's own fields, or the engine's start, fill it).
+          if ((diagnostic.code === 2448 || diagnostic.code === 2454) && /\.test\.tsx?$/.test(fileName)) {
+            const source = service.getProgram()?.getSourceFile(fileName);
+            let spread: import("typescript").SpreadAssignment | undefined;
+            const visit = (node: import("typescript").Node) => {
+              if (node.getStart(source) <= start && node.getEnd() >= end) {
+                if (ts.isSpreadAssignment(node)) spread = node;
+                ts.forEachChild(node, visit);
+              }
+            };
+            if (source) ts.forEachChild(source, visit);
+            const literal = spread && ts.isObjectLiteralExpression(spread.parent) ? spread.parent : undefined;
+            if (spread && literal && source) {
+              const list = literal.properties;
+              const index = list.indexOf(spread);
+              let from = spread.getFullStart();
+              let to = spread.getEnd();
+              if (index < list.length - 1) to = list[index + 1].getFullStart();
+              else if (index > 0) from = list[index - 1].getEnd();
+              else if (list.hasTrailingComma) to = text.indexOf(",", to) + 1;
+              add(path.resolve(fileName), { start: from, end: to, text: "" });
+              notes.push(`${rel}:${line}: removed ${spread.getText(source)}, read before it was made`);
+              continue;
             }
           }
 
