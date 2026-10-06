@@ -142,7 +142,7 @@ export function GameBoard({ settings, accent = "#f59e0b", onScore, onChange }: G
     </button>
   );
   return (
-    <div className="arcade" style={{ display: "grid", gap: 12, width: "100%", maxWidth: columns * TILE, margin: "0 auto" }}>
+    <section className="arcade" aria-label="Game Board" data-testid="game-board" style={{ display: "grid", gap: 12, width: "100%", maxWidth: columns * TILE, margin: "0 auto" }}>
       <div className="hud" aria-live="polite" style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <span>
           {hero.name} · Lv <b>{hero.level}</b>
@@ -213,6 +213,6 @@ export function GameBoard({ settings, accent = "#f59e0b", onScore, onChange }: G
           <li key={`${i}-${line}`}>{line}</li>
         ))}
       </ol>
-    </div>
+    </section>
   );
 }

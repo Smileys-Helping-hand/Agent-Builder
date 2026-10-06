@@ -182,7 +182,7 @@ export function GameBoard({ settings, accent = "#22d3ee", onScore, onChange }: G
   const message = MESSAGES[hud.status];
   // Inline layout, so the board works in any app, styled or not.
   return (
-    <div className="arcade" style={{ display: "grid", gap: 12, width: "100%", maxWidth: settings.width, margin: "0 auto" }}>
+    <section className="arcade" aria-label="Game Board" data-testid="game-board" style={{ display: "grid", gap: 12, width: "100%", maxWidth: settings.width, margin: "0 auto" }}>
       <div className="hud" aria-live="polite" style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <span>
           Score <b>{hud.score.toLocaleString()}</b>
@@ -225,6 +225,6 @@ export function GameBoard({ settings, accent = "#22d3ee", onScore, onChange }: G
           {hud.status === "playing" ? "Pause" : hud.status === "paused" ? "Resume" : hud.status === "won" || hud.status === "lost" ? "Play again" : "Start"}
         </button>
       </div>
-    </div>
+    </section>
   );
 }

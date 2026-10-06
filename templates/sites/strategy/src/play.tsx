@@ -203,7 +203,7 @@ export function GameBoard({ settings, accent = "#22c55e", onScore, onChange }: G
   const message = MESSAGES[hud.status];
   const nextWave = settings.waves[hud.wave];
   return (
-    <div className="arcade" style={{ display: "grid", gap: 12, width: "100%", maxWidth: settings.columns * settings.cell, margin: "0 auto" }}>
+    <section className="arcade" aria-label="Game Board" data-testid="game-board" style={{ display: "grid", gap: 12, width: "100%", maxWidth: settings.columns * settings.cell, margin: "0 auto" }}>
       <div className="hud" aria-live="polite" style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <span>
           Gold <b>{hud.gold}</b>
@@ -289,6 +289,6 @@ export function GameBoard({ settings, accent = "#22c55e", onScore, onChange }: G
           Tap open ground to build · tap a tower to upgrade or sell · Space sends the next wave
         </p>
       )}
-    </div>
+    </section>
   );
 }

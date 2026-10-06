@@ -82,6 +82,7 @@ for (const genre of ["Space Shooter Game", "Tower Defense Strategy Game", "Fanta
   assert.match(note, /The game screen MUST render it, e\.g\. <GameBoard settings=\{DEFAULT_SETTINGS\}/);
   assert.match(note, /use addScore\(\{ name, score, detail \}\) and loadScores\(\) from "\.\/engine\/scores"/, note);
   assert.match(note, /Never store the player, hero or game state as a score entry/);
+  assert.match(note, /getByRole\("region", \{ name: "Game Board" \}\)/);
 }
 
 // Our own catalogue engine is never retired: runs cut short are not its failures.
