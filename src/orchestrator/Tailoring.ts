@@ -194,7 +194,22 @@ const isWording = (text: string): boolean =>
  * The visitor-facing wording of a content module, in order and without
  * repeats: what a reword asks the model to replace, line by line.
  */
-export const sampleWording = (source: string): string[] => Array.from(new Set(literals(source).map((l) => l.text).filter(isWording)));
+export const sampleWording = (source: string): string[] =>
+  Array.from(
+    new Set(
+      literals(source)
+        // A record's name in sample data (a dashboard's customers: { id, name, plan, status }) is data, not wording:
+        // reworded, a customer came out called "Enhance your business operations with PayPilot".
+        .filter((l) => {
+          if (!/\bname\s*:\s*$/.test(source.slice(Math.max(0, l.start - 20), l.start))) return true;
+          const open = source.lastIndexOf("{", l.start);
+          const close = source.indexOf("}", l.end);
+          return !/\b(id|plan|status|joined|mrr|role|amount|date)\s*:/.test(source.slice(open, close));
+        })
+        .map((l) => l.text)
+        .filter(isWording)
+    )
+  );
 
 /**
  * The prompt for a reword: the customer's brief and the sample wording,
