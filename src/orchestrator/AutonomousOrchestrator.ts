@@ -442,7 +442,11 @@ export class AutonomousOrchestrator extends EventEmitter {
         LessonMemory.markApplied(repairLessonIds);
 
         let critique: string | null = null;
-        if (profileSettings.reviewModel && this.isOllamaProvider()) {
+        // Only once a repair is stuck (third attempt on): the bigger model does
+        // not fit an 8 GB card beside the builder's, so each critique swapped
+        // models and took ~2 minutes of a ~3 minute repair, and on a first or
+        // second attempt it said less than the fixer's own hints.
+        if (profileSettings.reviewModel && this.isOllamaProvider() && repairAttempt >= 3) {
           critique = await this.getRepairCritique(profileSettings.reviewModel, currentFiles, verification);
           if (critique) {
             Logger.log(`Iteration ${iterationNum}: deep-mode critique (${profileSettings.reviewModel})`, { critique });
