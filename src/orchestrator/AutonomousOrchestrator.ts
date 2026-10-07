@@ -1417,7 +1417,16 @@ export default function ${name}({ onScore, onChange, onBack }: ${name}Props) {
     const notes: string[] = [];
     for (const name of names) {
       const file = `src/engine/${name}`;
-      if (CodeGuard.headStart(this.workspace.root, file) === null) continue;
+      if (CodeGuard.headStart(this.workspace.root, file) === null) {
+        // A project copied with a fresh history (imported, or carried on from
+        // a copy) has no head-start commit; its engine is still ours when it
+        // opens like one of the catalogue's. Recognised, it is guarded, but
+        // there is no earlier version to restore from.
+        if (AutonomousOrchestrator.catalogueEngine(path.join(this.workspace.root, file), path.resolve(process.env.TEMPLATES_DIR ?? "templates/sites"))) {
+          if (!this.adoptedEngine.includes(file)) this.adoptedEngine.push(file);
+        }
+        continue;
+      }
       if (!this.adoptedEngine.includes(file)) this.adoptedEngine.push(file);
       const fix = CodeGuard.restoreEngine(this.workspace.root, file);
       if (fix) {
@@ -1434,6 +1443,29 @@ export default function ${name}({ onScore, onChange, onBack }: ${name}Props) {
       `An earlier pass rewrote it: ${notes.join("; ")}. What it lost is back, and what it added is kept. Add to the engine; do not replace it.`,
       Object.keys(restored)
     );
+  }
+
+  /** Whether a project's engine file opens with the same header comment as a catalogue template's file of that name. */
+  static catalogueEngine(file: string, sitesDir: string): boolean {
+    const header = (text: string) => /^\s*\/\*\*[\s\S]*?\*\//.exec(text)?.[0].replace(/\s+/g, " ").trim() ?? "";
+    let mine = "";
+    try {
+      mine = header(fs.readFileSync(file, "utf8"));
+    } catch {
+      return false;
+    }
+    if (mine.length < 60) return false;
+    try {
+      return fs.readdirSync(sitesDir).some((id) => {
+        try {
+          return header(fs.readFileSync(path.join(sitesDir, id, "src", path.basename(file)), "utf8")) === mine;
+        } catch {
+          return false;
+        }
+      });
+    } catch {
+      return false;
+    }
   }
 
   private async adoptExemplarEngine(): Promise<void> {

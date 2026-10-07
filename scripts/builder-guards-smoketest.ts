@@ -457,6 +457,13 @@ assert.ok(builtScreen.includes(AutonomousOrchestrator.BUILT_IN_MARK), "marked, s
 assert.match(builtScreen, /onBack\?: \(\) => void;[\s\S]*\{onBack && \(/, "a way back to the menu when the app gives one");
 assert.equal(AutonomousOrchestrator.builtInGameScreen([{ file: "src/engine/game.ts", text: "export const x = 1;\n" }]), null, "no board, no built-in screen");
 
+// A copied project (no head-start commit) still has its catalogue engine recognised by its header.
+const copiedEngine = fs.mkdtempSync(path.join(os.tmpdir(), "ab-copied-"));
+fs.writeFileSync(path.join(copiedEngine, "game.ts"), fs.readFileSync(path.resolve("templates/sites/rpg/src/game.ts"), "utf8").replace("export function", "// changed since\nexport function"));
+assert.equal(AutonomousOrchestrator.catalogueEngine(path.join(copiedEngine, "game.ts"), path.resolve("templates/sites")), true, "an RPG engine, changed below its header, is still ours");
+fs.writeFileSync(path.join(copiedEngine, "play.tsx"), "/**\n * A board the model wrote itself, with a long enough comment to be compared.\n */\nexport const x = 1;\n");
+assert.equal(AutonomousOrchestrator.catalogueEngine(path.join(copiedEngine, "play.tsx"), path.resolve("templates/sites")), false, "a file of the same name that is not ours");
+
 // A carried-on build knows how its predecessor ended, so its first pass repairs instead of rewriting.
 assert.equal(AutonomousOrchestrator.inheritedBlocker("Build Pgame.\n\nThis project was started by an earlier build and is already in the folder.\nCarry on.\n\nWhen it last ran, the typecheck check failed with:\nsrc/a.ts(1,1): error"), "typecheck");
 assert.equal(AutonomousOrchestrator.inheritedBlocker("Build Pgame.\n\nWhen it last ran, the test check failed with:\n1 failed"), undefined, "a failing test is not a reason to stop adding");
