@@ -678,7 +678,7 @@ export const TypeFixer = {
           // `import { ScoreEntry } from "../engine/scores"` in ScoreEntry.tsx, whose
           // component is also ScoreEntry: the imported one is only a type, so
           // the import says so and both names live side by side.
-          if (diagnostic.code === 2865) {
+          if (diagnostic.code === 2865 || diagnostic.code === 2866) {
             const source = service.getProgram()?.getSourceFile(fileName);
             let specifier: import("typescript").ImportSpecifier | undefined;
             const visit = (node: import("typescript").Node) => {
@@ -691,6 +691,27 @@ export const TypeFixer = {
             if (specifier && source && !specifier.isTypeOnly && !specifier.parent.parent.isTypeOnly) {
               add(path.resolve(fileName), { start: specifier.getStart(source), end: specifier.getStart(source), text: "type " });
               notes.push(`${rel}:${line}: ${specifier.name.text} is imported as a type`);
+              continue;
+            }
+          }
+
+          // A test handing a function a word its type does not allow, on purpose
+          // (navigateTo("Unknown") to see what an unknown screen does): the test
+          // says so with a cast, and checks what it meant to check.
+          if (diagnostic.code === 2345 && /\.test\.tsx?$/.test(fileName)) {
+            const source = service.getProgram()?.getSourceFile(fileName);
+            let literal: import("typescript").StringLiteral | undefined;
+            const visit = (node: import("typescript").Node) => {
+              if (node.getStart(source) <= start && node.getEnd() >= end) {
+                if (ts.isStringLiteral(node) && node.getStart(source) === start && node.parent && ts.isCallExpression(node.parent)) literal = node;
+                ts.forEachChild(node, visit);
+              }
+            };
+            if (source) ts.forEachChild(source, visit);
+            const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
+            if (literal && source && /^Argument of type '"[^"]*"' is not assignable to parameter of type '\w+'/.test(message)) {
+              add(path.resolve(fileName), { start: literal.getStart(source), end: literal.getEnd(), text: `(${literal.getText(source)} as never)` });
+              notes.push(`${rel}:${line}: the test's ${literal.getText(source)} is an on-purpose wrong value, cast as one`);
               continue;
             }
           }
@@ -837,6 +858,33 @@ export const TypeFixer = {
                 add(path.resolve(fileName), { start: access.getStart(source), end: access.getEnd(), text: JSON.stringify(match[0]) });
                 notes.push(`${rel}:${line}: ${access.getText(source)} is the word ${JSON.stringify(match[0])} (${at.getText(source)} is a list of words, not an enum)`);
                 continue;
+              }
+            }
+
+            // The same slip under a name the browser also has: `Screen.Game` where
+            // our Screen is "Title" | "Game" | …, read as the DOM's Screen object.
+            if (diagnostic.code === 2339 && at && checker && at.parent && ts.isPropertyAccessExpression(at.parent) && at.parent.name === at && ts.isIdentifier(at.parent.expression)) {
+              const access = at.parent;
+              const typeName = (access.expression as import("typescript").Identifier).text;
+              const declaredByUs = (candidate: import("typescript").Symbol) => {
+                const real = candidate.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(candidate) : candidate;
+                return (real.declarations ?? []).some((d) => ours(d.getSourceFile().fileName) && ts.isTypeAliasDeclaration(d)) ? real : null;
+              };
+              const ourType = checker
+                .getSymbolsInScope(access.expression, ts.SymbolFlags.Type | ts.SymbolFlags.Alias)
+                .filter((candidate) => candidate.name === typeName)
+                .map(declaredByUs)
+                .find(Boolean);
+              if (ourType) {
+                const type = checker.getDeclaredTypeOfSymbol(ourType);
+                const literals = (type.isUnion() ? type.types : [type]).filter((t) => t.isStringLiteral()).map((t) => (t as import("typescript").StringLiteralType).value);
+                const flat = (word: string) => word.toLowerCase().replace(/[^a-z0-9]/g, "");
+                const match = literals.filter((value) => flat(value) === flat(access.name.text));
+                if (match.length === 1) {
+                  add(path.resolve(fileName), { start: access.getStart(source), end: access.getEnd(), text: JSON.stringify(match[0]) });
+                  notes.push(`${rel}:${line}: ${access.getText(source)} is the word ${JSON.stringify(match[0])} (${typeName} is a list of words, not an enum)`);
+                  continue;
+                }
               }
             }
 

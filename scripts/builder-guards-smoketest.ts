@@ -928,6 +928,22 @@ const typeClashNotes = TypeFixer.run(typeClash);
 assert.match(fs.readFileSync(path.join(typeClash, "src/ScoreEntry.ts"), "utf8"), /^import \{ type ScoreEntry \} from '\.\/engine\/scores';/, typeClashNotes.join(" | "));
 assert.deepEqual(TypeFixer.run(typeClash), [], "nothing left to fix");
 
+// `Screen.Game` where our Screen is a list of words and the browser also has a Screen;
+// a test's on-purpose wrong word is cast.
+const domClash = fs.mkdtempSync(path.join(os.tmpdir(), "ab-domclash-"));
+fs.mkdirSync(path.join(domClash, "src", "lib"), { recursive: true });
+fs.writeFileSync(path.join(domClash, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", noEmit: true, isolatedModules: true, lib: ["ES2020", "DOM"] }, include: ["src"] }));
+fs.writeFileSync(path.join(domClash, "src/lib/navigation.ts"), 'export type Screen = "Title" | "Game" | "HallOfHeroes";\nexport function navigateTo(screen: Screen): Screen { return screen; }\n');
+fs.writeFileSync(path.join(domClash, "src/App.ts"), "import { navigateTo, Screen } from './lib/navigation';\nexport const a = navigateTo(Screen.Game);\nexport const b: Screen = Screen.HallOfHeroes;\n");
+fs.writeFileSync(path.join(domClash, "src/lib/navigation.test.ts"), "import { navigateTo } from './navigation';\nexport const c = navigateTo('Unknown');\n");
+const domNotes = TypeFixer.run(domClash);
+const domApp = fs.readFileSync(path.join(domClash, "src/App.ts"), "utf8");
+assert.match(domApp, /import \{ navigateTo, type Screen \} from '\.\/lib\/navigation';/, domNotes.join(" | "));
+assert.match(domApp, /navigateTo\("Game"\)/, domApp);
+assert.match(domApp, /const b: Screen = "HallOfHeroes";/, domApp);
+assert.match(fs.readFileSync(path.join(domClash, "src/lib/navigation.test.ts"), "utf8"), /navigateTo\(\('Unknown' as never\)\)/);
+assert.deepEqual(TypeFixer.run(domClash), [], "nothing left to fix");
+
 // Screens kept in a type that means something else get named, with the fix.
 const screens = fs.mkdtempSync(path.join(os.tmpdir(), "ab-screens-"));
 fs.mkdirSync(path.join(screens, "src", "engine"), { recursive: true });
