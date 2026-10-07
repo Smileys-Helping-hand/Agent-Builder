@@ -108,4 +108,19 @@ assert.match(diet.source, /Cheesecake[^\n]*diet: \["vegetarian"\]/);
 assert.match(diet.source, /Kale Salad[^\n]*diet: \["vegan", "vegetarian"\]/);
 assert.deepEqual(fixDietTags(fs.readFileSync(path.resolve("templates/sites/restaurant/src/content.ts"), "utf8")).fixed, [], "the template's own menu is right");
 
+// Rewording line by line keeps every template's content parseable, whatever the new text holds.
+const { sampleWording, applyRewording } = await import("../src/orchestrator/Tailoring.js");
+const tsParser = (await import("typescript")).default;
+for (const id of fs.readdirSync(path.resolve("templates/sites")).filter((d) => fs.existsSync(path.resolve("templates/sites", d, "src/content.ts")))) {
+  const source = fs.readFileSync(path.resolve("templates/sites", id, "src/content.ts"), "utf8");
+  const wording = sampleWording(source);
+  assert.ok(wording.length >= 10, `${id}: its wording is found`);
+  assert.ok(!wording.some((line) => /^(https?:|#|\/)|@/.test(line)), `${id}: links, colours and emails are not wording`);
+  const reworded = applyRewording(source, wording, JSON.stringify(Object.fromEntries(wording.map((_, i) => [String(i + 1), `Line ${i + 1}: it's "ours" \\ really`]))));
+  assert.ok(reworded.changed >= wording.length, `${id}: every line replaced`);
+  const parsed = tsParser.createSourceFile("content.ts", reworded.source, tsParser.ScriptTarget.Latest, true) as unknown as { parseDiagnostics: unknown[] };
+  assert.equal(parsed.parseDiagnostics.length, 0, `${id}: still parses`);
+}
+assert.equal(applyRewording('const a = "Hello there";', ["Hello there"], "not json").changed, 0, "an answer that is not JSON changes nothing");
+
 console.log("orders log: all checks passed");

@@ -3,7 +3,7 @@ import { CodeGuard } from "./CodeGuard.js";
 import { AutoFix } from "./AutoFix.js";
 import { TypeFixer } from "./TypeFixer.js";
 import { appSource, coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, reviewPrompt, stubs, unreachableScreens, unshownComponents } from "./Completeness.js";
-import { applyFacts, readFacts, fixDietTags, sampleFactsLeft, stripInventedContact } from "./Tailoring.js";
+import { applyFacts, readFacts, applyRewording, fixDietTags, rewordPrompt, sampleFactsLeft, sampleWording, stripInventedContact } from "./Tailoring.js";
 import { ExemplarMemory, type Exemplar } from "../learning/ExemplarMemory.js";
 import { GameModeOnError } from "../utils/GameMode.js";
 import fs from "fs";
@@ -1812,6 +1812,48 @@ for it, make the app do it. Do one or the other completely; do not change both h
     );
   }
 
+  /** Set when the last tailoring check found most of the sample wording still there. */
+  private rewordNext = false;
+
+  /**
+   * The template's sample wording replaced line by line, when rewriting the
+   * whole content module has not got there: an order for the SaaS template
+   * spent five repairs on content.ts, each answer unparseable, missing its
+   * exports, or only adding a link, with 9% of the wording replaced. Asked for
+   * new sentences only (numbered, as JSON), the model cannot break the shape;
+   * the builder puts them in place.
+   */
+  private async rewordContent(): Promise<void> {
+    if (!this.rewordNext || !this.config.workingDir || !fs.existsSync(path.join(this.workspace.root, "template.json")) || this.isStarter()) return;
+    this.rewordNext = false;
+    const file = ["src/content.ts", "src/content.tsx", "src/content.js"].find((name) => fs.existsSync(path.join(this.workspace.root, name)));
+    if (!file) return;
+    let source = fs.readFileSync(path.join(this.workspace.root, file), "utf8");
+    const wording = sampleWording(source);
+    let changed = 0;
+    // In batches a small model can answer whole.
+    for (let i = 0; i < wording.length; i += 30) {
+      const batch = wording.slice(i, i + 30);
+      try {
+        const answer = await ModelRouter.generate(rewordPrompt(this.config.description, batch));
+        const result = applyRewording(source, batch, answer);
+        source = result.source;
+        changed += result.changed;
+      } catch (error: any) {
+        Logger.warn("Rewording the content failed", { error: error?.message });
+      }
+    }
+    if (changed === 0 || CodeGuard.syntaxErrors(file, source).length > 0) return;
+    await this.workspace.writeFiles({ [file]: source }, "Reworded the template's sample content for the customer");
+    this.think(
+      this.currentIteration,
+      "decision",
+      "Reworded the content line by line",
+      `Rewriting ${file} whole had not replaced the template's sample wording, so ${changed} of its ${wording.length} lines were reworded for the customer one by one, keeping every key and export as it was.`,
+      [file]
+    );
+  }
+
   /** Why the last content edit was refused by the shape guard, for the tailoring check to pass on. */
   private lastShapeRefusal: string | null = null;
 
@@ -1842,6 +1884,8 @@ for it, make the app do it. Do one or the other completely; do not change both h
       const sampleName = businessName(original);
       if (sampleName && businessName(now) === sampleName) reasons.push(`the business is still called "${sampleName}" (the template's sample)`);
       if (replaced < 0.3) reasons.push(`only ${Math.round(replaced * 100)}% of the sample wording has been replaced; the rest still describes the template's invented business`);
+      // Next pass, the wording is replaced line by line (the shape cannot break that way).
+      this.rewordNext = replaced < 0.3;
       reasons.push(...sampleFactsLeft(original, now, readFacts(this.config.description)));
     }
     if (/\bdemo\s*:\s*true\b/.test(now)) reasons.push(`${file} still has demo: true (the "template preview" ribbon)`);
@@ -1855,7 +1899,10 @@ for it, make the app do it. Do one or the other completely; do not change both h
       reasons.push(`it has placeholder text instead of real wording (${placeholders.slice(0, 4).map((value) => `"${value}"`).join(", ")})`);
     }
     const passed = reasons.length === 0;
-    if (passed) this.lastShapeRefusal = null;
+    if (passed) {
+      this.lastShapeRefusal = null;
+      this.rewordNext = false;
+    }
     return {
       name: "tailoring",
       applicable: true,
@@ -1867,7 +1914,8 @@ for it, make the app do it. Do one or the other completely; do not change both h
 Fix: write ${file} out in full with the customer's business name, wording, prices and details in place of the sample
 values, set demo: false, and keep every export and every key exactly as they are (change values, not the shape).
 No placeholders: where the brief does not give a detail, write realistic wording that fits their business, but never
-invent contact details: a phone, WhatsApp, email or street address the brief does not give stays "" (the site hides it).`
+invent contact details: a phone, WhatsApp, email or street address the brief does not give stays "" (the site hides it),
+and social links stay as they are: the builder removes made-up ones, so adding them back changes nothing.`
     };
   }
 
@@ -2348,6 +2396,7 @@ Rules that keep this build passing its checks (install, typecheck, build, tests)
     // build then carried both into the project nobody asked to change. A copy
     // of one of our own builds or templates already has its runner.
     const fromOurTemplate = fs.existsSync(path.join(this.workspace.root, "template.json"));
+    await this.rewordContent();
     await this.removeInventedContact();
     const verifyStarted = Date.now();
     let report = await Verifier.verify(this.workspace, { scaffoldTests: !this.config.workingDir, autofix: !this.config.workingDir || fromOurTemplate });
