@@ -103,10 +103,20 @@ export const stripInventedContact = (source: string, brief: string): { source: s
     return parts.length > 0 && parts.every((part) => briefText.includes(part));
   };
   const removed: string[] = [];
-  const cleaned = block[0].replace(/\b(email|phone|whatsapp|address)\s*:\s*(["'`])([^"'`]*)\2/g, (whole, key: string, quote: string, value: string) => {
+  let cleaned = block[0].replace(/\b(email|phone|whatsapp|address)\s*:\s*(["'`])([^"'`]*)\2/g, (whole, key: string, quote: string, value: string) => {
     if (given(key, value)) return whole;
     removed.push(key);
     return `${key}: ${quote}${quote}`;
   });
+  // A social account they did not name (instagram.com/comicvault) may be someone else's.
+  let socialGone = false;
+  cleaned = cleaned.replace(/\{\s*label\s*:\s*(["'`])[^"'`]*\1\s*,\s*url\s*:\s*(["'`])([^"'`]*)\2\s*\}\s*,?\s*/g, (whole, _q1: string, _q2: string, url: string) => {
+    const handle = url.replace(/^https?:\/\/(www\.)?/, "").replace(/\/+$/, "").toLowerCase();
+    const tail = handle.split("/").pop() ?? handle;
+    if (briefText.includes(handle) || (tail.length > 2 && briefText.includes(`@${tail}`))) return whole;
+    socialGone = true;
+    return "";
+  });
+  if (socialGone) removed.push("social links");
   return { source: source.replace(block[0], cleaned), removed };
 };

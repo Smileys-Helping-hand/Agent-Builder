@@ -84,5 +84,14 @@ const contactDir = fs.mkdtempSync(path.join(os.tmpdir(), "ab-contact-"));
 fs.mkdirSync(path.join(contactDir, "src"));
 fs.writeFileSync(path.join(contactDir, "src/content.ts"), stripped.source);
 assert.deepEqual(missingContact(contactDir), ["email", "phone number", "address"]);
+const social = stripInventedContact(`export const site = {
+  business: {
+    name: "Comic Vault",
+    social: [{ label: "Instagram", url: "https://instagram.com/comicvault" }, { label: "Facebook", url: "https://facebook.com/realcomicvault" }]
+  }
+};
+`, "Find us on facebook.com/realcomicvault");
+assert.deepEqual(social.removed, ["social links"]);
+assert.ok(!social.source.includes("instagram.com/comicvault") && social.source.includes("facebook.com/realcomicvault"), social.source);
 
 console.log("orders log: all checks passed");

@@ -717,7 +717,9 @@ export const OrderPipeline = {
             previewUrl
               ? `The customer can open it at ${previewUrl}`
               : "There is no public address for it, so the customer has nothing to open: check the tunnel is up.",
-            ...(missing.length ? [`They did not give their ${missing.join(", ")}, so the site leaves ${missing.length === 1 ? "it" : "them"} out: ask them before it goes live.`] : [])
+            ...(missing.length ? [`They did not give their ${missing.join(", ")}, so the site leaves ${missing.length === 1 ? "it" : "them"} out: ask them before it goes live.`] : []),
+            // A site needs wording, prices and hours, and the brief rarely has them all: the builder wrote what was missing.
+            "Before it goes out, check its facts with them: prices, opening hours, menu or product details and anything else they did not give were written by the builder."
           ].join("\n")
         );
         if (order.externalId) {
