@@ -192,6 +192,25 @@ const notifyJarvis = (order: Order, subject: string, body: string): void => {
 /** The least a build must score to be shown to anyone: roughly install, typecheck and build all passing. */
 const SHIPPABLE_SCORE = 60;
 
+/**
+ * What a customer may be shown has to work, whatever it scored: it installs,
+ * type-checks, builds and opens in a browser without errors. A score is a sum
+ * of checks, and one could clear 60 with the page failing to open; the
+ * customer was sent the link to it as "a first version, ready to look at".
+ * Checked on the pass the workspace was left at (the best one).
+ */
+const CUSTOMER_CHECKS = ["install", "typecheck", "build", "runs"];
+export const customerSafe = (record: Pick<BuildRecord, "iterationDetail" | "bestScore" | "qualityScore">): { ok: boolean; failing: string[] } => {
+  const passes = record.iterationDetail ?? [];
+  if (passes.length === 0) return { ok: false, failing: ["no finished pass"] };
+  const best = passes.reduce((top, pass) => (pass.qualityScore > top.qualityScore ? pass : top), passes[0]);
+  const failing = CUSTOMER_CHECKS.filter((name) => {
+    const check = best.checks.find((c) => c.name === name);
+    return check ? check.applicable && !check.passed : name !== "runs" && name !== "typecheck";
+  });
+  return { ok: failing.length === 0, failing };
+};
+
 const publicHttpsUrl = (): string | null => {
   const url = readPublicUrl();
   return url && url.startsWith("https://") ? url.replace(/\/+$/, "") : null;
@@ -616,7 +635,8 @@ export const OrderPipeline = {
       // site does not even build (install, typecheck and build together are
       // about 60 of the 100), so it cannot be opened, let alone handed over:
       // one such build reached "review" at 31 and downloaded as a blank page.
-      if (!wasMaintained && record.qualityScore < SHIPPABLE_SCORE) {
+      const safe = customerSafe(record);
+      if (!wasMaintained && (record.qualityScore < SHIPPABLE_SCORE || !safe.ok)) {
         const giveUp = order.attempts >= 3;
         OrderStore.update(order.id, {
           status: giveUp ? "failed" : "accepted",
@@ -628,7 +648,9 @@ export const OrderPipeline = {
         OrderStore.note(
           order.id,
           "failed",
-          `Build finished at quality ${Math.round(record.qualityScore)}, below the ${SHIPPABLE_SCORE} it needs to be usable, so it was not offered for checking. ` +
+          (record.qualityScore < SHIPPABLE_SCORE
+            ? `Build finished at quality ${Math.round(record.qualityScore)}, below the ${SHIPPABLE_SCORE} it needs to be usable, so it was not offered for checking. `
+            : `Build finished at quality ${Math.round(record.qualityScore)}, but ${safe.failing.join(", ")} did not pass, so it was not offered for checking. `) +
             (giveUp ? "Three tries have not got there; it needs a person." : "Trying again from the template's clean code.") +
             ` The attempt is kept at ${record.outputDir}.`
         );

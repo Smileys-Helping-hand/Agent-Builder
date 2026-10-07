@@ -38,4 +38,16 @@ assert.equal(OrderReceipts.forOrder(order.id).length, 1, "receipt is filed under
 assert.equal(OrderReceipts.list()[0].id, receipt.id, "and in the full list");
 assert.equal(OrderReceipts.verify({ ...receipt, customerName: "Someone Else" }), false, "an edited receipt does not");
 
+// A customer is only shown a build that installs, type-checks, builds and opens.
+const { customerSafe } = await import("../src/orders/OrderPipeline.js");
+const pass = (score: number, failing: string[] = []) => ({
+  iteration: 1, at: "", qualityScore: score, objectiveScore: score, status: "", improvements: [], files: 1, passed: failing.length === 0,
+  checks: ["install", "typecheck", "build", "test", "runs", "completeness"].map((name) => ({ name, applicable: true, passed: !failing.includes(name), durationMs: 1 })),
+  blocker: null, metrics: {} as never
+});
+assert.deepEqual(customerSafe({ iterationDetail: [pass(81, ["completeness"])], bestScore: 81, qualityScore: 81 }), { ok: true, failing: [] }, "incomplete but working: a person can check it");
+assert.deepEqual(customerSafe({ iterationDetail: [pass(72, ["runs"])], bestScore: 72, qualityScore: 72 }), { ok: false, failing: ["runs"] }, "does not open: never shown");
+assert.deepEqual(customerSafe({ iterationDetail: [pass(90, []), pass(70, ["typecheck"])], bestScore: 90, qualityScore: 90 }).ok, true, "judged on the best pass, where the workspace is left");
+assert.equal(customerSafe({ iterationDetail: [], bestScore: 0, qualityScore: 0 }).ok, false, "nothing finished: nothing to show");
+
 console.log("orders log: all checks passed");
