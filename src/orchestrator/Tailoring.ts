@@ -113,7 +113,9 @@ export const stripInventedContact = (source: string, brief: string): { source: s
   cleaned = cleaned.replace(/\{\s*label\s*:\s*(["'`])[^"'`]*\1\s*,\s*url\s*:\s*(["'`])([^"'`]*)\2\s*\}\s*,?\s*/g, (whole, _q1: string, _q2: string, url: string) => {
     const handle = url.replace(/^https?:\/\/(www\.)?/, "").replace(/\/+$/, "").toLowerCase();
     const tail = handle.split("/").pop() ?? handle;
-    if (briefText.includes(handle) || (tail.length > 2 && briefText.includes(`@${tail}`))) return whole;
+    // A handle they wrote ("@comicvault"), not the start of an email address (thabo@comicvault.co.za).
+    const named = tail.length > 2 && new RegExp(`(^|[^\\w.])@${tail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w.])`).test(briefText);
+    if (briefText.includes(handle) || named) return whole;
     socialGone = true;
     return "";
   });
