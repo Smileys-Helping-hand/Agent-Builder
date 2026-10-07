@@ -16,6 +16,7 @@ import fsSync from "fs";
 import path from "path";
 import { builtinModules, createRequire } from "module";
 import { CodeGuard } from "./CodeGuard.js";
+import { unreachableScreens } from "./Completeness.js";
 
 let typescriptModule: typeof import("typescript") | null | undefined;
 /** TypeScript's parser, for the fixes a regular expression would get wrong. */
@@ -796,6 +797,138 @@ export const AutoFix = {
   },
 
   /**
+   * A Back button that goes nowhere: `onBack={handleBackToGame}` on the game
+   * screen, where that handler switches to the game screen it is on. Pointed
+   * at the handler that goes to the first screen instead (handleBack), when
+   * App has one in use.
+   */
+  async fixBackToSelf(root: string): Promise<string[]> {
+    const appPath = path.join(root, "src", "App.tsx");
+    let app: string;
+    try {
+      app = await fs.readFile(appPath, "utf8");
+    } catch {
+      return [];
+    }
+    const first = /useState(?:<[^>]*>)?\(\s*(?:\{\s*screen\s*:\s*)?['"](\w+)['"]/.exec(app)?.[1];
+    if (!first) return [];
+    const handlers = new Map<string, string>();
+    for (const m of app.matchAll(/const\s+(\w+)\s*=\s*\([^)]*\)\s*=>\s*\{([^}]*)\}/g)) {
+      const target = /\bscreen\s*:\s*['"](\w+)['"]|set\w*Screen\(\s*['"](\w+)['"]/.exec(m[2]);
+      if (target) handlers.set(m[1], target[1] ?? target[2]);
+    }
+    const home = Array.from(handlers).find(([name, screen]) => screen === first && (app.match(new RegExp(`\\b${name}\\b`, "g")) ?? []).length > 1)?.[0];
+    if (!home) return [];
+    const notes: string[] = [];
+    let next = app;
+    // Each screen's block: from its marker to the next marker.
+    const markers = Array.from(app.matchAll(/\bcase\s+['"](\w+)['"]\s*:|\b\w*[sS]creen\s*===\s*['"](\w+)['"]/g));
+    for (let i = markers.length - 1; i >= 0; i--) {
+      const screen = markers[i][1] ?? markers[i][2];
+      const start = markers[i].index!;
+      const end = i + 1 < markers.length ? markers[i + 1].index! : app.length;
+      const block = next.slice(start, end);
+      const fixed = block.replace(/\bonBack=\{(\w+)\}/g, (whole, name: string) => (handlers.get(name) === screen && screen !== first ? `onBack={${home}}` : whole));
+      if (fixed !== block) {
+        next = next.slice(0, start) + fixed + next.slice(end);
+        notes.push(`src/App.tsx: the ${screen} screen's Back went back to itself; it goes to the ${first} screen now`);
+      }
+    }
+    if (next !== app) await fs.writeFile(appPath, next, "utf8");
+    return notes;
+  },
+
+  /**
+   * Screens App.tsx can show but nothing opens get a way in and a way out. An
+   * RPG build wrote handleCharacterSheet and handleHallOfHeroes and, told by
+   * name across five repairs to give them buttons, never did: two of the
+   * brief's four pages could not be opened. The first screen gets a menu with
+   * a button for each, and a screen with no Back of its own gets one to the
+   * first screen. Only App.tsx changes; no screen's props.
+   */
+  async wireUnreachableScreens(root: string): Promise<string[]> {
+    const appPath = path.join(root, "src", "App.tsx");
+    let app: string;
+    try {
+      app = await fs.readFile(appPath, "utf8");
+    } catch {
+      return [];
+    }
+    const missing = unreachableScreens({ "src/App.tsx": app });
+    if (missing.length === 0) return [];
+    const first = /useState(?:<[^>]*>)?\(\s*(?:\{\s*screen\s*:\s*)?['"](\w+)['"]/.exec(app)?.[1];
+    if (!first) return [];
+
+    // How this App switches screens: a setter called with a name, or a state object with a screen field.
+    const setter = /\b(set\w*Screen)\(\s*['"]\w+['"]\s*\)/.exec(app)?.[1];
+    const objectSetter = /\b(set\w+)\(\s*\{\s*screen\s*:\s*['"]\w+['"]\s*\}\s*\)/.exec(app)?.[1];
+    const goTo = (screen: string) => (setter ? `() => ${setter}('${screen}')` : objectSetter ? `() => ${objectSetter}({ screen: '${screen}' })` : null);
+    // A handler already used that goes back to the first screen (handleBack), else the setter.
+    const handlerTo = (screen: string) =>
+      Array.from(app.matchAll(/const\s+(\w+)\s*=\s*\([^)]*\)\s*=>\s*\{([^}]*)\}/g)).find(
+        (m) => new RegExp(`['"]${screen}['"]`).test(m[2]) && (app.match(new RegExp(`\\b${m[1]}\\b`, "g")) ?? []).length > 1
+      )?.[1];
+    const back = handlerTo(first) ?? goTo(first);
+    const label = (text: string) =>
+      text
+        .replace(/^(handle|on|go|show|open|goTo|to)(?=[A-Z])/, "")
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .toLowerCase()
+        .replace(/^\w/, (c) => c.toUpperCase());
+
+    /** The JSX element that starts at or after `from`: its bounds, or null. */
+    const elementAt = (from: number): { start: number; end: number; text: string } | null => {
+      const open = /<([A-Z][\w.]*)\b/g;
+      open.lastIndex = from;
+      const match = open.exec(app);
+      if (!match || match.index - from > 200) return null;
+      let depth = 0;
+      let i = match.index + match[0].length;
+      for (; i < app.length; i++) {
+        const ch = app[i];
+        if (ch === "{") depth++;
+        else if (ch === "}") depth--;
+        else if (depth === 0 && ch === "/" && app[i + 1] === ">") return { start: match.index, end: i + 2, text: app.slice(match.index, i + 2) };
+        else if (depth === 0 && ch === ">") break;
+      }
+      const close = app.indexOf(`</${match[1]}>`, i);
+      return close === -1 ? null : { start: match.index, end: close + match[1].length + 3, text: app.slice(match.index, close + match[1].length + 3) };
+    };
+    const markerFor = (screen: string) =>
+      new RegExp(`\\bcase\\s+['"]${screen}['"]\\s*:|\\b\\w*[sS]creen\\s*===\\s*['"]${screen}['"]`, "i").exec(app);
+
+    const edits: { start: number; end: number; text: string }[] = [];
+    const buttons = missing
+      .map((m) => {
+        const call = m.handler || goTo(m.screen);
+        return call ? `<button type="button" className="btn" onClick={${call}}>${label(m.handler || m.screen)}</button>` : null;
+      })
+      .filter((b): b is string => Boolean(b));
+    const firstMark = markerFor(first);
+    const firstElement = firstMark ? elementAt(firstMark.index + firstMark[0].length) : null;
+    if (!firstElement || buttons.length === 0) return [];
+    edits.push({
+      start: firstElement.start,
+      end: firstElement.end,
+      text: `<>\n        ${firstElement.text}\n        {/* Added by the builder: a way into every screen. */}\n        <nav className="menu" style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap", marginTop: 16 }}>\n          ${buttons.join("\n          ")}\n        </nav>\n      </>`
+    });
+    for (const m of missing) {
+      const mark = markerFor(m.screen);
+      const element = mark ? elementAt(mark.index + mark[0].length) : null;
+      if (!element || !back || /\bon(Back|Close|Exit|Menu|Done|Home)\s*=/.test(element.text)) continue;
+      edits.push({
+        start: element.start,
+        end: element.end,
+        text: `<>\n        <button type="button" className="btn btn-ghost" onClick={${back}}>← Back</button>\n        ${element.text}\n      </>`
+      });
+    }
+    let next = app;
+    for (const edit of edits.sort((a, b) => b.start - a.start)) next = next.slice(0, edit.start) + edit.text + next.slice(edit.end);
+    await fs.writeFile(appPath, next, "utf8");
+    return [`src/App.tsx: added a way into ${missing.map((m) => m.screen).join(", ")} from the ${first} screen${edits.length > 1 ? ", and a Back button" : ""}`];
+  },
+
+  /**
    * A build config written inside src/ (src/vite.config.ts, src/tsconfig.json)
    * when the project's own sits at its root: an RPG build's answer came out
    * half-written there, did not parse, and held the typecheck at fourteen
@@ -834,7 +967,9 @@ export const AutoFix = {
       ...(await AutoFix.fixHooksOutsideComponents(root)),
       ...(await AutoFix.relaxStarterTest(root)),
       ...(await AutoFix.fixPlaceholderEllipsis(root)),
-      ...(await AutoFix.removeMisplacedConfig(root))
+      ...(await AutoFix.removeMisplacedConfig(root)),
+      ...(await AutoFix.wireUnreachableScreens(root)),
+      ...(await AutoFix.fixBackToSelf(root))
     ];
     const pkgPath = path.join(root, "package.json");
     let pkg: Record<string, any>;

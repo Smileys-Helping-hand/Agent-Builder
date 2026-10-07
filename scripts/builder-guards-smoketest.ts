@@ -542,6 +542,50 @@ fs.writeFileSync(
 );
 assert.deepEqual(await AutoFix.dedupeImports(dup), ["src/lib/gameLogic.test.ts: removed 5 name(s) imported a second time"]);
 
+// Screens nothing opens get buttons on the first screen and a Back; a Back to itself goes home.
+const nav = fs.mkdtempSync(path.join(os.tmpdir(), "ab-nav-"));
+fs.mkdirSync(path.join(nav, "src"));
+fs.writeFileSync(
+  path.join(nav, "src/App.tsx"),
+  [
+    "const App = () => {",
+    "  const [appState, setAppState] = useState<AppState>({ screen: 'title' });",
+    "  const handlePlay = () => {",
+    "    setAppState({ screen: 'game' });",
+    "  };",
+    "  const handleBack = () => {",
+    "    setAppState({ screen: 'title' });",
+    "  };",
+    "  const handleBackToGame = () => {",
+    "    setAppState({ screen: 'game' });",
+    "  };",
+    "  const handleCharacterSheet = () => {",
+    "    setAppState({ screen: 'character' });",
+    "  };",
+    "  switch (appState.screen) {",
+    "    case 'title':",
+    "      return <TitleScreen onPlay={handlePlay} />;",
+    "    case 'game':",
+    "      return <GameScreen onScore={(s) => s} onBack={handleBackToGame} />;",
+    "    case 'character':",
+    "      return <CharacterSheet hero={hero} />;",
+    "    case 'hall':",
+    "      return <HallOfHeroes onBack={handleBack} />;",
+    "  }",
+    "};",
+    ""
+  ].join("\n")
+);
+assert.deepEqual(await AutoFix.wireUnreachableScreens(nav), ["src/App.tsx: added a way into character, hall from the title screen, and a Back button"]);
+const wired = fs.readFileSync(path.join(nav, "src/App.tsx"), "utf8");
+assert.match(wired, /<TitleScreen onPlay=\{handlePlay\} \/>[\s\S]*<button type="button" className="btn" onClick=\{handleCharacterSheet\}>Character sheet<\/button>[\s\S]*onClick=\{\(\) => setAppState\(\{ screen: 'hall' \}\)\}>Hall<\/button>/, wired);
+assert.match(wired, /onClick=\{handleBack\}>← Back<\/button>\s*<CharacterSheet hero=\{hero\} \/>/, "the sheet had no way back");
+assert.ok(!/← Back<\/button>\s*<HallOfHeroes/.test(wired), "the hall has its own Back");
+assert.deepEqual(unreachableScreens({ "src/App.tsx": wired }), [], "every screen reachable now");
+assert.deepEqual(await AutoFix.wireUnreachableScreens(nav), [], "nothing left to wire");
+assert.deepEqual(await AutoFix.fixBackToSelf(nav), ["src/App.tsx: the game screen's Back went back to itself; it goes to the title screen now"]);
+assert.match(fs.readFileSync(path.join(nav, "src/App.tsx"), "utf8"), /<GameScreen onScore=\{\(s\) => s\} onBack=\{handleBack\} \/>/);
+
 // A build config written inside src/ goes when the project's own is at its root; one with no root twin stays.
 const misplaced = fs.mkdtempSync(path.join(os.tmpdir(), "ab-misplaced-"));
 fs.mkdirSync(path.join(misplaced, "src"));

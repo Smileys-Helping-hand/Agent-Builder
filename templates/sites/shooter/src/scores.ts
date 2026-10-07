@@ -21,6 +21,9 @@ export interface ScoreEntry {
 /** Where the table is kept, unless a game names its own key. */
 export const SCORES_KEY = "high-scores";
 
+/** The same score again within this long is the same game, reported twice. */
+const SAME_GAME_MS = 5_000;
+
 /** How many entries the table keeps. */
 export const MAX_SCORES = 10;
 
@@ -62,7 +65,14 @@ export function loadScores(key: string = SCORES_KEY): ScoreEntry[] {
  */
 export function addScore(entry: { name: string; score: number; detail?: string; at?: string }, key: string = SCORES_KEY): { scores: ScoreEntry[]; place: number } {
   const added: ScoreEntry = { name: entry.name.trim() || "Player", score: Math.round(entry.score), detail: entry.detail, at: entry.at ?? new Date().toISOString() };
-  const scores = [...loadScores(key), added].sort((a, b) => b.score - a.score).slice(0, MAX_SCORES);
+  const saved = loadScores(key);
+  // The same finished game reported twice (from onScore and again from
+  // onChange) is saved once.
+  const twin = saved.find(
+    (other) => other.name === added.name && other.score === added.score && other.detail === added.detail && Math.abs(Date.parse(other.at) - Date.parse(added.at)) < SAME_GAME_MS
+  );
+  if (twin) return { scores: saved, place: saved.indexOf(twin) + 1 };
+  const scores = [...saved, added].sort((a, b) => b.score - a.score).slice(0, MAX_SCORES);
   try {
     storage().setItem(key, JSON.stringify(scores));
   } catch {

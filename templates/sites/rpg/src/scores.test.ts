@@ -28,6 +28,14 @@ describe("the high-score table", () => {
     expect(loadScores().some((entry) => entry.name === "P1")).toBe(false);
   });
 
+  it("saves a game reported twice only once", () => {
+    addScore({ name: "Ana", score: 300 });
+    expect(addScore({ name: "Ana", score: 300 }).place).toBe(1);
+    expect(loadScores()).toHaveLength(1);
+    addScore({ name: "Ana", score: 300, at: "2020-01-01T00:00:00.000Z" });
+    expect(loadScores()).toHaveLength(2);
+  });
+
   it("separate games keep separate tables", () => {
     addScore({ name: "Ana", score: 300 }, "game-a");
     expect(loadScores("game-b")).toEqual([]);
