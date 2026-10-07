@@ -542,6 +542,25 @@ fs.writeFileSync(
 );
 assert.deepEqual(await AutoFix.dedupeImports(dup), ["src/lib/gameLogic.test.ts: removed 5 name(s) imported a second time"]);
 
+// Empty stand-ins for the engine's work get the engine's code.
+const stubbed = fs.mkdtempSync(path.join(os.tmpdir(), "ab-stubbed-"));
+fs.mkdirSync(path.join(stubbed, "src", "engine"), { recursive: true });
+fs.mkdirSync(path.join(stubbed, "src", "lib"), { recursive: true });
+fs.writeFileSync(path.join(stubbed, "src/engine/game.ts"), "export interface GameState { score: number }\nexport const DEFAULT_SETTINGS = {};\nexport function newGame(settings: object): GameState { return { score: 0 }; }\n");
+fs.writeFileSync(
+  path.join(stubbed, "src/lib/gameLogic.ts"),
+  "import { GameState } from '../engine/game';\n\nexport function initializeGame(): GameState {\n  return { /* initialize game state */ };\n}\n\nexport function updateGameState(state: GameState, event: string): GameState {\n  // Implementation\n}\n\nexport function saveGame(state: GameState): void {\n  // Implementation\n}\n\nexport function loadGame(): GameState {\n  return {};\n}\n\nexport function scoreFor(state: GameState): GameState {\n  return { ...state, score: state.score + 1 };\n}\n"
+);
+assert.deepEqual(await AutoFix.fillEngineStubs(stubbed), ["src/lib/gameLogic.ts: initializeGame, updateGameState, saveGame, loadGame now use the engine (they were empty)"]);
+const filledLogic = fs.readFileSync(path.join(stubbed, "src/lib/gameLogic.ts"), "utf8");
+assert.match(filledLogic, /^import \{ GameState, newGame, DEFAULT_SETTINGS \} from '\.\.\/engine\/game';/);
+assert.match(filledLogic, /initializeGame\(\): GameState \{\n  return newGame\(DEFAULT_SETTINGS\);\n\}/);
+assert.match(filledLogic, /updateGameState\(state: GameState, event: string\): GameState \{\n[^\n]*\n  return state;\n\}/);
+assert.match(filledLogic, /localStorage\.setItem\("game-state", JSON\.stringify\(state\)\)/);
+assert.match(filledLogic, /localStorage\.getItem\("game-state"\)[\s\S]*return newGame\(DEFAULT_SETTINGS\);\n\}/);
+assert.match(filledLogic, /return \{ \.\.\.state, score: state\.score \+ 1 \};/, "real code is left alone");
+assert.deepEqual(await AutoFix.fillEngineStubs(stubbed), [], "nothing left to fill");
+
 // Screens nothing opens get buttons on the first screen and a Back; a Back to itself goes home.
 const nav = fs.mkdtempSync(path.join(os.tmpdir(), "ab-nav-"));
 fs.mkdirSync(path.join(nav, "src"));

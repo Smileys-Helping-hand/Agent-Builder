@@ -797,6 +797,73 @@ export const AutoFix = {
   },
 
   /**
+   * Empty stand-ins for what the engine does, in a game built on one:
+   * `initializeGame(): GameState { return { /* initialize game state *\/ }; }`
+   * held a fresh RPG build's typecheck for two whole passes while every repair
+   * rewrote the comment. With the engine's newGame and DEFAULT_SETTINGS in the
+   * project, the stand-ins get the engine's code: start and reset make a new
+   * game, load reads the saved one (or starts afresh), save stores it, and an
+   * update hands the state back (the board already plays the game).
+   */
+  async fillEngineStubs(root: string): Promise<string[]> {
+    const engineFile = path.join(root, "src", "engine", "game.ts");
+    let engine = "";
+    try {
+      engine = await fs.readFile(engineFile, "utf8");
+    } catch {
+      return [];
+    }
+    if (!/export\s+function\s+newGame\b/.test(engine) || !/export\s+const\s+DEFAULT_SETTINGS\b/.test(engine) || !/export\s+(interface|type)\s+GameState\b/.test(engine)) return [];
+    const notes: string[] = [];
+    const empty = (body: string) => /^(return\s*(\{\s*\}|null|undefined)?\s*;?)?$/.test(body.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "").replace(/\s+/g, " ").trim());
+    for (const full of await listFiles(path.join(root, "src"))) {
+      const rel = posix(path.relative(root, full));
+      if (!/^src\/(?!engine\/).+\.ts$/.test(rel) || TEST_FILE.test(rel) || rel.endsWith(".d.ts")) continue;
+      const text = await fs.readFile(full, "utf8");
+      let changed = text;
+      const filled: string[] = [];
+      changed = changed.replace(
+        /(export\s+function\s+(\w+)\s*\(([^)]*)\)\s*:\s*(GameState|void)\s*\{)([\s\S]*?)(\n\})/g,
+        (whole, head: string, name: string, params: string, returns: string, body: string, close: string) => {
+          if (!empty(body)) return whole;
+          const stateParam = /^\s*(\w+)\s*:\s*GameState\b/.exec(params)?.[1];
+          let code: string | null = null;
+          if (returns === "GameState" && /^(load|restore|read|get(Saved)?)/i.test(name) && !stateParam) {
+            code = `try {\n    const saved = localStorage.getItem("game-state");\n    if (saved) return JSON.parse(saved) as GameState;\n  } catch {\n    // Nothing saved, or storage is blocked: a new game.\n  }\n  return newGame(DEFAULT_SETTINGS);`;
+          } else if (returns === "GameState" && (/^(init|initiali[sz]e|new|start|create|reset|restart|begin)/i.test(name) || !params.trim())) {
+            code = "return newGame(DEFAULT_SETTINGS);";
+          } else if (returns === "GameState" && stateParam) {
+            code = `// The board plays the game and keeps its state; this hands it back as it is.\n  return ${stateParam};`;
+          } else if (returns === "void" && stateParam && /^(save|store|persist|write)/i.test(name)) {
+            code = `try {\n    localStorage.setItem("game-state", JSON.stringify(${stateParam}));\n  } catch {\n    // Storage full or blocked: the game goes on unsaved.\n  }`;
+          }
+          if (!code) return whole;
+          filled.push(name);
+          return `${head}\n  ${code}${close}`;
+        }
+      );
+      if (filled.length === 0) continue;
+      // The engine's names, imported where the file already imports from the engine, or added.
+      const needs = ["newGame", "DEFAULT_SETTINGS", "type GameState"].filter((name) => !new RegExp(`\\b${name.replace("type ", "")}\\b[^\\n]*from\\s*['"][./]*engine/game['"]`).test(changed) && new RegExp(`\\b${name.replace("type ", "")}\\b`).test(changed));
+      if (needs.length > 0) {
+        let specifier = posix(path.relative(path.dirname(full), engineFile)).replace(/\.ts$/, "");
+        if (!specifier.startsWith(".")) specifier = `./${specifier}`;
+        const existing = new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*(['"])${specifier.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}\\2;?`).exec(changed);
+        if (existing) {
+          const have = existing[1].split(",").map((s) => s.trim()).filter(Boolean);
+          const add = needs.filter((name) => !have.some((h) => h.replace(/^type\s+/, "") === name.replace(/^type\s+/, "")));
+          changed = changed.replace(existing[0], `import { ${[...have, ...add].join(", ")} } from ${existing[2]}${specifier}${existing[2]};`);
+        } else {
+          changed = `import { ${needs.join(", ")} } from "${specifier}";\n${changed}`;
+        }
+      }
+      await fs.writeFile(full, changed, "utf8");
+      notes.push(`${rel}: ${filled.join(", ")} now use the engine (they were empty)`);
+    }
+    return notes;
+  },
+
+  /**
    * A Back button that goes nowhere: `onBack={handleBackToGame}` on the game
    * screen, where that handler switches to the game screen it is on. Pointed
    * at the handler that goes to the first screen instead (handleBack), when
@@ -969,7 +1036,8 @@ export const AutoFix = {
       ...(await AutoFix.fixPlaceholderEllipsis(root)),
       ...(await AutoFix.removeMisplacedConfig(root)),
       ...(await AutoFix.wireUnreachableScreens(root)),
-      ...(await AutoFix.fixBackToSelf(root))
+      ...(await AutoFix.fixBackToSelf(root)),
+      ...(await AutoFix.fillEngineStubs(root))
     ];
     const pkgPath = path.join(root, "package.json");
     let pkg: Record<string, any>;
