@@ -1767,6 +1767,28 @@ for it, make the app do it. Do one or the other completely; do not change both h
     );
   }
 
+  /**
+   * Contact details the customer never gave, emptied before a pass is checked
+   * and built: a made-up number on a live site rings a stranger. Done before
+   * the build, so the preview a customer opens never carries them.
+   */
+  private async removeInventedContact(): Promise<void> {
+    if (!this.config.workingDir || !fs.existsSync(path.join(this.workspace.root, "template.json")) || this.isStarter()) return;
+    const file = ["src/content.ts", "src/content.tsx", "src/content.js"].find((name) => fs.existsSync(path.join(this.workspace.root, name)));
+    if (!file) return;
+    const written = fs.readFileSync(path.join(this.workspace.root, file), "utf8");
+    const stripped = stripInventedContact(written, this.config.description);
+    if (stripped.removed.length === 0) return;
+    await this.workspace.writeFiles({ [file]: stripped.source }, "Removed contact details the customer never gave");
+    this.think(
+      this.currentIteration,
+      "decision",
+      "Removed made-up contact details",
+      `The brief does not give the business's ${stripped.removed.join(", ")}, so ${stripped.removed.length === 1 ? "it was" : "they were"} emptied in ${file} and the site leaves ${stripped.removed.length === 1 ? "it" : "them"} out. Ask the customer for ${stripped.removed.length === 1 ? "it" : "them"} before it goes live.`,
+      [file]
+    );
+  }
+
   /** Why the last content edit was refused by the shape guard, for the tailoring check to pass on. */
   private lastShapeRefusal: string | null = null;
 
@@ -1781,21 +1803,7 @@ for it, make the app do it. Do one or the other completely; do not change both h
     const file = ["src/content.ts", "src/content.tsx", "src/content.js"].find((name) => fs.existsSync(path.join(this.workspace.root, name)));
     if (!file) return null;
     const started = Date.now();
-    // Contact details the customer never gave go before anything is judged:
-    // a made-up number on a live site rings a stranger.
-    const written = fs.readFileSync(path.join(this.workspace.root, file), "utf8");
-    const stripped = stripInventedContact(written, this.config.description);
-    if (stripped.removed.length > 0) {
-      await this.workspace.writeFiles({ [file]: stripped.source }, "Removed contact details the customer never gave");
-      this.think(
-        this.currentIteration,
-        "decision",
-        "Removed made-up contact details",
-        `The brief does not give the business's ${stripped.removed.join(", ")}, so ${stripped.removed.length === 1 ? "it was" : "they were"} emptied in ${file} and the site leaves ${stripped.removed.length === 1 ? "it" : "them"} out. Ask the customer for ${stripped.removed.length === 1 ? "it" : "them"} before it goes live.`,
-        [file]
-      );
-    }
-    const now = stripped.source;
+    const now = fs.readFileSync(path.join(this.workspace.root, file), "utf8");
     const original = await this.templateOriginal(file);
     const reasons: string[] = [];
     // Text the visitor reads: string values of four characters or more.
@@ -2317,6 +2325,7 @@ Rules that keep this build passing its checks (install, typecheck, build, tests)
     // build then carried both into the project nobody asked to change. A copy
     // of one of our own builds or templates already has its runner.
     const fromOurTemplate = fs.existsSync(path.join(this.workspace.root, "template.json"));
+    await this.removeInventedContact();
     const verifyStarted = Date.now();
     let report = await Verifier.verify(this.workspace, { scaffoldTests: !this.config.workingDir, autofix: !this.config.workingDir || fromOurTemplate });
     // Our own apps (a template or the starter) are opened in a real browser:
