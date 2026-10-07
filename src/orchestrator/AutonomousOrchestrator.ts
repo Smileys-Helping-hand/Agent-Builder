@@ -2082,6 +2082,15 @@ Rules that keep this build passing its checks (install, typecheck, build, tests)
         fragments.push(`• ${file}: the new version ${problem}, so the working one stays.`);
       }
     }
+    // A build config is the project's, at its root: one written inside src/
+    // came out half-finished and held the typecheck for a whole pass.
+    for (const file of Object.keys(files)) {
+      if (/^src\/(?:(vite|vitest|postcss|tailwind|eslint)\.config\.(m?[jt]s|cjs)|tsconfig(\.\w+)?\.json|package(-lock)?\.json)$/.test(file)) {
+        delete files[file];
+        fragments.push(`• ${file}: a build config belongs at the project's root, where the working one already is, so this copy is not added.`);
+      }
+    }
+
     // With a playable board, a repair may not add a second one: asked to make
     // two screens reachable, a model wrote its own GameBoard.tsx and Game.tsx
     // calling the engine's actions, and the build stopped compiling. New files

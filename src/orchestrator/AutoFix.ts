@@ -795,6 +795,31 @@ export const AutoFix = {
     return ["src/lib/setup-tests.ts: saved data is now cleared between tests, so one test's save is not the next test's starting point"];
   },
 
+  /**
+   * A build config written inside src/ (src/vite.config.ts, src/tsconfig.json)
+   * when the project's own sits at its root: an RPG build's answer came out
+   * half-written there, did not parse, and held the typecheck at fourteen
+   * errors for a whole pass. The root one is what builds the app; the copy goes.
+   */
+  async removeMisplacedConfig(root: string): Promise<string[]> {
+    const notes: string[] = [];
+    let names: string[] = [];
+    try {
+      names = await fs.readdir(path.join(root, "src"));
+    } catch {
+      return notes;
+    }
+    for (const name of names) {
+      if (!/^(vite|vitest|postcss|tailwind|eslint)\.config\.(m?[jt]s|cjs)$|^tsconfig(\.\w+)?\.json$|^package(-lock)?\.json$|^\.eslintrc/.test(name)) continue;
+      const atRoot = await fs.stat(path.join(root, name)).then(() => true, () => false);
+      const sameKind = atRoot || (/^vite(st)?\.config/.test(name) && (await fs.stat(path.join(root, "vite.config.ts")).then(() => true, () => false)));
+      if (!sameKind) continue;
+      await fs.rm(path.join(root, "src", name), { force: true });
+      notes.push(`removed src/${name}: the project's build config is the one at its root`);
+    }
+    return notes;
+  },
+
   async run(root: string): Promise<string[]> {
     const notes: string[] = [
       ...(await AutoFix.fixKebabCaseKeys(root)),
@@ -808,7 +833,8 @@ export const AutoFix = {
       ...(await AutoFix.addMissingReactImports(root)),
       ...(await AutoFix.fixHooksOutsideComponents(root)),
       ...(await AutoFix.relaxStarterTest(root)),
-      ...(await AutoFix.fixPlaceholderEllipsis(root))
+      ...(await AutoFix.fixPlaceholderEllipsis(root)),
+      ...(await AutoFix.removeMisplacedConfig(root))
     ];
     const pkgPath = path.join(root, "package.json");
     let pkg: Record<string, any>;

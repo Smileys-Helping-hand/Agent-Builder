@@ -19,6 +19,7 @@ import { applyFacts, readFacts, sampleFactsLeft } from "../src/orchestrator/Tail
 import { coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, requirementsFromBrief, reviewPrompt, stubs, unreachableScreens, unshownComponents } from "../src/orchestrator/Completeness.js";
 import { candidates, projectKey } from "../src/orchestrator/SelfHeal.js";
 import type { BuildView } from "../src/orchestrator/BuildService.js";
+import { ModelRouter, modelServerDown } from "../src/tools/ModelRouter.js";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "ab-guards-"));
 fs.mkdirSync(path.join(root, "src"), { recursive: true });
@@ -540,6 +541,16 @@ fs.writeFileSync(
   ].join("\n")
 );
 assert.deepEqual(await AutoFix.dedupeImports(dup), ["src/lib/gameLogic.test.ts: removed 5 name(s) imported a second time"]);
+
+// A build config written inside src/ goes when the project's own is at its root; one with no root twin stays.
+const misplaced = fs.mkdtempSync(path.join(os.tmpdir(), "ab-misplaced-"));
+fs.mkdirSync(path.join(misplaced, "src"));
+fs.writeFileSync(path.join(misplaced, "vite.config.ts"), "export default {};\n");
+fs.writeFileSync(path.join(misplaced, "src/vite.config.ts"), "export default defineConfig({ plugins: [react(`\n");
+fs.writeFileSync(path.join(misplaced, "src/tsconfig.json"), "{}\n");
+assert.deepEqual(await AutoFix.removeMisplacedConfig(misplaced), ["removed src/vite.config.ts: the project's build config is the one at its root"]);
+assert.equal(fs.existsSync(path.join(misplaced, "src/vite.config.ts")), false);
+assert.equal(fs.existsSync(path.join(misplaced, "src/tsconfig.json")), true, "no tsconfig at the root: left alone");
 assert.equal(
   fs.readFileSync(path.join(dup, "src/lib/gameLogic.test.ts"), "utf8"),
   [
@@ -1031,5 +1042,17 @@ assert.deepEqual(candidates(healRuns, "v1", { healed: {} }, later).map((b) => b.
 const healedOnV1 = { healed: { [projectKey(healRuns[1])]: { version: "v1", buildId: "x", at: "" } } };
 assert.deepEqual(candidates(healRuns, "v1", healedOnV1, later).map((b) => b.buildId), ["yielded"], "retried once per version");
 assert.ok(candidates(healRuns, "v2", healedOnV1, later).some((b) => b.buildId === "pg-new"), "a new builder version retries it again");
+
+// A local model server that is down is waited for; a real error is not retried.
+const down = Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+assert.equal(modelServerDown(down), true);
+assert.equal(modelServerDown(new Error("Ollama request failed: 400 Bad Request - model not found")), false);
+let calls = 0;
+assert.equal(await ModelRouter.waitingOut(async () => { if (++calls < 3) throw down; return "ok"; }, 5_000, [10]), "ok");
+assert.equal(calls, 3, "retried until the server answered");
+calls = 0;
+await assert.rejects(ModelRouter.waitingOut(async () => { calls++; throw new Error("bad prompt"); }, 5_000, [10]), /bad prompt/);
+assert.equal(calls, 1, "a real error is not retried");
+await assert.rejects(ModelRouter.waitingOut(async () => { throw down; }, 50, [10]), /fetch failed/, "gives up after the limit");
 
 console.log("builder guards: all checks passed");
