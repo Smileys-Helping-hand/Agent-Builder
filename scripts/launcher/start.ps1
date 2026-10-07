@@ -37,9 +37,9 @@ $launcherLog = Join-Path $dataDir "launcher.log"
 # has an answer. Kept short: the newest 500 lines.
 function Write-LauncherLog($text) {
     $line = "{0}  {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $text
-    Add-Content -Path $launcherLog -Value $line -Encoding ascii
+    Add-Content -Path $launcherLog -Value $line -Encoding ascii -ErrorAction SilentlyContinue
     $lines = Get-Content $launcherLog -ErrorAction SilentlyContinue
-    if ($lines.Count -gt 500) { $lines | Select-Object -Last 500 | Set-Content $launcherLog -Encoding ascii }
+    if ($lines.Count -gt 500) { $lines | Select-Object -Last 500 | Set-Content $launcherLog -Encoding ascii -ErrorAction SilentlyContinue }
 }
 
 # Game mode (set from the app): the graphics card is the gamer's, so the model
@@ -183,7 +183,7 @@ $bindHost = if ($tailscaleIp) { "0.0.0.0" } else { "127.0.0.1" }
 
 # Appends rather than overwrites, so a restart does not erase the reason for it.
 function Start-Api {
-    Add-Content -Path $apiLog -Value ("`n==== started {0} ====" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss")) -Encoding ascii
+    Add-Content -Path $apiLog -Value ("`n==== started {0} ====" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss")) -Encoding ascii -ErrorAction SilentlyContinue
     $process = Start-Process -FilePath "cmd.exe" `
         -ArgumentList "/c set HOST=$bindHost&& npx tsx src/server/server.ts >> `"$apiLog`" 2>&1" `
         -WorkingDirectory $repo -WindowStyle Hidden -PassThru
@@ -241,7 +241,7 @@ $jarvisUrl = "http://127.0.0.1:3005/api/jarvis/status"
 $hasJarvis = Test-Path (Join-Path $jarvisDir ".next\BUILD_ID")
 
 function Start-Jarvis {
-    Add-Content -Path $jarvisLog -Value ("`n==== started {0} ====" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss")) -Encoding ascii
+    Add-Content -Path $jarvisLog -Value ("`n==== started {0} ====" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss")) -Encoding ascii -ErrorAction SilentlyContinue
     $process = Start-Process -FilePath "cmd.exe" `
         -ArgumentList "/c npx next start -p 3005 -H 127.0.0.1 >> `"$jarvisLog`" 2>&1" `
         -WorkingDirectory $jarvisDir -WindowStyle Hidden -PassThru
@@ -293,7 +293,7 @@ function Get-JarvisBridge {
 
 function Start-JarvisBridge {
     Get-JarvisBridge | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-    Add-Content -Path $bridgeLog -Value ("`n==== started {0} ====" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss")) -Encoding ascii
+    Add-Content -Path $bridgeLog -Value ("`n==== started {0} ====" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss")) -Encoding ascii -ErrorAction SilentlyContinue
     $process = Start-Process -FilePath "cmd.exe" `
         -ArgumentList "/c node `"$bridgeScript`" >> `"$bridgeLog`" 2>&1" `
         -WorkingDirectory $repo -WindowStyle Hidden -PassThru
@@ -427,79 +427,89 @@ Write-LauncherLog "Launcher watching the builder, the model server and Jarvis"
 try {
     while ($true) {
         Start-Sleep -Seconds 15
+        # One check going wrong (a log file another process holds, a process
+        # that vanished mid-query) is logged and the watch goes on: an error here
+        # used to end the launcher, and on its way out it stopped the builder,
+        # the model server and the tunnel with it.
+        try {
 
-        # The builder: gone, or up but not answering for a minute.
-        $apiAlive = $started.api -and (Get-Process -Id $started.api -ErrorAction SilentlyContinue)
-        $apiAnswers = Test-Endpoint "http://127.0.0.1:4000/api/update/check" 5
-        if ($apiAnswers) { $apiMisses = 0 } else { $apiMisses++ }
+            # The builder: gone, or up but not answering for a minute.
+            $apiAlive = $started.api -and (Get-Process -Id $started.api -ErrorAction SilentlyContinue)
+            $apiAnswers = Test-Endpoint "http://127.0.0.1:4000/api/update/check" 5
+            if ($apiAnswers) { $apiMisses = 0 } else { $apiMisses++ }
 
-        if (-not $apiAnswers -and (-not $apiAlive -or $apiMisses -ge 4)) {
-            $wait = $backoff[[Math]::Min($apiFailures, $backoff.Count - 1)]
-            $why = if ($apiAlive) { "stopped answering" } else { "exited" }
-            Write-LauncherLog "Builder $why; restarting in ${wait}s (restart $($apiFailures + 1))"
-            if (-not $Quiet) { Write-Host "  The builder $why - restarting in $wait seconds." -ForegroundColor Yellow }
-            Stop-ApiProcesses
-            Start-Sleep -Seconds $wait
-            $started.api = Start-Api
-            $apiFailures++
-            $apiMisses = 0
-            $healthySince = Get-Date
-            if (Wait-For "http://127.0.0.1:4000/api/update/check" 90 "The builder") {
-                Write-LauncherLog "Builder back up"
-            } else {
-                Write-LauncherLog "Builder did not come back within 90s; will try again"
+            if (-not $apiAnswers -and (-not $apiAlive -or $apiMisses -ge 4)) {
+                $wait = $backoff[[Math]::Min($apiFailures, $backoff.Count - 1)]
+                $why = if ($apiAlive) { "stopped answering" } else { "exited" }
+                Write-LauncherLog "Builder $why; restarting in ${wait}s (restart $($apiFailures + 1))"
+                if (-not $Quiet) { Write-Host "  The builder $why - restarting in $wait seconds." -ForegroundColor Yellow }
+                Stop-ApiProcesses
+                Start-Sleep -Seconds $wait
+                $started.api = Start-Api
+                $apiFailures++
+                $apiMisses = 0
+                $healthySince = Get-Date
+                if (Wait-For "http://127.0.0.1:4000/api/update/check" 90 "The builder") {
+                    Write-LauncherLog "Builder back up"
+                } else {
+                    Write-LauncherLog "Builder did not come back within 90s; will try again"
+                }
+                continue
             }
-            continue
-        }
 
-        # Ten healthy minutes clears the slate, so the next hiccup restarts fast.
-        if ($apiFailures -gt 0 -and ((Get-Date) - $healthySince).TotalMinutes -ge 10) {
-            $apiFailures = 0
-            Write-LauncherLog "Builder stable for 10 minutes"
-        }
+            # Ten healthy minutes clears the slate, so the next hiccup restarts fast.
+            if ($apiFailures -gt 0 -and ((Get-Date) - $healthySince).TotalMinutes -ge 10) {
+                $apiFailures = 0
+                Write-LauncherLog "Builder stable for 10 minutes"
+            }
 
-        # Jarvis: bring him back if he stops answering for a minute.
-        # Not while update-jarvis.ps1 is rebuilding him (a flag older than 25 minutes is a crashed update).
-        $jarvisUpdating = $false
-        $jarvisFlag = Join-Path $dataDir "jarvis-updating.flag"
-        if (Test-Path $jarvisFlag) { $jarvisUpdating = ((Get-Date) - (Get-Item $jarvisFlag).LastWriteTime).TotalMinutes -lt 25 }
-        if ($hasJarvis -and -not $jarvisUpdating) {
-            if (Test-Endpoint $jarvisUrl 5) {
-                $jarvisMisses = 0
-            } else {
-                $jarvisMisses++
-                if ($jarvisMisses -ge 4) {
-                    Write-LauncherLog "Jarvis not answering; restarting him"
-                    Stop-JarvisProcesses
-                    $started.jarvis = Start-Jarvis
+            # Jarvis: bring him back if he stops answering for a minute.
+            # Not while update-jarvis.ps1 is rebuilding him (a flag older than 25 minutes is a crashed update).
+            $jarvisUpdating = $false
+            $jarvisFlag = Join-Path $dataDir "jarvis-updating.flag"
+            if (Test-Path $jarvisFlag) { $jarvisUpdating = ((Get-Date) - (Get-Item $jarvisFlag).LastWriteTime).TotalMinutes -lt 25 }
+            # An update still running is an update, however long a busy PC makes it take.
+            if (-not $jarvisUpdating) { $jarvisUpdating = [bool](Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*update-jarvis.ps1*" }) }
+            if ($hasJarvis -and -not $jarvisUpdating) {
+                if (Test-Endpoint $jarvisUrl 5) {
                     $jarvisMisses = 0
-                    if (Wait-For $jarvisUrl 90 "Jarvis") { Write-LauncherLog "Jarvis back up" }
-                    $started.jarvisAgent = Start-JarvisAgent
+                } else {
+                    $jarvisMisses++
+                    if ($jarvisMisses -ge 4) {
+                        Write-LauncherLog "Jarvis not answering; restarting him"
+                        Stop-JarvisProcesses
+                        $started.jarvis = Start-Jarvis
+                        $jarvisMisses = 0
+                        if (Wait-For $jarvisUrl 90 "Jarvis") { Write-LauncherLog "Jarvis back up" }
+                        $started.jarvisAgent = Start-JarvisAgent
+                    }
                 }
             }
-        }
 
-        # The bridge is one small process; if it has gone, start it again.
-        if ($hasBridge -and -not $jarvisUpdating -and -not (Get-JarvisBridge)) {
-            Write-LauncherLog "Jarvis bridge not running; starting it"
-            $started.jarvisBridge = Start-JarvisBridge
-        }
+            # The bridge is one small process; if it has gone, start it again.
+            if ($hasBridge -and -not $jarvisUpdating -and -not (Get-JarvisBridge)) {
+                Write-LauncherLog "Jarvis bridge not running; starting it"
+                $started.jarvisBridge = Start-JarvisBridge
+            }
 
-        # The model server: builds, repairs and research all need it.
-        # Not while game mode is on: then it is off on purpose.
-        if ($ollamaExe -and -not (Test-GameMode)) {
-            if (Test-Endpoint "http://localhost:11434/api/tags" 5) {
-                $ollamaMisses = 0
-            } else {
-                $ollamaMisses++
-                if ($ollamaMisses -ge 2) {
-                    Write-LauncherLog "Model server not answering; starting it"
-                    $process = Start-Process -FilePath $ollamaExe -ArgumentList "serve" -WindowStyle Hidden -PassThru
-                    $started.ollama = $process.Id
+            # The model server: builds, repairs and research all need it.
+            # Not while game mode is on: then it is off on purpose.
+            if ($ollamaExe -and -not (Test-GameMode)) {
+                if (Test-Endpoint "http://localhost:11434/api/tags" 5) {
                     $ollamaMisses = 0
-                    if (Wait-For "http://localhost:11434/api/tags" 60 "The model server") { Write-LauncherLog "Model server back up" }
+                } else {
+                    $ollamaMisses++
+                    if ($ollamaMisses -ge 2) {
+                        Write-LauncherLog "Model server not answering; starting it"
+                        $process = Start-Process -FilePath $ollamaExe -ArgumentList "serve" -WindowStyle Hidden -PassThru
+                        $started.ollama = $process.Id
+                        $ollamaMisses = 0
+                        if (Wait-For "http://localhost:11434/api/tags" 60 "The model server") { Write-LauncherLog "Model server back up" }
+                    }
                 }
             }
+        } catch {
+            Write-LauncherLog ("Watchdog check failed, carrying on: {0}" -f $_.Exception.Message)
         }
     }
 } finally {

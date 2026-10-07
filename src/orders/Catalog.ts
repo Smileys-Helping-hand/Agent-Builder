@@ -242,6 +242,66 @@ const BUILT_IN_ITEMS: TemplateDefinition[] = [
     keywords: ["game", "arcade", "promo", "competition", "gamification", "fun", "play"]
   },
   {
+    id: "shooter",
+    name: "Space Shooter Game",
+    kind: "app",
+    category: "Games",
+    description: "A fast action game in your brand: waves of invaders, power-ups (rapid fire, shields, extra lives), lives and a high score, played with touch or keys, plus a prize form for top scorers.",
+    price: 7500,
+    currency: "ZAR",
+    timeframe: "1-2 weeks",
+    icon: "🚀",
+    features: [
+      "Arcade action on phones, tablets and desktops",
+      "Waves of enemies, power-ups and boss-tough tanks",
+      "Your name, colours, waves and prize",
+      "Prize claim form that captures leads",
+      "Opens from a single file: host it anywhere"
+    ],
+    techStack: ["React", "TypeScript", "Canvas", "Vite"],
+    keywords: ["shooter", "shoot", "space", "invaders", "action", "arcade", "waves", "spaceship", "blaster", "game"]
+  },
+  {
+    id: "strategy",
+    name: "Tower Defense Strategy Game",
+    kind: "app",
+    category: "Games",
+    description: "A strategy game people come back to: build and upgrade towers along a road to stop waves of raiders, manage gold and lives, and chase a high score, plus a prize form for the best defenders.",
+    price: 8500,
+    currency: "ZAR",
+    timeframe: "2-3 weeks",
+    icon: "🏰",
+    features: [
+      "Three tower types to build, upgrade and sell",
+      "Five waves that get harder, gold and lives to manage",
+      "Your name, colours, map and prize",
+      "Prize claim form that captures leads",
+      "Plays on phones, tablets and desktops"
+    ],
+    techStack: ["React", "TypeScript", "Canvas", "Vite"],
+    keywords: ["strategy", "tower", "defense", "defence", "td", "towers", "waves", "build", "castle", "game"]
+  },
+  {
+    id: "rpg",
+    name: "Fantasy RPG Adventure",
+    kind: "app",
+    category: "Games",
+    description: "A role-playing adventure in your brand: explore a dungeon, fight turn-based battles, level up, collect potions and gold, and defeat the boss, plus a prize form for heroes who win.",
+    price: 9500,
+    currency: "ZAR",
+    timeframe: "2-3 weeks",
+    icon: "⚔️",
+    features: [
+      "Three dungeon floors to explore",
+      "Turn-based battles, experience, levels and a boss",
+      "Your name, colours, hero, monsters and prize",
+      "Prize claim form that captures leads",
+      "Keyboard and on-screen controls for phones"
+    ],
+    techStack: ["React", "TypeScript", "Canvas", "Vite"],
+    keywords: ["rpg", "role-playing", "roleplaying", "adventure", "dungeon", "quest", "fantasy", "hero", "battle", "turn-based", "game"]
+  },
+  {
     id: "event",
     name: "Event & Invitation",
     kind: "template",
@@ -391,6 +451,41 @@ export const Catalog = {
   get(id: string | null | undefined): TemplateDefinition | null {
     if (!id) return null;
     return this.list().find((item) => item.id === id) ?? null;
+  },
+
+  /**
+   * The template an order clearly asks for when it does not name one. The
+   * site's quote form sends only a service type and the customer's words, so
+   * every order was built from nothing, the path a small model gets wrong
+   * most, while a matching template is tested code that scores 100 before a
+   * line is changed. Words that fit every template ("website", "game", "app")
+   * do not count on their own; a tie or no specific word means no template,
+   * and the order is built from the brief as before. Only templates with code.
+   */
+  match(text: string | null | undefined): TemplateDefinition | null {
+    const words = ` ${(text ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
+    const generic = new Set(["website", "game", "web app", "app", "fun", "play", "build", "launch", "content", "personal", "software", "platform", "starter", "products", "waves", "action", "arcade", "menu", "calendar", "portal", "hero", "battle", "party"]);
+    const scored = this.list()
+      .filter((item) => item.sourcePath && fs.existsSync(item.sourcePath))
+      .map((item) => {
+        const hits = (item.keywords ?? []).filter((keyword) => words.includes(` ${keyword.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()} `));
+        const specific = hits.filter((keyword) => !generic.has(keyword.toLowerCase()));
+        return { item, specific: specific.length, all: hits.length };
+      })
+      .sort((a, b) => b.specific - a.specific || b.all - a.all);
+    const pick = (pool: typeof scored) => {
+      const found = pool.filter((entry) => entry.specific > 0);
+      if (found.length === 0) return null;
+      if (found[1] && found[1].specific === found[0].specific && found[1].all === found[0].all) return null;
+      return found[0].item;
+    };
+    // A game is a game: "a fun game for my shop" is not an online shop.
+    if (/ (game|games|gaming|play|arcade) /.test(words)) {
+      const games = scored.filter((entry) => entry.item.category === "Games");
+      return pick(games) ?? games.find((entry) => entry.item.id === "game")?.item ?? null;
+    }
+    // A plain website for a business with no kind named is the business-website template.
+    return pick(scored) ?? (/ (website|site|web page|webpage|landing page) /.test(words) ? scored.find((entry) => entry.item.id === "landing")?.item ?? null : null);
   },
 
   /** Everything, hidden included, for the app's template editor. */

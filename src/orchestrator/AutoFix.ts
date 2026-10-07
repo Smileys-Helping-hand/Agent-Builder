@@ -16,6 +16,7 @@ import fsSync from "fs";
 import path from "path";
 import { builtinModules, createRequire } from "module";
 import { CodeGuard } from "./CodeGuard.js";
+import { unreachableScreens } from "./Completeness.js";
 
 let typescriptModule: typeof import("typescript") | null | undefined;
 /** TypeScript's parser, for the fixes a regular expression would get wrong. */
@@ -484,7 +485,7 @@ export const AutoFix = {
           .map((name) => `- ${name}: ${SERVER_ONLY.get(name)}`)
           .join("\n")}\n`
       : "";
-    return missing + absentText + serverText + (await AutoFix.nameClashes(root)) + (await AutoFix.duplicateTypes(root, errorOutput)) + (await AutoFix.literalsOutsideUnion(root, errorOutput));
+    return missing + absentText + serverText + (await AutoFix.nameClashes(root)) + (await AutoFix.duplicateTypes(root, errorOutput)) + (await AutoFix.literalsOutsideUnion(root, errorOutput)) + (await AutoFix.engineActionsInScreens(root, errorOutput)) + (await AutoFix.fieldHomes(root, errorOutput)) + (await AutoFix.engineMadeValues(root, errorOutput));
   },
 
   /**
@@ -508,6 +509,90 @@ export const AutoFix = {
       lines.push(`- ${name} is declared in ${files.join(" and ")}: keep only the one in ${keep}, delete it from ${others.join(", ")}, and import it from ${keep} everywhere.`);
     }
     return lines.length ? `\nThe same type is declared twice, so values of one are rejected where the other is expected:\n${lines.join("\n")}\n` : "";
+  },
+
+  /**
+   * Two an RPG build carried through every repair, both settled by saying
+   * what the engine already offers:
+   *  - `vi.spyOn(loadScores, "loadScores")`: spying on a property of a
+   *    function the test imported by name ("parameter of type 'never'");
+   *  - `useState<Hero>({ ...DEFAULT_SETTINGS.hero })`: a Hero built by hand
+   *    from the starting stats, short of x, y, maxHp and level, where
+   *    newGame(...).hero is a whole one.
+   */
+  async engineMadeValues(root: string, errorOutput: string): Promise<string> {
+    const lines: string[] = [];
+    const spied = new Set<string>();
+    for (const file of (await listFiles(path.join(root, "src"))).filter((full) => TEST_FILE.test(posix(full)))) {
+      const text = await fs.readFile(file, "utf8");
+      for (const match of text.matchAll(/vi\.spyOn\(\s*(\w+)\s*,\s*['"](\w+)['"]/g)) {
+        const named = new RegExp(`import\\s*\\{[^}]*\\b${match[1]}\\b[^}]*\\}\\s*from`).test(text);
+        if (named && new RegExp(`'"${match[2]}"'[^\\n]*'never'|Property '${match[2]}' does not exist on type '\\(`).test(errorOutput)) spied.add(match[1]);
+      }
+    }
+    if (spied.size) {
+      lines.push(
+        `- vi.spyOn(${Array.from(spied)[0]}, "…") spies on a property of an object, and ${Array.from(spied).join(", ")} ${spied.size > 1 ? "are functions" : "is a function"} imported by name. Do not spy on or mock the engine's functions: they work in tests as they are (the score table keeps scores in memory there). Call them and check what they return, e.g. expect(loadScores()[0].score).toBe(100).`
+      );
+    }
+    const engineFiles = (await listFiles(path.join(root, "src", "engine")).catch(() => [] as string[])).filter((file) => /\.ts$/.test(file));
+    const engineText = (await Promise.all(engineFiles.map((file) => fs.readFile(file, "utf8")))).join("\n");
+    const state = /export\s+interface\s+GameState\s*\{([\s\S]*?)\n\}/.exec(engineText)?.[1] ?? "";
+    const short = new Set(Array.from(errorOutput.matchAll(/is missing the following propert(?:y|ies) from type '(\w+)'/g)).map((match) => match[1]));
+    for (const type of short) {
+      const field = new RegExp(`^\\s*(\\w+)\\??\\s*:\\s*${type}\\b`, "m").exec(state)?.[1];
+      if (!field || !/export\s+function\s+newGame\b/.test(engineText)) continue;
+      const defaults = /export\s+const\s+(DEFAULT_\w+)/.exec(engineText)?.[1] ?? "settings";
+      lines.push(`- A whole ${type} comes from the engine: newGame(${defaults}).${field} (or state.${field} from the game). Do not build a ${type} by hand from the settings: the settings only hold its starting values, not every field a ${type} needs.`);
+    }
+    return lines.length ? `\nThe engine already makes these; use it:\n${lines.join("\n")}\n` : "";
+  },
+
+  /**
+   * A field read from the wrong type: `hero.score` when the score is the
+   * game's (GameState.score), not the hero's. "Property 'score' does not exist
+   * on type 'Hero'" does not say where it does exist; three RPG repairs in a
+   * row did not find it. This names the engine types that have it.
+   */
+  async fieldHomes(root: string, errorOutput: string): Promise<string> {
+    const wanted = new Map<string, Set<string>>();
+    for (const match of errorOutput.matchAll(/Property '(\w+)' does not exist on type '(\w+)'/g)) {
+      wanted.set(match[1], (wanted.get(match[1]) ?? new Set()).add(match[2]));
+    }
+    if (wanted.size === 0) return "";
+    const engineFiles = (await listFiles(path.join(root, "src", "engine")).catch(() => [] as string[])).filter((file) => /\.tsx?$/.test(file));
+    const lines: string[] = [];
+    for (const file of engineFiles) {
+      const text = await fs.readFile(file, "utf8");
+      for (const declaration of text.matchAll(/export\s+interface\s+(\w+)\s*\{([\s\S]*?)\n\}/g)) {
+        for (const [field, missingFrom] of wanted) {
+          if (missingFrom.has(declaration[1]) || !new RegExp(`^\\s*${field}\\??\\s*:`, "m").test(declaration[2])) continue;
+          lines.push(`- ${field} is a field of ${declaration[1]} (${posix(path.relative(root, file))}), not of ${Array.from(missingFrom).join(" or ")}: read it from the ${declaration[1]} (e.g. ${declaration[1].charAt(0).toLowerCase() + declaration[1].slice(1).replace(/^gameState$/, "state")}.${field}), or add it to a type of your own.`);
+        }
+      }
+    }
+    return lines.length ? `\nFields read from the wrong type:\n${Array.from(new Set(lines)).join("\n")}\n` : "";
+  },
+
+  /**
+   * A screen that drives the engine itself: `setGameState((s) => attack(s))`
+   * when attack(state) changes the state in place and returns what happened.
+   * The board the build started with already does all of it; the screen
+   * should render it, not redo it (a live RPG build rebuilt every action and
+   * turned finding gold into newGame()).
+   */
+  async engineActionsInScreens(root: string, errorOutput: string): Promise<string> {
+    const files = Array.from(
+      new Set(Array.from(errorOutput.matchAll(/([\w./\\-]+\.tsx)\(\d+,\d+\): error TS2345: Argument of type '\(state: \w+\) => \w*Event\[\]/g)).map((m) => posix(m[1])))
+    );
+    if (files.length === 0) return "";
+    const board = (await listFiles(path.join(root, "src", "engine")).catch(() => [] as string[])).find((file) => file.endsWith(".tsx"));
+    const name = board ? /export\s+function\s+([A-Z]\w*)/.exec(await fs.readFile(board, "utf8"))?.[1] : undefined;
+    return `\nThe engine's actions (move, attack, launch, …) change the game state in place and return what happened (a list of events); they are not React state updaters, so setState(action) is always wrong.${
+      name
+        ? ` ${name} from src/engine/${path.basename(board!)} already calls them for every player action: in ${files.join(", ")}, delete that handling and render <${name} settings={DEFAULT_SETTINGS} onScore={…} onChange={(state) => …} /> instead.`
+        : ""
+    }\n`;
   },
 
   /**
@@ -711,6 +796,230 @@ export const AutoFix = {
     return ["src/lib/setup-tests.ts: saved data is now cleared between tests, so one test's save is not the next test's starting point"];
   },
 
+  /**
+   * Empty stand-ins for what the engine does, in a game built on one:
+   * `initializeGame(): GameState { return { /* initialize game state *\/ }; }`
+   * held a fresh RPG build's typecheck for two whole passes while every repair
+   * rewrote the comment. With the engine's newGame and DEFAULT_SETTINGS in the
+   * project, the stand-ins get the engine's code: start and reset make a new
+   * game, load reads the saved one (or starts afresh), save stores it, and an
+   * update hands the state back (the board already plays the game).
+   */
+  async fillEngineStubs(root: string): Promise<string[]> {
+    const engineFile = path.join(root, "src", "engine", "game.ts");
+    let engine = "";
+    try {
+      engine = await fs.readFile(engineFile, "utf8");
+    } catch {
+      return [];
+    }
+    if (!/export\s+function\s+newGame\b/.test(engine) || !/export\s+const\s+DEFAULT_SETTINGS\b/.test(engine) || !/export\s+(interface|type)\s+GameState\b/.test(engine)) return [];
+    const notes: string[] = [];
+    const empty = (body: string) => /^(return\s*(\{\s*\}|null|undefined)?\s*;?)?$/.test(body.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "").replace(/\s+/g, " ").trim());
+    for (const full of await listFiles(path.join(root, "src"))) {
+      const rel = posix(path.relative(root, full));
+      if (!/^src\/(?!engine\/).+\.ts$/.test(rel) || TEST_FILE.test(rel) || rel.endsWith(".d.ts")) continue;
+      const text = await fs.readFile(full, "utf8");
+      let changed = text;
+      const filled: string[] = [];
+      changed = changed.replace(
+        /(export\s+function\s+(\w+)\s*\(([^)]*)\)\s*:\s*(GameState|void)\s*\{)([\s\S]*?)(\n\})/g,
+        (whole, head: string, name: string, params: string, returns: string, body: string, close: string) => {
+          if (!empty(body)) return whole;
+          const stateParam = /^\s*(\w+)\s*:\s*GameState\b/.exec(params)?.[1];
+          let code: string | null = null;
+          if (returns === "GameState" && /^(load|restore|read|get(Saved)?)/i.test(name) && !stateParam) {
+            code = `try {\n    const saved = localStorage.getItem("game-state");\n    if (saved) return JSON.parse(saved) as GameState;\n  } catch {\n    // Nothing saved, or storage is blocked: a new game.\n  }\n  return newGame(DEFAULT_SETTINGS);`;
+          } else if (returns === "GameState" && (/^(init|initiali[sz]e|new|start|create|reset|restart|begin)/i.test(name) || !params.trim())) {
+            code = "return newGame(DEFAULT_SETTINGS);";
+          } else if (returns === "GameState" && stateParam) {
+            code = `// The board plays the game and keeps its state; this hands it back as it is.\n  return ${stateParam};`;
+          } else if (returns === "void" && stateParam && /^(save|store|persist|write)/i.test(name)) {
+            code = `try {\n    localStorage.setItem("game-state", JSON.stringify(${stateParam}));\n  } catch {\n    // Storage full or blocked: the game goes on unsaved.\n  }`;
+          }
+          if (!code) return whole;
+          filled.push(name);
+          return `${head}\n  ${code}${close}`;
+        }
+      );
+      if (filled.length === 0) continue;
+      // The engine's names, imported where the file already imports from the engine, or added.
+      const needs = ["newGame", "DEFAULT_SETTINGS", "type GameState"].filter((name) => !new RegExp(`\\b${name.replace("type ", "")}\\b[^\\n]*from\\s*['"][./]*engine/game['"]`).test(changed) && new RegExp(`\\b${name.replace("type ", "")}\\b`).test(changed));
+      if (needs.length > 0) {
+        let specifier = posix(path.relative(path.dirname(full), engineFile)).replace(/\.ts$/, "");
+        if (!specifier.startsWith(".")) specifier = `./${specifier}`;
+        const existing = new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*(['"])${specifier.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}\\2;?`).exec(changed);
+        if (existing) {
+          const have = existing[1].split(",").map((s) => s.trim()).filter(Boolean);
+          const add = needs.filter((name) => !have.some((h) => h.replace(/^type\s+/, "") === name.replace(/^type\s+/, "")));
+          changed = changed.replace(existing[0], `import { ${[...have, ...add].join(", ")} } from ${existing[2]}${specifier}${existing[2]};`);
+        } else {
+          changed = `import { ${needs.join(", ")} } from "${specifier}";\n${changed}`;
+        }
+      }
+      await fs.writeFile(full, changed, "utf8");
+      notes.push(`${rel}: ${filled.join(", ")} now use the engine (they were empty)`);
+    }
+    return notes;
+  },
+
+  /**
+   * A Back button that goes nowhere: `onBack={handleBackToGame}` on the game
+   * screen, where that handler switches to the game screen it is on. Pointed
+   * at the handler that goes to the first screen instead (handleBack), when
+   * App has one in use.
+   */
+  async fixBackToSelf(root: string): Promise<string[]> {
+    const appPath = path.join(root, "src", "App.tsx");
+    let app: string;
+    try {
+      app = await fs.readFile(appPath, "utf8");
+    } catch {
+      return [];
+    }
+    const first = /useState(?:<[^>]*>)?\(\s*(?:\{\s*screen\s*:\s*)?['"](\w+)['"]/.exec(app)?.[1];
+    if (!first) return [];
+    const handlers = new Map<string, string>();
+    for (const m of app.matchAll(/const\s+(\w+)\s*=\s*\([^)]*\)\s*=>\s*\{([^}]*)\}/g)) {
+      const target = /\bscreen\s*:\s*['"](\w+)['"]|set\w*Screen\(\s*['"](\w+)['"]/.exec(m[2]);
+      if (target) handlers.set(m[1], target[1] ?? target[2]);
+    }
+    const home = Array.from(handlers).find(([name, screen]) => screen === first && (app.match(new RegExp(`\\b${name}\\b`, "g")) ?? []).length > 1)?.[0];
+    if (!home) return [];
+    const notes: string[] = [];
+    let next = app;
+    // Each screen's block: from its marker to the next marker.
+    const markers = Array.from(app.matchAll(/\bcase\s+['"](\w+)['"]\s*:|\b\w*[sS]creen\s*===\s*['"](\w+)['"]/g));
+    for (let i = markers.length - 1; i >= 0; i--) {
+      const screen = markers[i][1] ?? markers[i][2];
+      const start = markers[i].index!;
+      const end = i + 1 < markers.length ? markers[i + 1].index! : app.length;
+      const block = next.slice(start, end);
+      const fixed = block.replace(/\bonBack=\{(\w+)\}/g, (whole, name: string) => (handlers.get(name) === screen && screen !== first ? `onBack={${home}}` : whole));
+      if (fixed !== block) {
+        next = next.slice(0, start) + fixed + next.slice(end);
+        notes.push(`src/App.tsx: the ${screen} screen's Back went back to itself; it goes to the ${first} screen now`);
+      }
+    }
+    if (next !== app) await fs.writeFile(appPath, next, "utf8");
+    return notes;
+  },
+
+  /**
+   * Screens App.tsx can show but nothing opens get a way in and a way out. An
+   * RPG build wrote handleCharacterSheet and handleHallOfHeroes and, told by
+   * name across five repairs to give them buttons, never did: two of the
+   * brief's four pages could not be opened. The first screen gets a menu with
+   * a button for each, and a screen with no Back of its own gets one to the
+   * first screen. Only App.tsx changes; no screen's props.
+   */
+  async wireUnreachableScreens(root: string): Promise<string[]> {
+    const appPath = path.join(root, "src", "App.tsx");
+    let app: string;
+    try {
+      app = await fs.readFile(appPath, "utf8");
+    } catch {
+      return [];
+    }
+    const missing = unreachableScreens({ "src/App.tsx": app });
+    if (missing.length === 0) return [];
+    const first = /useState(?:<[^>]*>)?\(\s*(?:\{\s*screen\s*:\s*)?['"](\w+)['"]/.exec(app)?.[1];
+    if (!first) return [];
+
+    // How this App switches screens: a setter called with a name, or a state object with a screen field.
+    const setter = /\b(set\w*Screen)\(\s*['"]\w+['"]\s*\)/.exec(app)?.[1];
+    const objectSetter = /\b(set\w+)\(\s*\{\s*screen\s*:\s*['"]\w+['"]\s*\}\s*\)/.exec(app)?.[1];
+    const goTo = (screen: string) => (setter ? `() => ${setter}('${screen}')` : objectSetter ? `() => ${objectSetter}({ screen: '${screen}' })` : null);
+    // A handler already used that goes back to the first screen (handleBack), else the setter.
+    const handlerTo = (screen: string) =>
+      Array.from(app.matchAll(/const\s+(\w+)\s*=\s*\([^)]*\)\s*=>\s*\{([^}]*)\}/g)).find(
+        (m) => new RegExp(`['"]${screen}['"]`).test(m[2]) && (app.match(new RegExp(`\\b${m[1]}\\b`, "g")) ?? []).length > 1
+      )?.[1];
+    const back = handlerTo(first) ?? goTo(first);
+    const label = (text: string) =>
+      text
+        .replace(/^(handle|on|go|show|open|goTo|to)(?=[A-Z])/, "")
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .toLowerCase()
+        .replace(/^\w/, (c) => c.toUpperCase());
+
+    /** The JSX element that starts at or after `from`: its bounds, or null. */
+    const elementAt = (from: number): { start: number; end: number; text: string } | null => {
+      const open = /<([A-Z][\w.]*)\b/g;
+      open.lastIndex = from;
+      const match = open.exec(app);
+      if (!match || match.index - from > 200) return null;
+      let depth = 0;
+      let i = match.index + match[0].length;
+      for (; i < app.length; i++) {
+        const ch = app[i];
+        if (ch === "{") depth++;
+        else if (ch === "}") depth--;
+        else if (depth === 0 && ch === "/" && app[i + 1] === ">") return { start: match.index, end: i + 2, text: app.slice(match.index, i + 2) };
+        else if (depth === 0 && ch === ">") break;
+      }
+      const close = app.indexOf(`</${match[1]}>`, i);
+      return close === -1 ? null : { start: match.index, end: close + match[1].length + 3, text: app.slice(match.index, close + match[1].length + 3) };
+    };
+    const markerFor = (screen: string) =>
+      new RegExp(`\\bcase\\s+['"]${screen}['"]\\s*:|\\b\\w*[sS]creen\\s*===\\s*['"]${screen}['"]`, "i").exec(app);
+
+    const edits: { start: number; end: number; text: string }[] = [];
+    const buttons = missing
+      .map((m) => {
+        const call = m.handler || goTo(m.screen);
+        return call ? `<button type="button" className="btn" onClick={${call}}>${label(m.handler || m.screen)}</button>` : null;
+      })
+      .filter((b): b is string => Boolean(b));
+    const firstMark = markerFor(first);
+    const firstElement = firstMark ? elementAt(firstMark.index + firstMark[0].length) : null;
+    if (!firstElement || buttons.length === 0) return [];
+    edits.push({
+      start: firstElement.start,
+      end: firstElement.end,
+      text: `<>\n        ${firstElement.text}\n        {/* Added by the builder: a way into every screen. */}\n        <nav className="menu" style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap", marginTop: 16 }}>\n          ${buttons.join("\n          ")}\n        </nav>\n      </>`
+    });
+    for (const m of missing) {
+      const mark = markerFor(m.screen);
+      const element = mark ? elementAt(mark.index + mark[0].length) : null;
+      if (!element || !back || /\bon(Back|Close|Exit|Menu|Done|Home)\s*=/.test(element.text)) continue;
+      edits.push({
+        start: element.start,
+        end: element.end,
+        text: `<>\n        <button type="button" className="btn btn-ghost" onClick={${back}}>← Back</button>\n        ${element.text}\n      </>`
+      });
+    }
+    let next = app;
+    for (const edit of edits.sort((a, b) => b.start - a.start)) next = next.slice(0, edit.start) + edit.text + next.slice(edit.end);
+    await fs.writeFile(appPath, next, "utf8");
+    return [`src/App.tsx: added a way into ${missing.map((m) => m.screen).join(", ")} from the ${first} screen${edits.length > 1 ? ", and a Back button" : ""}`];
+  },
+
+  /**
+   * A build config written inside src/ (src/vite.config.ts, src/tsconfig.json)
+   * when the project's own sits at its root: an RPG build's answer came out
+   * half-written there, did not parse, and held the typecheck at fourteen
+   * errors for a whole pass. The root one is what builds the app; the copy goes.
+   */
+  async removeMisplacedConfig(root: string): Promise<string[]> {
+    const notes: string[] = [];
+    let names: string[] = [];
+    try {
+      names = await fs.readdir(path.join(root, "src"));
+    } catch {
+      return notes;
+    }
+    for (const name of names) {
+      if (!/^(vite|vitest|postcss|tailwind|eslint)\.config\.(m?[jt]s|cjs)$|^tsconfig(\.\w+)?\.json$|^package(-lock)?\.json$|^\.eslintrc/.test(name)) continue;
+      const atRoot = await fs.stat(path.join(root, name)).then(() => true, () => false);
+      const sameKind = atRoot || (/^vite(st)?\.config/.test(name) && (await fs.stat(path.join(root, "vite.config.ts")).then(() => true, () => false)));
+      if (!sameKind) continue;
+      await fs.rm(path.join(root, "src", name), { force: true });
+      notes.push(`removed src/${name}: the project's build config is the one at its root`);
+    }
+    return notes;
+  },
+
   async run(root: string): Promise<string[]> {
     const notes: string[] = [
       ...(await AutoFix.fixKebabCaseKeys(root)),
@@ -724,7 +1033,11 @@ export const AutoFix = {
       ...(await AutoFix.addMissingReactImports(root)),
       ...(await AutoFix.fixHooksOutsideComponents(root)),
       ...(await AutoFix.relaxStarterTest(root)),
-      ...(await AutoFix.fixPlaceholderEllipsis(root))
+      ...(await AutoFix.fixPlaceholderEllipsis(root)),
+      ...(await AutoFix.removeMisplacedConfig(root)),
+      ...(await AutoFix.wireUnreachableScreens(root)),
+      ...(await AutoFix.fixBackToSelf(root)),
+      ...(await AutoFix.fillEngineStubs(root))
     ];
     const pkgPath = path.join(root, "package.json");
     let pkg: Record<string, any>;

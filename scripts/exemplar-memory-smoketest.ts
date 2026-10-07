@@ -62,6 +62,29 @@ Quality bar:
 - Works offline`;
 assert.equal(ExemplarMemory.relevant(pgameBrief)?.title, "Arcade Promo Game", "the real Pgame brief finds the game engine, not the restaurant's Menu");
 
+// Each kind of game goes to the engine (and playable board) built for it.
+for (const [brief, title] of [
+  ["Build Star Raid: a space shooter where you blast waves of alien invaders", "Space Shooter Game"],
+  ["Build Zombie Siege: an action game where you shoot zombies", "Space Shooter Game"],
+  ["Build Blaster: a fun arcade shooting game for my shop", "Space Shooter Game"],
+  ["Build Keep Guard: a tower defense game", "Tower Defense Strategy Game"],
+  ["Build Kingdoms: a strategy game where you defend your castle", "Tower Defense Strategy Game"],
+  ["Build Dungeon Quest: an RPG with a hero and monsters", "Fantasy RPG Adventure"],
+  ["Build Hero's Journey: an adventure game with battles and levelling up", "Fantasy RPG Adventure"],
+  ["Build Brick Bash: a brick breaker game", "Arcade Promo Game"]
+] as const) {
+  assert.equal(ExemplarMemory.relevant(brief)?.title, title, brief);
+}
+for (const genre of ["Space Shooter Game", "Tower Defense Strategy Game", "Fantasy RPG Adventure"]) {
+  const seed = ExemplarMemory.list().find((e) => e.title === genre)!;
+  assert.deepEqual(Object.keys(ExemplarMemory.engineFiles(seed, path.resolve("templates/sites"))).sort(), ["src/game.ts", "src/play.tsx", "src/scores.ts"], `${genre} brings its engine, its board and its score table`);
+  const note = ExemplarMemory.formatForPrompt(seed, ["src/engine/game.ts", "src/engine/play.tsx", "src/engine/scores.ts"]);
+  assert.match(note, /The game screen MUST render it, e\.g\. <GameBoard settings=\{DEFAULT_SETTINGS\}/);
+  assert.match(note, /use addScore\(\{ name, score, detail \}\) and loadScores\(\) from "\.\/engine\/scores"/, note);
+  assert.match(note, /Never store the player, hero or game state as a score entry/);
+  assert.match(note, /getByRole\("region", \{ name: "Game Board" \}\)/);
+}
+
 // Our own catalogue engine is never retired: runs cut short are not its failures.
 const arcade = ExemplarMemory.relevant(pgameBrief)!;
 assert.equal(arcade.title, "Arcade Promo Game");
@@ -92,7 +115,7 @@ fs.writeFileSync(path.join(app, "src", "lib", "testing.tsx"), "export const kit 
 const id = ExemplarMemory.recordSuccess(app, "Pocket Levels", "A fun phone game with levels, score and progression, saved in the browser.", 100);
 assert.ok(id);
 const remembered = ExemplarMemory.list().find((e) => e.id === id)!;
-assert.match(remembered.outline, /src\/levels\.ts .*exports Level, nextLevel/);
+assert.match(remembered.outline, /src\/levels\.ts .*exports nextLevel, Level/, "values and functions first, then types");
 assert.ok(!/App\.test|lib\/testing/.test(remembered.sample), "tests and kit are not part of the example");
 assert.ok(remembered.sample.indexOf("levels.ts") < remembered.sample.indexOf("App.tsx"), "logic first: it is what small models leave out");
 // Where the catalogue has tested code for this kind of app, that wins: it goes into the project whole.
@@ -119,7 +142,7 @@ assert.match(ExemplarMemory.formatForPrompt(game!), /Do NOT copy its names, cont
 // A catalogue engine can go into the new app whole; an app this builder made cannot.
 const engine = ExemplarMemory.engineFiles(game!, path.resolve("templates/sites"));
 // The rules and the screen that plays them: a game, not just its engine.
-assert.deepEqual(Object.keys(engine).sort(), ["src/game.ts", "src/play.tsx"]);
+assert.deepEqual(Object.keys(engine).sort(), ["src/game.ts", "src/play.tsx", "src/scores.ts"]);
 assert.equal(engine["src/game.ts"], fs.readFileSync(path.resolve("templates/sites/game/src/game.ts"), "utf8"), "the whole file, not the cut sample");
 assert.match(engine["src/play.tsx"], /export function GameBoard/);
 assert.deepEqual(ExemplarMemory.engineFiles(remembered, path.resolve("templates/sites")), {});
@@ -128,6 +151,7 @@ assert.match(adoptedNote, /Already in your project.*src\/engine\/game\.ts/s);
 assert.match(adoptedNote, /import from \.\/engine\/game, \.\/engine\/play/);
 assert.match(adoptedNote, /The game screen MUST render it, e\.g\. <GameBoard settings=\{DEFAULT_SETTINGS\}/, adoptedNote);
 assert.ok(!/GameBoardProps from/.test(adoptedNote), "a props type is not a component");
+assert.ok(!/High scores, leaderboards/.test(adoptedNote), "no score note when the score table was not adopted");
 assert.ok(!adoptedNote.includes("FILE: src/game.ts"), "the engine is in the project: no need to repeat it in the prompt");
 
 console.log("exemplar memory: all checks passed");

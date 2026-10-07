@@ -252,14 +252,14 @@ const AutonomousVoidFix = {
       const call = statement.expression;
       const first = call.arguments[0];
       if (!first || !ts.isIdentifier(first)) return null;
-      return { start, end, text: `${call.getText(file)};\n${indentOf(file.text, start)}return ${first.text};`, note: `${call.expression.getText(file)}() changes ${first.text} in place and returns nothing: called it, then returned ${first.text}` };
+      return { start, end, text: `${call.getText(file)};\n${indentOf(file.text, start)}return ${first.text};`, note: `${call.expression.getText(file)}() changes ${first.text} in place (it does not return the new state): called it, then returned ${first.text}` };
     }
     if (ts.isExpressionStatement(statement) && ts.isBinaryExpression(statement.expression) && statement.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
       const { left, right } = statement.expression;
       if (!ts.isCallExpression(right)) return null;
       const first = right.arguments[0];
       if (!first || first.getText(file) !== left.getText(file)) return null;
-      return { start, end, text: `${right.getText(file)};`, note: `${right.expression.getText(file)}() changes ${left.getText(file)} in place and returns nothing: no longer assigned` };
+      return { start, end, text: `${right.getText(file)};`, note: `${right.expression.getText(file)}() changes ${left.getText(file)} in place (it does not return the new state): no longer assigned` };
     }
     return null;
   }
@@ -444,7 +444,12 @@ export const TypeFixer = {
 
           // "Type 'void' is not assignable": a function that changes the state in
           // place (launch(state): void) used as if it returned the new state.
-          if (diagnostic.code === 2322 && /Type 'void' is not assignable/.test(ts.flattenDiagnosticMessageText(diagnostic.messageText, " "))) {
+          // The same for an action that changes the state in place and returns
+          // what happened (move(state) → GameEvent[]): `s = move(s, 1, 0)`.
+          if (
+            (diagnostic.code === 2322 || diagnostic.code === 2739 || diagnostic.code === 2740) &&
+            /Type '(void|\w*Event\[\])' (is not assignable|is missing)/.test(ts.flattenDiagnosticMessageText(diagnostic.messageText, " "))
+          ) {
             const edit = AutonomousVoidFix.edit(ts, service.getProgram()?.getSourceFile(fileName), start);
             if (edit) {
               add(path.resolve(fileName), edit);
@@ -523,6 +528,7 @@ export const TypeFixer = {
             let value: import("typescript").Node | undefined = at;
             if (at?.parent && ts.isJsxAttribute(at.parent)) value = at.parent.initializer && ts.isJsxExpression(at.parent.initializer) ? at.parent.initializer.expression : undefined;
             else if (at?.parent && ts.isPropertyAssignment(at.parent) && at.parent.name === at) value = at.parent.initializer;
+            else if (at?.parent && ts.isVariableDeclaration(at.parent) && at.parent.name === at) value = at.parent.initializer;
             const name = value && ts.isIdentifier(value) ? value.text : text.slice(start, end).trim();
             let stub: import("typescript").VariableStatement | undefined;
             const visit = (node: import("typescript").Node) => {
@@ -555,6 +561,194 @@ export const TypeFixer = {
               notes.push(`${rel}:${line}: removed an empty stand-in for ${name}; the real one is in ${path.relative(root, real.fileName).split(path.sep).join("/")}`);
               continue;
             }
+
+            // A test's hand-made object a field or two short ({ …a battle without
+            // xp and gold }): the missing fields get plain values (0, "", false, [],
+            // the first allowed word). Only in tests, and only for plain fields:
+            // app code that leaves a field out is the model's to fix.
+            const literal = value && ts.isObjectLiteralExpression(value) ? value : at && ts.isObjectLiteralExpression(at) ? at : undefined;
+            if (literal && source && checker && /\.test\.tsx?$/.test(fileName)) {
+              const contextual = checker.getContextualType(literal);
+              const expected = contextual ? checker.getNonNullableType(contextual) : undefined;
+              const given = new Set(literal.properties.map((property) => property.name?.getText(source)));
+              const plain = (type: import("typescript").Type): string | undefined => {
+                if (type.isUnion()) {
+                  if (type.types.some((part) => part.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined))) return "null";
+                  const first = type.types.find((part) => part.isStringLiteral() || part.isNumberLiteral());
+                  if (first) return JSON.stringify((first as import("typescript").LiteralType).value);
+                  if (type.types.every((part) => part.flags & ts.TypeFlags.BooleanLiteral)) return "false";
+                  return undefined;
+                }
+                if (type.flags & ts.TypeFlags.Number) return "0";
+                if (type.flags & ts.TypeFlags.String) return '""';
+                if (type.flags & (ts.TypeFlags.Boolean | ts.TypeFlags.BooleanLiteral)) return "false";
+                if (type.isStringLiteral() || type.isNumberLiteral()) return JSON.stringify(type.value);
+                if (checker.isArrayType(type)) return "[]";
+                return undefined;
+              };
+              const missing = (expected?.getProperties() ?? []).filter((property) => !given.has(property.name) && !(property.flags & ts.SymbolFlags.Optional));
+              const filled = missing.map((property) => ({ name: property.name, value: plain(checker.getTypeOfSymbolAtLocation(property, literal)) }));
+              if (filled.length > 0 && filled.length <= 6 && filled.every((field) => field.value !== undefined)) {
+                const list = literal.properties;
+                const after = list.length ? list[list.length - 1].getEnd() : literal.getStart(source) + 1;
+                const lead = list.length ? ", " : " ";
+                add(path.resolve(fileName), { start: after, end: after, text: `${lead}${filled.map((field) => `${field.name}: ${field.value}`).join(", ")}` });
+                notes.push(`${rel}:${line}: gave the test's object its missing ${filled.map((field) => field.name).join(", ")}`);
+                continue;
+              }
+              // Fields that are not plain (colors: { wall, floor, … }), or a hero
+              // copied from the settings' starting stats: the test's object starts
+              // from what the engine makes (DEFAULT_SETTINGS, newGame(…).hero),
+              // and its own fields win.
+              const typeName = expected?.aliasSymbol?.name ?? expected?.getSymbol()?.name;
+              const exported = new Map<string, { file: string; type: import("typescript").Type; kind: "const" | "function" }>();
+              for (const other of typeName && program && missing.length > 0 ? program.getSourceFiles() : []) {
+                if (!ours(other.fileName) || /\.test\.tsx?$/.test(other.fileName)) continue;
+                for (const statement of other.statements) {
+                  if (!(ts.canHaveModifiers(statement) && ts.getModifiers(statement)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword))) continue;
+                  if (ts.isFunctionDeclaration(statement) && statement.name) exported.set(statement.name.text, { file: other.fileName, type: checker.getTypeAtLocation(statement.name), kind: "function" });
+                  if (!ts.isVariableStatement(statement)) continue;
+                  for (const declaration of statement.declarationList.declarations) {
+                    if (ts.isIdentifier(declaration.name)) exported.set(declaration.name.text, { file: other.fileName, type: checker.getTypeAtLocation(declaration.name), kind: "const" });
+                  }
+                }
+              }
+              const named = (type: import("typescript").Type) => type.aliasSymbol?.name ?? type.getSymbol()?.name;
+              let base: { text: string; uses: string[] } | undefined;
+              for (const [name, entry] of exported) {
+                if (/^DEFAULT_/.test(name) && entry.kind === "const" && named(entry.type) === typeName) base = { text: name, uses: [name] };
+              }
+              // A type the game state holds (GameState.hero: Hero): newGame(DEFAULT_SETTINGS).hero.
+              const newGame = exported.get("newGame");
+              const settingsName = Array.from(exported.keys()).find((name) => /^DEFAULT_SETTINGS$/.test(name));
+              if (!base && newGame?.kind === "function" && settingsName) {
+                const made = newGame.type.getCallSignatures()[0]?.getReturnType();
+                const field = made?.getProperties().find((property) => named(checker.getNonNullableType(checker.getTypeOfSymbolAtLocation(property, literal))) === typeName);
+                if (field) base = { text: `newGame(${settingsName}).${field.name}`, uses: ["newGame", settingsName] };
+              }
+              const startsFrom = literal.properties[0] && ts.isSpreadAssignment(literal.properties[0]) && literal.properties[0].expression.getText(source) === base?.text;
+              if (base && !startsFrom) {
+                add(path.resolve(fileName), { start: literal.getStart(source) + 1, end: literal.getStart(source) + 1, text: ` ...${base.text},` });
+                const importedNames = new Set(
+                  source.statements.flatMap((statement) =>
+                    ts.isImportDeclaration(statement) && statement.importClause?.namedBindings && ts.isNamedImports(statement.importClause.namedBindings)
+                      ? statement.importClause.namedBindings.elements.map((element) => element.name.text)
+                      : []
+                  )
+                );
+                for (const use of base.uses.filter((name) => !importedNames.has(name))) {
+                  let specifier = path.relative(path.dirname(fileName), exported.get(use)!.file).split(path.sep).join("/").replace(/\.tsx?$/, "");
+                  if (!specifier.startsWith(".")) specifier = `./${specifier}`;
+                  add(path.resolve(fileName), { start: 0, end: 0, text: `import { ${use} } from "${specifier}";\n` });
+                }
+                notes.push(`${rel}:${line}: the test's ${typeName} starts from ${base.text} (it was missing ${missing.map((property) => property.name).join(", ")})`);
+                continue;
+              }
+            }
+          }
+
+          // `const state: GameState = { …, hero: { ...state.settings.hero } }` in a
+          // test: the object read from itself before it existed. The spread goes
+          // (the object's own fields, or the engine's start, fill it).
+          if ((diagnostic.code === 2448 || diagnostic.code === 2454) && /\.test\.tsx?$/.test(fileName)) {
+            const source = service.getProgram()?.getSourceFile(fileName);
+            let spread: import("typescript").SpreadAssignment | undefined;
+            const visit = (node: import("typescript").Node) => {
+              if (node.getStart(source) <= start && node.getEnd() >= end) {
+                if (ts.isSpreadAssignment(node)) spread = node;
+                ts.forEachChild(node, visit);
+              }
+            };
+            if (source) ts.forEachChild(source, visit);
+            const literal = spread && ts.isObjectLiteralExpression(spread.parent) ? spread.parent : undefined;
+            if (spread && literal && source) {
+              const list = literal.properties;
+              const index = list.indexOf(spread);
+              let from = spread.getFullStart();
+              let to = spread.getEnd();
+              if (index < list.length - 1) to = list[index + 1].getFullStart();
+              else if (index > 0) from = list[index - 1].getEnd();
+              else if (list.hasTrailingComma) to = text.indexOf(",", to) + 1;
+              add(path.resolve(fileName), { start: from, end: to, text: "" });
+              notes.push(`${rel}:${line}: removed ${spread.getText(source)}, read before it was made`);
+              continue;
+            }
+          }
+
+          // `import { ScoreEntry } from "../engine/scores"` in ScoreEntry.tsx, whose
+          // component is also ScoreEntry: the imported one is only a type, so
+          // the import says so and both names live side by side.
+          if (diagnostic.code === 2865 || diagnostic.code === 2866) {
+            const source = service.getProgram()?.getSourceFile(fileName);
+            let specifier: import("typescript").ImportSpecifier | undefined;
+            const visit = (node: import("typescript").Node) => {
+              if (node.getStart(source) <= start && node.getEnd() >= end) {
+                if (ts.isImportSpecifier(node)) specifier = node;
+                ts.forEachChild(node, visit);
+              }
+            };
+            if (source) ts.forEachChild(source, visit);
+            if (specifier && source && !specifier.isTypeOnly && !specifier.parent.parent.isTypeOnly) {
+              add(path.resolve(fileName), { start: specifier.getStart(source), end: specifier.getStart(source), text: "type " });
+              notes.push(`${rel}:${line}: ${specifier.name.text} is imported as a type`);
+              continue;
+            }
+          }
+
+          // A test handing a function a word its type does not allow, on purpose
+          // (navigateTo("Unknown") to see what an unknown screen does): the test
+          // says so with a cast, and checks what it meant to check.
+          if (diagnostic.code === 2345 && /\.test\.tsx?$/.test(fileName)) {
+            const source = service.getProgram()?.getSourceFile(fileName);
+            let literal: import("typescript").StringLiteral | undefined;
+            const visit = (node: import("typescript").Node) => {
+              if (node.getStart(source) <= start && node.getEnd() >= end) {
+                if (ts.isStringLiteral(node) && node.getStart(source) === start && node.parent && ts.isCallExpression(node.parent)) literal = node;
+                ts.forEachChild(node, visit);
+              }
+            };
+            if (source) ts.forEachChild(source, visit);
+            const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
+            if (literal && source && /^Argument of type '"[^"]*"' is not assignable to parameter of type '\w+'/.test(message)) {
+              add(path.resolve(fileName), { start: literal.getStart(source), end: literal.getEnd(), text: `(${literal.getText(source)} as never)` });
+              notes.push(`${rel}:${line}: the test's ${literal.getText(source)} is an on-purpose wrong value, cast as one`);
+              continue;
+            }
+          }
+
+          // `let battle = { ...state.battle }` where state.battle may be null:
+          // every field turns optional, `battle = null` and `battle: battle` stop
+          // compiling, and at run time a missing battle becomes {}. The copy
+          // keeps the null: `state.battle ? { ...state.battle } : null`.
+          if (diagnostic.code === 2322 || diagnostic.code === 2345) {
+            const program = service.getProgram();
+            const source = program?.getSourceFile(fileName);
+            const checker = program?.getTypeChecker();
+            let at: import("typescript").Node | undefined;
+            const find = (node: import("typescript").Node) => {
+              if (node.getStart(source) <= start && node.getEnd() >= end) {
+                at = node;
+                ts.forEachChild(node, find);
+              }
+            };
+            if (source) ts.forEachChild(source, find);
+            const node = at as import("typescript").Node | undefined;
+            let id = node && ts.isIdentifier(node) ? node : undefined;
+            if (id && node!.parent && ts.isPropertyAssignment(node!.parent) && node!.parent.name === node) id = ts.isIdentifier(node!.parent.initializer) ? node!.parent.initializer : undefined;
+            const declaration = id && checker ? checker.getSymbolAtLocation(id)?.valueDeclaration : undefined;
+            const copy =
+              declaration && ts.isVariableDeclaration(declaration) && !declaration.type && declaration.initializer && ts.isObjectLiteralExpression(declaration.initializer)
+                ? declaration.initializer
+                : undefined;
+            const spread = copy?.properties.length === 1 && ts.isSpreadAssignment(copy.properties[0]) ? copy.properties[0].expression : undefined;
+            const spreadType = spread && checker ? checker.getTypeAtLocation(spread) : undefined;
+            const empty = spreadType?.isUnion() ? spreadType.types.find((part) => part.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) : undefined;
+            if (copy && spread && empty && source && copy.getSourceFile() === source) {
+              const written = spread.getText(source);
+              add(path.resolve(fileName), { start: copy.getStart(source), end: copy.getEnd(), text: `${written} ? { ...${written} } : ${empty.flags & ts.TypeFlags.Null ? "null" : "undefined"}` });
+              notes.push(`${rel}:${line}: the copy of ${written} keeps its ${empty.flags & ts.TypeFlags.Null ? "null" : "undefined"}`);
+              continue;
+            }
           }
 
           // { width: 70, radius: 6 } where the type says w and r: an object literal's
@@ -578,6 +772,135 @@ export const TypeFixer = {
               add(path.resolve(fileName), { start, end, text: short });
               notes.push(`${rel}:${line}: ${written} is called ${short} here`);
               continue;
+            }
+          }
+
+          // `return { ...state, scores, place }` or addScore({ …, at }) where the
+          // type has no such field: an RPG build carried both through every
+          // repair. The type cannot hold the value, so the property goes; code
+          // that reads it back fails on its own line, where it can be seen. A
+          // near-miss spelling ("Did you mean 'score'?") goes only when the
+          // right field is already given (by a spread or by name): otherwise the
+          // spelling fix is the better one.
+          if (diagnostic.code === 2353 || diagnostic.code === 2561) {
+            const program = service.getProgram();
+            const source = program?.getSourceFile(fileName);
+            let property: import("typescript").PropertyAssignment | import("typescript").ShorthandPropertyAssignment | undefined;
+            const visit = (node: import("typescript").Node) => {
+              if (node.getStart(source) <= start && node.getEnd() >= end) {
+                if ((ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) && node.name.getStart(source) === start) property = node;
+                ts.forEachChild(node, visit);
+              }
+            };
+            if (source) ts.forEachChild(source, visit);
+            const literal = property && ts.isObjectLiteralExpression(property.parent) ? property.parent : undefined;
+            const meant = /Did you mean to write '([^']+)'/.exec(ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"))?.[1];
+            const given = Boolean(
+              literal && meant && literal.properties.some((other) => ts.isSpreadAssignment(other) || other.name?.getText(source) === meant)
+            );
+            if (property && literal && source && (diagnostic.code === 2353 || given)) {
+              const list = literal.properties;
+              const index = list.indexOf(property);
+              let from = property.getFullStart();
+              let to = property.getEnd();
+              if (index < list.length - 1) to = list[index + 1].getFullStart();
+              else if (index > 0) from = list[index - 1].getEnd();
+              else if (list.hasTrailingComma) to = text.indexOf(",", to) + 1;
+              add(path.resolve(fileName), { start: from, end: to, text: "" });
+              notes.push(`${rel}:${line}: dropped ${property.name.getText(source)}, which the type has no field for`);
+              continue;
+            }
+          }
+
+          // Three a live RPG build carried for a whole pass, each settled by the types:
+          //  - `import GameBoard from './engine/play'` where play exports GameBoard by name;
+          //  - `Status.Playing` where Status is "ready" | "playing" | …: the word is the value;
+          //  - `state.chestGold` where it is `state.settings.chestGold`.
+          {
+            const program = service.getProgram();
+            const source = program?.getSourceFile(fileName);
+            const checker = program?.getTypeChecker();
+            let at: import("typescript").Node | undefined;
+            const find = (node: import("typescript").Node) => {
+              if (node.getStart(source) <= start && node.getEnd() >= end) {
+                at = node;
+                ts.forEachChild(node, find);
+              }
+            };
+            if (source) ts.forEachChild(source, find);
+
+            if (diagnostic.code === 2613 && source && at && checker) {
+              const declaration = source.statements.find(
+                (s): s is import("typescript").ImportDeclaration => ts.isImportDeclaration(s) && s.getStart(source) <= start && s.getEnd() >= end
+              );
+              const name = declaration?.importClause?.name?.text;
+              const target = declaration && checker.getSymbolAtLocation(declaration.moduleSpecifier);
+              if (declaration && name && target && checker.getExportsOfModule(target).some((exported) => exported.name === name)) {
+                const clause = declaration.importClause!;
+                const named = clause.namedBindings && ts.isNamedImports(clause.namedBindings) ? clause.namedBindings.elements.map((e) => e.getText(source)) : [];
+                add(path.resolve(fileName), { start: clause.getStart(source), end: clause.getEnd(), text: `{ ${[name, ...named].join(", ")} }` });
+                notes.push(`${rel}:${line}: ${name} is a named export; imported by name`);
+                continue;
+              }
+            }
+
+            if (diagnostic.code === 2693 && at && checker && at.parent && ts.isPropertyAccessExpression(at.parent) && at.parent.expression === at) {
+              const access = at.parent;
+              // A type used as a value has no value type: read the type it declares.
+              const typeName = at.getText(source);
+              let symbol = checker.getSymbolsInScope(at, ts.SymbolFlags.Type | ts.SymbolFlags.Alias).find((candidate) => candidate.name === typeName);
+              if (symbol && symbol.flags & ts.SymbolFlags.Alias) symbol = checker.getAliasedSymbol(symbol);
+              const type = symbol ? checker.getDeclaredTypeOfSymbol(symbol) : checker.getTypeAtLocation(at);
+              const literals = (type.isUnion() ? type.types : [type]).filter((t) => t.isStringLiteral()).map((t) => (t as import("typescript").StringLiteralType).value);
+              const flat = (word: string) => word.toLowerCase().replace(/[^a-z0-9]/g, "");
+              const match = literals.filter((value) => flat(value) === flat(access.name.text));
+              if (match.length === 1) {
+                add(path.resolve(fileName), { start: access.getStart(source), end: access.getEnd(), text: JSON.stringify(match[0]) });
+                notes.push(`${rel}:${line}: ${access.getText(source)} is the word ${JSON.stringify(match[0])} (${at.getText(source)} is a list of words, not an enum)`);
+                continue;
+              }
+            }
+
+            // The same slip under a name the browser also has: `Screen.Game` where
+            // our Screen is "Title" | "Game" | …, read as the DOM's Screen object.
+            if (diagnostic.code === 2339 && at && checker && at.parent && ts.isPropertyAccessExpression(at.parent) && at.parent.name === at && ts.isIdentifier(at.parent.expression)) {
+              const access = at.parent;
+              const typeName = (access.expression as import("typescript").Identifier).text;
+              const declaredByUs = (candidate: import("typescript").Symbol) => {
+                const real = candidate.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(candidate) : candidate;
+                return (real.declarations ?? []).some((d) => ours(d.getSourceFile().fileName) && ts.isTypeAliasDeclaration(d)) ? real : null;
+              };
+              const ourType = checker
+                .getSymbolsInScope(access.expression, ts.SymbolFlags.Type | ts.SymbolFlags.Alias)
+                .filter((candidate) => candidate.name === typeName)
+                .map(declaredByUs)
+                .find(Boolean);
+              if (ourType) {
+                const type = checker.getDeclaredTypeOfSymbol(ourType);
+                const literals = (type.isUnion() ? type.types : [type]).filter((t) => t.isStringLiteral()).map((t) => (t as import("typescript").StringLiteralType).value);
+                const flat = (word: string) => word.toLowerCase().replace(/[^a-z0-9]/g, "");
+                const match = literals.filter((value) => flat(value) === flat(access.name.text));
+                if (match.length === 1) {
+                  add(path.resolve(fileName), { start: access.getStart(source), end: access.getEnd(), text: JSON.stringify(match[0]) });
+                  notes.push(`${rel}:${line}: ${access.getText(source)} is the word ${JSON.stringify(match[0])} (${typeName} is a list of words, not an enum)`);
+                  continue;
+                }
+              }
+            }
+
+            if (diagnostic.code === 2339 && at && checker && at.parent && ts.isPropertyAccessExpression(at.parent) && at.parent.name === at) {
+              const access = at.parent;
+              const owner = checker.getTypeAtLocation(access.expression);
+              const wanted = access.name.text;
+              const homes = owner.getProperties().filter((property) => {
+                const inner = checker.getTypeOfSymbolAtLocation(property, access);
+                return Boolean(inner.flags & ts.TypeFlags.Object) && !inner.getNumberIndexType() && Boolean(inner.getProperty(wanted));
+              });
+              if (homes.length === 1) {
+                add(path.resolve(fileName), { start: access.name.getStart(source), end: access.name.getStart(source), text: `${homes[0].name}.` });
+                notes.push(`${rel}:${line}: ${wanted} lives in ${access.expression.getText(source)}.${homes[0].name}`);
+                continue;
+              }
             }
           }
 

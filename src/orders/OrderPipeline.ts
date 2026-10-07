@@ -119,7 +119,9 @@ const normalize = (raw: SiteOrder): Parameters<typeof OrderStore.create>[0] | nu
 
   // A catalogue pick is recorded by its id, the same way a template started
   // from the phone is, so buildPrompt can find the template again.
-  const template = Catalog.get(raw.templateId);
+  // Named, or (the site's quote form names none) the catalogue template the
+  // customer's own words clearly ask for: tested code to tailor, not a blank page.
+  const template = Catalog.get(raw.templateId) ?? Catalog.match(`${raw.serviceType ?? raw.productType ?? ""} ${brief}`);
   const productType = template?.id ?? ((raw.productType ?? raw.serviceType ?? "website").trim() || "website");
   const features = (raw.features ?? []).filter((feature) => typeof feature === "string" && !brief.includes(feature));
   return {
@@ -157,6 +159,11 @@ const buildPrompt = (order: Order, from: StartingPoint = "scratch"): string => {
     "What the customer asked for, in their words:",
     order.brief,
     "",
+    // Their email from the order is the business's unless their words give
+    // another (the first address in the brief wins). Nothing else is made up.
+    order.customerEmail ? `Contact email from their order: ${order.customerEmail}` : "",
+    "Never invent contact details: a phone, WhatsApp number, email or street address the customer did not give is left out, not made up.",
+    "",
     ...(template
       ? [
           `They chose "${template.name}" from our catalogue: ${template.description}`,
@@ -191,6 +198,40 @@ const notifyJarvis = (order: Order, subject: string, body: string): void => {
 
 /** The least a build must score to be shown to anyone: roughly install, typecheck and build all passing. */
 const SHIPPABLE_SCORE = 60;
+
+/** The business contact details a tailored site left empty because the customer never gave them. */
+export const missingContact = (outputDir: string): string[] => {
+  let source = "";
+  try {
+    source = fs.readFileSync(path.join(outputDir, "src", "content.ts"), "utf8");
+  } catch {
+    return [];
+  }
+  const block = /business\s*:\s*\{[\s\S]*?\n\s*\}/.exec(source)?.[0] ?? "";
+  const names: Record<string, string> = { email: "email", phone: "phone number", whatsapp: "WhatsApp number", address: "address" };
+  return Object.keys(names)
+    .filter((key) => new RegExp(`\\b${key}\\s*:\\s*(["'\`])\\1`).test(block))
+    .map((key) => names[key]);
+};
+
+/**
+ * What a customer may be shown has to work, whatever it scored: it installs,
+ * type-checks, builds and opens in a browser without errors. A score is a sum
+ * of checks, and one could clear 60 with the page failing to open; the
+ * customer was sent the link to it as "a first version, ready to look at".
+ * Checked on the pass the workspace was left at (the best one).
+ */
+const CUSTOMER_CHECKS = ["install", "typecheck", "build", "runs"];
+export const customerSafe = (record: Pick<BuildRecord, "iterationDetail" | "bestScore" | "qualityScore">): { ok: boolean; failing: string[] } => {
+  const passes = record.iterationDetail ?? [];
+  if (passes.length === 0) return { ok: false, failing: ["no finished pass"] };
+  const best = passes.reduce((top, pass) => (pass.qualityScore > top.qualityScore ? pass : top), passes[0]);
+  const failing = CUSTOMER_CHECKS.filter((name) => {
+    const check = best.checks.find((c) => c.name === name);
+    return check ? check.applicable && !check.passed : name !== "runs" && name !== "typecheck";
+  });
+  return { ok: failing.length === 0, failing };
+};
 
 const publicHttpsUrl = (): string | null => {
   const url = readPublicUrl();
@@ -616,7 +657,8 @@ export const OrderPipeline = {
       // site does not even build (install, typecheck and build together are
       // about 60 of the 100), so it cannot be opened, let alone handed over:
       // one such build reached "review" at 31 and downloaded as a blank page.
-      if (!wasMaintained && record.qualityScore < SHIPPABLE_SCORE) {
+      const safe = customerSafe(record);
+      if (!wasMaintained && (record.qualityScore < SHIPPABLE_SCORE || !safe.ok)) {
         const giveUp = order.attempts >= 3;
         OrderStore.update(order.id, {
           status: giveUp ? "failed" : "accepted",
@@ -628,7 +670,9 @@ export const OrderPipeline = {
         OrderStore.note(
           order.id,
           "failed",
-          `Build finished at quality ${Math.round(record.qualityScore)}, below the ${SHIPPABLE_SCORE} it needs to be usable, so it was not offered for checking. ` +
+          (record.qualityScore < SHIPPABLE_SCORE
+            ? `Build finished at quality ${Math.round(record.qualityScore)}, below the ${SHIPPABLE_SCORE} it needs to be usable, so it was not offered for checking. `
+            : `Build finished at quality ${Math.round(record.qualityScore)}, but ${safe.failing.join(", ")} did not pass, so it was not offered for checking. `) +
             (giveUp ? "Three tries have not got there; it needs a person." : "Trying again from the template's clean code.") +
             ` The attempt is kept at ${record.outputDir}.`
         );
@@ -647,6 +691,7 @@ export const OrderPipeline = {
       // at; it is only null when the tunnel is down or the build produced
       // nothing servable.
       const previewUrl = shareableBuildPreview(record.buildId, readPublicUrl());
+      const missing = missingContact(record.outputDir);
 
       OrderStore.update(order.id, {
         status: wasMaintained ? "maintained" : "review",
@@ -671,7 +716,10 @@ export const OrderPipeline = {
             `It is in ${record.outputDir}.`,
             previewUrl
               ? `The customer can open it at ${previewUrl}`
-              : "There is no public address for it, so the customer has nothing to open: check the tunnel is up."
+              : "There is no public address for it, so the customer has nothing to open: check the tunnel is up.",
+            ...(missing.length ? [`They did not give their ${missing.join(", ")}, so the site leaves ${missing.length === 1 ? "it" : "them"} out: ask them before it goes live.`] : []),
+            // A site needs wording, prices and hours, and the brief rarely has them all: the builder wrote what was missing.
+            "Before it goes out, check its facts with them: prices, opening hours, menu or product details and anything else they did not give were written by the builder."
           ].join("\n")
         );
         if (order.externalId) {

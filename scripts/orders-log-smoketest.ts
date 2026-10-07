@@ -38,4 +38,89 @@ assert.equal(OrderReceipts.forOrder(order.id).length, 1, "receipt is filed under
 assert.equal(OrderReceipts.list()[0].id, receipt.id, "and in the full list");
 assert.equal(OrderReceipts.verify({ ...receipt, customerName: "Someone Else" }), false, "an edited receipt does not");
 
+// A customer is only shown a build that installs, type-checks, builds and opens.
+const { customerSafe } = await import("../src/orders/OrderPipeline.js");
+const pass = (score: number, failing: string[] = []) => ({
+  iteration: 1, at: "", qualityScore: score, objectiveScore: score, status: "", improvements: [], files: 1, passed: failing.length === 0,
+  checks: ["install", "typecheck", "build", "test", "runs", "completeness"].map((name) => ({ name, applicable: true, passed: !failing.includes(name), durationMs: 1 })),
+  blocker: null, metrics: {} as never
+});
+assert.deepEqual(customerSafe({ iterationDetail: [pass(81, ["completeness"])], bestScore: 81, qualityScore: 81 }), { ok: true, failing: [] }, "incomplete but working: a person can check it");
+assert.deepEqual(customerSafe({ iterationDetail: [pass(72, ["runs"])], bestScore: 72, qualityScore: 72 }), { ok: false, failing: ["runs"] }, "does not open: never shown");
+assert.deepEqual(customerSafe({ iterationDetail: [pass(90, []), pass(70, ["typecheck"])], bestScore: 90, qualityScore: 90 }).ok, true, "judged on the best pass, where the workspace is left");
+assert.equal(customerSafe({ iterationDetail: [], bestScore: 0, qualityScore: 0 }).ok, false, "nothing finished: nothing to show");
+
+// An order that names no template (the site's quote form never does) starts from
+// the one its words clearly ask for; a custom app is still built from the brief.
+const { Catalog } = await import("../src/orders/Catalog.js");
+for (const [text, id] of [
+  ["Website: I need a website for my restaurant with our menu and table reservations", "restaurant"],
+  ["E-commerce: an online shop to sell my handmade candles", "ecommerce"],
+  ["Web App: a booking system for my hair salon", "booking"],
+  ["Website: a website for my plumbing business", "landing"],
+  ["Game: a fantasy RPG adventure where a hero explores a dungeon", "rpg"],
+  ["Game: a tower defense game for my board game cafe", "strategy"],
+  ["Game: a fun game for my shop", "game"],
+  ["Game: a space shooter for my arcade", "shooter"],
+  ["Website: wedding invitation with RSVP", "event"],
+  ["Website: a blog for my travel stories", "blog"],
+  ["Web App: inventory tracking software for my warehouse", null],
+  ["Mobile App: an app to track my running", null]
+] as const) {
+  assert.equal(Catalog.match(text)?.id ?? null, id, text);
+}
+
+// Contact details the customer never gave are emptied, and the review note asks for them.
+const { stripInventedContact } = await import("../src/orchestrator/Tailoring.js");
+const { missingContact } = await import("../src/orders/OrderPipeline.js");
+const tailored = `export const site = {\n  business: {\n    name: "Comic Vault",\n    email: "quest@comicvault.co.za",\n    phone: "+27 21 555 0199",\n    whatsapp: "+27 71 123 4567",\n    address: "429 Kalk Street, Cape Town"\n  },\n  hero: { title: "Quest" }\n};\n`;
+const orderBrief = "A fantasy RPG for my comic shop Comic Vault in Cape Town. WhatsApp us on 071 123 4567.\nContact email from their order: thabo@comicvault.co.za";
+const stripped = stripInventedContact(tailored, orderBrief);
+assert.deepEqual(stripped.removed, ["email", "phone", "address"], "made-up email, phone and street go");
+assert.match(stripped.source, /whatsapp: "\+27 71 123 4567"/, "the WhatsApp number they gave stays (+27 and 0 forms match)");
+assert.match(stripped.source, /email: "",\n    phone: "",/);
+assert.deepEqual(stripInventedContact(stripped.source.replace('address: ""', 'address: "Cape Town"'), orderBrief).removed, [], "a town they named stays");
+const contactDir = fs.mkdtempSync(path.join(os.tmpdir(), "ab-contact-"));
+fs.mkdirSync(path.join(contactDir, "src"));
+fs.writeFileSync(path.join(contactDir, "src/content.ts"), stripped.source);
+assert.deepEqual(missingContact(contactDir), ["email", "phone number", "address"]);
+const social = stripInventedContact(`export const site = {
+  business: {
+    name: "Comic Vault",
+    social: [{ label: "Instagram", url: "https://instagram.com/comicvault" }, { label: "Facebook", url: "https://facebook.com/realcomicvault" }]
+  }
+};
+`, "Find us on facebook.com/realcomicvault");
+assert.deepEqual(social.removed, ["social links"]);
+assert.ok(!social.source.includes("instagram.com/comicvault") && social.source.includes("facebook.com/realcomicvault"), social.source);
+
+// Diet tags a dish's own description contradicts come off; the template's correct menu is untouched.
+const { fixDietTags } = await import("../src/orchestrator/Tailoring.js");
+const menu = `items: [
+  { name: "Bunny Chow", description: "Filled with various meats and relishes.", price: 25, diet: ["vegetarian", "spicy"] },
+  { name: "Cheesecake", description: "Rich and creamy.", price: 30, diet: ["vegan", "vegetarian"] },
+  { name: "Kale Salad", description: "Kale, nuts and seeds.", price: 35, diet: ["vegan", "vegetarian"] }
+]`;
+const diet = fixDietTags(menu);
+assert.deepEqual(diet.fixed, ["Bunny Chow", "Cheesecake"]);
+assert.match(diet.source, /Bunny Chow[^\n]*diet: \["spicy"\]/);
+assert.match(diet.source, /Cheesecake[^\n]*diet: \["vegetarian"\]/);
+assert.match(diet.source, /Kale Salad[^\n]*diet: \["vegan", "vegetarian"\]/);
+assert.deepEqual(fixDietTags(fs.readFileSync(path.resolve("templates/sites/restaurant/src/content.ts"), "utf8")).fixed, [], "the template's own menu is right");
+
+// Rewording line by line keeps every template's content parseable, whatever the new text holds.
+const { sampleWording, applyRewording } = await import("../src/orchestrator/Tailoring.js");
+const tsParser = (await import("typescript")).default;
+for (const id of fs.readdirSync(path.resolve("templates/sites")).filter((d) => fs.existsSync(path.resolve("templates/sites", d, "src/content.ts")))) {
+  const source = fs.readFileSync(path.resolve("templates/sites", id, "src/content.ts"), "utf8");
+  const wording = sampleWording(source);
+  assert.ok(wording.length >= 10, `${id}: its wording is found`);
+  assert.ok(!wording.some((line) => /^(https?:|#|\/)|@/.test(line)), `${id}: links, colours and emails are not wording`);
+  const reworded = applyRewording(source, wording, JSON.stringify(Object.fromEntries(wording.map((_, i) => [String(i + 1), `Line ${i + 1}: it's "ours" \\ really`]))));
+  assert.ok(reworded.changed >= wording.length, `${id}: every line replaced`);
+  const parsed = tsParser.createSourceFile("content.ts", reworded.source, tsParser.ScriptTarget.Latest, true) as unknown as { parseDiagnostics: unknown[] };
+  assert.equal(parsed.parseDiagnostics.length, 0, `${id}: still parses`);
+}
+assert.equal(applyRewording('const a = "Hello there";', ["Hello there"], "not json").changed, 0, "an answer that is not JSON changes nothing");
+
 console.log("orders log: all checks passed");

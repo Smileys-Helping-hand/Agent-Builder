@@ -230,11 +230,14 @@ export const engineUse = (source: Record<string, string>, engineFiles: string[])
       ).map((m) => m[1] ?? m[2]);
       const others = Object.entries(source)
         .filter(([name]) => name !== file)
-        .map(([, text]) => text)
+        .map(([, text]) => text.replace(/^\s*import\b[^;]*;?$/gm, ""))
         .join("\n");
-      // Called, or for a component (GameBoard), rendered: <GameBoard … /> is how a board is used.
-      const used = functions.filter((name) => new RegExp(`\\b${name}\\s*\\(|<${name}\\b`).test(others));
-      return { file, used, unused: functions.filter((name) => !used.includes(name)) };
+      // Called, rendered (<GameBoard … />), or handed over to be called: the
+      // RPG board drives its battles with act(attack) and act(usePotion).
+      const used = functions.filter((name) => new RegExp(`\\b${name}\\s*\\(|<${name}\\b|[(,=]\\s*${name}\\s*[),;]`).test(others));
+      // The engine's own helpers (random, enterFloor), called inside it, are not the app's to call.
+      const helpers = functions.filter((name) => (source[file].match(new RegExp(`\\b${name}\\s*\\(`, "g")) ?? []).length > 1);
+      return { file, used, unused: functions.filter((name) => !used.includes(name) && !helpers.includes(name)) };
     });
 
 /**
@@ -243,6 +246,40 @@ export const engineUse = (source: Record<string, string>, engineFiles: string[])
  * inside them, so "the engine is used" holds even when the app shows four
  * buttons instead of the game; this is the check that does not.
  */
+/**
+ * Screens App.tsx can switch to but nothing ever switches it to: an RPG build
+ * scored 100 with `handleCharacterSheet` and `handleHallOfHeroes` written and
+ * never handed to a button, so two of the brief's four pages could not be
+ * opened. A handler that sets the screen and is never used, for a screen no
+ * other code reaches, is a page nobody can get to.
+ */
+export const unreachableScreens = (source: Record<string, string>): { screen: string; handler: string }[] => {
+  const app = source["src/App.tsx"];
+  if (!app) return [];
+  const target = (text: string) =>
+    Array.from(text.matchAll(/\bscreen\s*:\s*['"](\w+)['"]|set\w*Screen\(\s*['"](\w+)['"]|set\w*Screen\(\s*\w+\.(\w+)\s*\)/g)).map((match) => (match[1] ?? match[2] ?? match[3]).toLowerCase());
+  const handlers: { name: string; start: number; end: number; targets: string[] }[] = [];
+  for (const match of app.matchAll(/const\s+(\w+)\s*=\s*(?:useCallback\(\s*)?(?:\([^)]*\)|\w+)\s*(?::[^=]+)?=>\s*\{/g)) {
+    const start = match.index!;
+    const close = /\n\s*\}\s*(?:,\s*\[[^\]]*\]\s*\))?\s*;/.exec(app.slice(start));
+    const end = close ? start + close.index + close[0].length : app.length;
+    handlers.push({ name: match[1], start, end, targets: target(app.slice(start, end)) });
+  }
+  const unused = handlers.filter((h) => /^[a-z]/.test(h.name) && h.targets.length > 0 && (app.match(new RegExp(`\\b${h.name}\\b`, "g")) ?? []).length === 1);
+  // Everything that can still switch screens: the app without the unused handlers, and every other file.
+  let rest = app;
+  for (const h of [...unused].sort((a, b) => b.start - a.start)) rest = rest.slice(0, h.start) + rest.slice(h.end);
+  const reached = new Set([...target(rest), ...Object.entries(source).filter(([file]) => file !== "src/App.tsx").flatMap(([, text]) => target(text))]);
+  // The first screen shown counts as reached.
+  const first = /useState(?:<[^>]*>)?\(\s*(?:\{\s*screen\s*:\s*)?['"](\w+)['"]/.exec(app)?.[1]?.toLowerCase();
+  if (first) reached.add(first);
+  // Every screen App shows (screen === "hall", case "hall":) that nothing switches to,
+  // whether or not a handler was written for it.
+  const shown = Array.from(app.matchAll(/\b\w*[sS]creen\s*===\s*['"](\w+)['"]|\bcase\s+['"](\w+)['"]\s*:/g)).map((match) => (match[1] ?? match[2]).toLowerCase());
+  const wanted = Array.from(new Set([...unused.flatMap((h) => h.targets), ...shown])).filter((screen) => !reached.has(screen));
+  return wanted.map((screen) => ({ screen, handler: unused.find((h) => h.targets.includes(screen))?.name ?? "" }));
+};
+
 export const unshownComponents = (source: Record<string, string>, engineFiles: string[]): { file: string; components: string[] }[] => {
   const app = Object.entries(source)
     .filter(([file]) => !engineFiles.includes(file))
@@ -276,9 +313,20 @@ export const coverage = (brief: string, source: Record<string, string>, minLines
 };
 
 /** The prompt for the reviewer: the brief and the code, and a strict answer format. */
-export const reviewPrompt = (brief: string, source: Record<string, string>, budget = 14_000): string => {
+export const reviewPrompt = (brief: string, source: Record<string, string>, budget = 14_000, engineFiles: string[] = []): string => {
   let used = 0;
+  // The engine the app started from is described, not shown: a long engine
+  // pushed past the budget left the reviewer sure an RPG "has no turn-based
+  // battles" that its game.ts tested and its board played.
+  const engine = engineFiles
+    .filter((file) => file in source)
+    .map((file) => {
+      const about = (/^\s*\/\*\*([\s\S]*?)\*\//.exec(source[file])?.[1] ?? "").replace(/^\s*\* ?/gm, "").replace(/\s+/g, " ").trim();
+      const names = Array.from(source[file].matchAll(/export\s+(?:async\s+)?(?:function|const)\s+(\w+)/g)).map((match) => match[1]);
+      return `- ${file}: ${about || "part of the engine"} (exports ${names.join(", ")})`;
+    });
   const files = Object.entries(source)
+    .filter(([file]) => !engine.length || !engineFiles.includes(file))
     .sort(([a], [b]) => (a.endsWith("App.tsx") ? -1 : b.endsWith("App.tsx") ? 1 : a.localeCompare(b)))
     .map(([file, content]) => {
       if (used >= budget) return `FILE: ${file} (not shown)`;
@@ -292,7 +340,7 @@ export const reviewPrompt = (brief: string, source: Record<string, string>, budg
 What they asked for:
 ${brief.split(/\nWhat our research confirmed/i)[0].slice(0, 3500)}
 
-The app's code:
+${engine.length ? `Already in the app, complete and tested (what these do is done: do not list it as missing):\n${engine.join("\n")}\n\n` : ""}The app's code:
 ${files}
 
 List only the things the brief clearly asks for that this code does NOT really do. A stub, a hard-coded

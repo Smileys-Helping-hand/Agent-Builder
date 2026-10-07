@@ -171,7 +171,35 @@ const dispatch = (provider: ModelProvider, prompt: string, model?: string): Prom
   }
 };
 
+/** A local model server that is not there (stopped, restarting, crashed mid-answer), as opposed to one that answered badly. */
+export const modelServerDown = (error: unknown): boolean => {
+  const err = error as { message?: string; cause?: { code?: string; message?: string } } | undefined;
+  const text = `${err?.message ?? ""} ${err?.cause?.code ?? ""} ${err?.cause?.message ?? ""}`;
+  return /fetch failed|ECONNREFUSED|ECONNRESET|UND_ERR_SOCKET|socket hang up|other side closed|llama runner process has terminated|server busy|503/i.test(text);
+};
+
 export class ModelRouter {
+  /**
+   * A local call made while the model server is down waits for it instead of
+   * failing at once. With Ollama stopped, every repair "failed" in a few
+   * milliseconds and a build burned its eight passes in seven minutes, scoring
+   * the same broken code each time; the launcher brings the server back within
+   * a minute or two. Waits up to MODEL_WAIT_MS (10 minutes by default).
+   */
+  static async waitingOut<T>(call: () => Promise<T>, limitMs = Number(process.env.MODEL_WAIT_MS ?? 600_000), pauses = [5_000, 10_000, 20_000, 30_000]): Promise<T> {
+    const started = Date.now();
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await call();
+      } catch (error) {
+        if (!modelServerDown(error) || Date.now() - started >= limitMs) throw error;
+        const pause = pauses[Math.min(attempt, pauses.length - 1)];
+        if (attempt === 0) console.warn(`[models] the local model server is not answering (${(error as Error)?.message ?? error}); waiting for it to come back`);
+        await new Promise((resolve) => setTimeout(resolve, Math.min(pause, Math.max(0, limitMs - (Date.now() - started)))));
+      }
+    }
+  }
+
   static async generate(prompt: string, options: GenerateOptions = {}): Promise<string> {
     const provider = options.provider ?? getProviderFromEnv();
     // Ollama/LM Studio share one local GPU queue; concurrent calls just
@@ -183,7 +211,7 @@ export class ModelRouter {
 
     const startedAt = Date.now();
     const response = isLocalProvider
-      ? await gpuLock.run(() => dispatch(provider, prompt, options.model))
+      ? await ModelRouter.waitingOut(() => gpuLock.run(() => dispatch(provider, prompt, options.model)))
       : await dispatch(provider, prompt, options.model);
 
     void ModelPerfLog.record({

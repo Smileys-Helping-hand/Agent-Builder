@@ -135,9 +135,13 @@ const stems = (text: string): Set<string> =>
     contentTokens(text)
       .filter((token) => !FILLER.has(token))
       .map((token) => {
-        // Twice, so "bookings" reaches "book" like "booking" does.
+        // Twice, so "bookings" reaches "book" like "booking" does. "-es" only
+        // comes off after s/x/ch/sh (boxes, matches): "scores" cut to "scor"
+        // never met "score", and the arcade game lost every brief about scores.
         let stem = token;
-        for (let i = 0; i < 2 && stem.length > 4; i += 1) stem = stem.replace(/(ing|ed|es|s)$/, "");
+        for (let i = 0; i < 2 && stem.length > 4; i += 1) {
+          stem = stem.replace(/(ing|ed)$/, "").replace(/(ss|x|ch|sh)es$/, "$1").replace(/([^s])s$/, "$1");
+        }
         return stem;
       })
   );
@@ -159,10 +163,17 @@ const similarity = (brief: Set<string>, head: Set<string>, example: Set<string>,
   return score;
 };
 
-const exportsOf = (text: string): string[] =>
-  Array.from(text.matchAll(/export\s+(?:default\s+)?(?:async\s+)?(?:function|const|class|interface|type|enum)\s+(\w+)/g))
-    .map((m) => m[1])
-    .slice(0, 10);
+/**
+ * What a file exports, values and functions before types: an engine with ten
+ * types up front (the shooter's) otherwise hid DEFAULT_SETTINGS and newGame
+ * past the cut, and the model was never told they were there.
+ */
+const exportsOf = (text: string): string[] => {
+  const found = Array.from(text.matchAll(/export\s+(?:default\s+)?(?:async\s+)?(function|const|class|interface|type|enum)\s+(\w+)/g));
+  const values = found.filter((m) => m[1] === "function" || m[1] === "const" || m[1] === "class").map((m) => m[2]);
+  const types = found.filter((m) => m[1] !== "function" && m[1] !== "const" && m[1] !== "class").map((m) => m[2]);
+  return [...values, ...types].slice(0, 14);
+};
 
 /** The app's own source files (no tests, no kit), path → content. */
 const sourceFiles = (root: string): Record<string, string> => {
@@ -296,6 +307,10 @@ export const ExemplarMemory = {
     for (const set of words.values()) for (const token of set) documentFrequency.set(token, (documentFrequency.get(token) ?? 0) + 1);
     let best: { exemplar: Exemplar; score: number } | null = null;
     let bestSeed: { exemplar: Exemplar; score: number } | null = null;
+    // A catalogue example that shares a word with the brief's opening, for when
+    // nothing clears the bar: with four game engines "game" is no longer rare,
+    // and "a nice fun phone game" fell below it and got no engine at all.
+    let headSeed: { exemplar: Exemplar; score: number } | null = null;
     for (const row of rows) {
       // Only an app this builder made can wear out its welcome. A catalogue
       // example is our own tested code: four Pgame runs that were cut short by
@@ -303,7 +318,13 @@ export const ExemplarMemory = {
       // retired the game engine, and the next build started with nothing.
       const retired = row.origin === "build" && row.times_used >= RETIRE_AFTER_USES && (row.times_passed + 1) / (row.times_used + 2) < RETIRE_BELOW_RATE;
       if (retired) continue;
-      const score = similarity(wanted, head, words.get(row.id)!, documentFrequency, rows.length);
+      // On a tie, the more general example wins (fewer words of its own): a
+      // brief that only says "a fun game" gets the plain arcade game, not
+      // whichever genre the database happened to list first.
+      const score = similarity(wanted, head, words.get(row.id)!, documentFrequency, rows.length) - words.get(row.id)!.size * 1e-6;
+      if (row.origin !== "build" && score >= MIN_SIMILARITY * 0.6 && [...head].some((token) => words.get(row.id)!.has(token)) && (!headSeed || score > headSeed.score)) {
+        headSeed = { exemplar: fromRow(row), score };
+      }
       if (score < MIN_SIMILARITY) continue;
       if (!best || score > best.score) best = { exemplar: fromRow(row), score };
       if (row.origin !== "build" && (!bestSeed || score > bestSeed.score)) bestSeed = { exemplar: fromRow(row), score };
@@ -313,7 +334,7 @@ export const ExemplarMemory = {
     // description to follow. A Pgame that passed with four buttons instead of
     // a game was remembered and preferred, and the next Pgame started with no
     // engine. Remembered builds teach the kinds of app the catalogue lacks.
-    return (bestSeed ?? best)?.exemplar ?? null;
+    return (bestSeed ?? best ?? headSeed)?.exemplar ?? null;
   },
 
   /**
@@ -363,7 +384,15 @@ export const ExemplarMemory = {
       const playable = components.length
         ? `\nThe game itself is already built and plays (canvas, frame loop, touch, mouse and keyboard): ${components
             .map((c) => `${c.name} from "${c.module}"`)
-            .join(", ")}. The game screen MUST render it, e.g. <${components[0].name} settings={${defaults[0] ?? "settings"}} onScore={...} />. Do not write your own game loop or canvas, and never stand in for play with buttons that fire game events.`
+            .join(", ")}. The game screen MUST render it, e.g. <${components[0].name} settings={${defaults[0] ?? "settings"}} onScore={...} />. It already handles every player action (moving, shooting, building, fighting — whatever this game has) and keeps the game's state itself: do not write your own game loop or canvas, do not call the engine's actions from a screen, do not keep a copy of the game state, and never stand in for play with buttons that fire game events. To show the score or stats on other screens, use its onScore={(score) => …} and onChange={(state) => …} props. In a test, find it with screen.getByRole("region", { name: "Game Board" }) (or getByTestId("game-board")); tests cannot see what is drawn on the canvas, so test the screens around it and the engine's functions instead.`
+        : "";
+      // A model left to keep its own high scores stored the hero (which has no
+      // score) and sorted by hero.score: six type errors it never untangled.
+      const scoresFile = adopted.find((file) => /\/scores\.ts$/.test(file));
+      const scores = scoresFile
+        ? `\nHigh scores, leaderboards and a "hall of fame" are already handled: use addScore({ name, score, detail }) and loadScores() from "./${scoresFile
+            .replace(/^src\//, "")
+            .replace(/\.ts$/, "")}" (entries are ScoreEntry { name, score, detail?, at }). Never store the player, hero or game state as a score entry, and do not write your own high-score storage.`
         : "";
       return `Already in your project, complete, tested and working: ${adopted.join(", ")} (the engine from our
 "${exemplar.title}"). Build this app ON it: import from ${modules} and write the screens, navigation,
@@ -373,7 +402,7 @@ Its interfaces and types are types only: never \`new\` them; pass plain objects 
         defaults.length
           ? `\nReady-made values to start from: ${defaults.join(", ")} (e.g. newGame(${defaults[0]})). In tests, make a state the same way and change only what the test is about: { ...newGame(${defaults[0]}), score: 120 }. Never write the paddle, ball or bricks out by hand.`
           : ""
-      }${playable}
+      }${playable}${scores}
 Its files:
 ${exemplar.outline}
 `;

@@ -2,8 +2,8 @@ import { EventEmitter } from "events";
 import { CodeGuard } from "./CodeGuard.js";
 import { AutoFix } from "./AutoFix.js";
 import { TypeFixer } from "./TypeFixer.js";
-import { appSource, coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, reviewPrompt, stubs, unshownComponents } from "./Completeness.js";
-import { applyFacts, readFacts, sampleFactsLeft } from "./Tailoring.js";
+import { appSource, coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, reviewPrompt, stubs, unreachableScreens, unshownComponents } from "./Completeness.js";
+import { applyFacts, readFacts, applyRewording, fixDietTags, rewordPrompt, sampleFactsLeft, sampleWording, stripInventedContact } from "./Tailoring.js";
 import { ExemplarMemory, type Exemplar } from "../learning/ExemplarMemory.js";
 import { GameModeOnError } from "../utils/GameMode.js";
 import fs from "fs";
@@ -1204,11 +1204,91 @@ ${lines}
    * (roughly 3.3 characters a token for code and English). Hosted models have
    * windows far larger than any prompt here.
    */
+  /** Marks a file the builder wrote itself; repairs leave such files as they are. */
+  static readonly BUILT_IN_MARK = "Written by the builder, not the model";
+
+  /**
+   * The game screen for an engine with a playable board: the board with the
+   * engine's own settings, and the score and state passed up. Null when the
+   * engine lacks what it needs (a board component, DEFAULT_SETTINGS, GameState).
+   */
+  static builtInGameScreen(engine: { file: string; text: string }[]): ((file: string) => string) | null {
+    const board = engine.find((e) => e.file.endsWith(".tsx") && /export\s+function\s+[A-Z]\w*/.test(e.text));
+    const rules = engine.find((e) => e.file.endsWith(".ts") && /export\s+const\s+DEFAULT_SETTINGS\b/.test(e.text) && /export\s+(interface|type)\s+GameState\b/.test(e.text));
+    if (!board || !rules) return null;
+    const boardName = /export\s+function\s+([A-Z]\w*)/.exec(board.text)![1];
+    const from = (file: string, target: string) => {
+      let rel = path.posix.relative(path.posix.dirname(file), target.replace(/\.tsx?$/, ""));
+      if (!rel.startsWith(".")) rel = `./${rel}`;
+      return rel;
+    };
+    return (file: string) => {
+      const name = path.basename(file, ".tsx");
+      return `/**
+ * The game itself: the tested board, playing with the engine's own settings.
+ * ${AutonomousOrchestrator.BUILT_IN_MARK}: every move, battle and score is the
+ * board's. Other screens follow the game through onScore and onChange.
+ */
+import { ${boardName} } from "${from(file, board.file)}";
+import { DEFAULT_SETTINGS, type GameState } from "${from(file, rules.file)}";
+
+export interface ${name}Props {
+  /** Called with the final score when a game is won or lost. */
+  onScore?: (score: number) => void;
+  /** Called whenever the game changes: score, lives, level, status. */
+  onChange?: (state: GameState) => void;
+  /** When given, a Menu button above the game calls it (back to the title screen). */
+  onBack?: () => void;
+}
+
+export default function ${name}({ onScore, onChange, onBack }: ${name}Props) {
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      {onBack && (
+        <button type="button" className="btn btn-ghost" onClick={onBack} style={{ justifySelf: "start" }}>
+          ← Menu
+        </button>
+      )}
+      <${boardName} settings={DEFAULT_SETTINGS} onScore={onScore} onChange={onChange} />
+    </div>
+  );
+}
+`;
+    };
+  }
+
   /** A planned logic file that would redo what a playable board does: input, controls, the loop, drawing, physics. */
   static duplicatesBoard(file: { path: string; purpose: string }): boolean {
-    if (!/\.ts$/.test(file.path) || /\.test\./.test(file.path)) return false;
-    return /\b(input|controls?|keyboard|touch|pointer|game ?loop|frame loop|render(er|ing)?|draw(ing)?|canvas|physics|collisions?|paddle|ball movement)\b/i.test(
+    if (/\.test\./.test(file.path)) return false;
+    // Screens for what the board already shows: an RPG build planned a
+    // BattleScreen and GameControls beside a board with its own battle panel
+    // and pad, and they fought it. The game screen itself, where the board
+    // goes, and every other screen (menus, saves, scores) stay.
+    if (/\.tsx$/.test(file.path)) {
+      const name = path.basename(file.path, ".tsx");
+      if (/^(Game|Play|Main)(Screen|Page|View)?$/.test(name)) return false;
+      return /^(Battle|Combat|Fight|Arena|Controls?|GameControls|Dpad|DPad|Joystick|Hud|HUD|Canvas|Board|GameBoard|Map|MapView|Dungeon|Field|Playfield)(Screen|Panel|View|Page)?$/.test(name);
+    }
+    if (!/\.ts$/.test(file.path)) return false;
+    // Also a reducer over the game's events or actions, battles, turns or
+    // movement: an RPG build's gameLogic.ts dispatched "moved"/"battle" events
+    // back into the engine and clashed with it. Saving, scores and progression stay.
+    return /\b(input|controls?|keyboard|touch|pointer|game ?loop|frame loop|render(er|ing)?|draw(ing)?|canvas|physics|collisions?|paddle|ball movement|reducer|dispatch(es|ing)?|update(s)? the game( state)?|game state updates?|handles? (game |player )?(events|actions|moves)|process(es)? (player )?actions|battles?|combat|turns?|movement)\b/i.test(
       `${path.basename(file.path).replace(/([a-z])([A-Z])/g, "$1 $2")} ${file.purpose}`
+    );
+  }
+
+  /**
+   * A logic file that keeps high scores, when the engine's score table already
+   * does: an RPG build stored the hero (which has no score) as its high score
+   * and sorted by hero.score, six type errors five repairs never untangled.
+   * Screens that show the table stay.
+   */
+  static duplicatesScores(file: { path: string; purpose: string }): boolean {
+    if (!/\.ts$/.test(file.path) || /\.test\./.test(file.path)) return false;
+    // By the file's name: a progression module that also tracks scores keeps its other work.
+    return /^(high ?scores?|best ?scores?|leader ?boards?|scores?( ?(board|table|store|storage|history))?|hall ?of ?(fame|heroes|champions))$/i.test(
+      path.basename(file.path, ".ts").replace(/([a-z])([A-Z])/g, "$1 $2")
     );
   }
 
@@ -1327,17 +1407,37 @@ ${lines}
         broken.map((item) => item.file)
       );
     }
-    let names: string[];
-    try {
-      names = fs.readdirSync(path.join(this.workspace.root, "src", "engine")).filter((name) => /\.(t|j)sx?$/.test(name) && !/\.(test|spec)\./.test(name));
-    } catch {
-      return;
-    }
+    const code = (dir: string) => {
+      try {
+        return fs.readdirSync(path.join(this.workspace.root, dir)).filter((name) => /\.(t|j)sx?$/.test(name) && !/\.(test|spec|d)\./.test(name)).map((name) => `${dir}/${name}`);
+      } catch {
+        return [];
+      }
+    };
+    // A template order keeps the template's tested code beside its content
+    // (src/game.ts, src/play.tsx, src/scores.ts): an order for the shooter
+    // rewrote scores.ts and broke its tests. Those files are guarded the same
+    // way, recognised by their header; content, App and main stay the model's.
+    const templateCode =
+      fs.existsSync(path.join(this.workspace.root, "template.json")) && !this.isStarter()
+        ? code("src").filter((file) => !/\/(content|App|main)\.(t|j)sx?$/.test(file) && AutonomousOrchestrator.catalogueEngine(path.join(this.workspace.root, file), path.resolve(process.env.TEMPLATES_DIR ?? "templates/sites")))
+        : [];
+    for (const file of templateCode) if (!this.adoptedEngine.includes(file)) this.adoptedEngine.push(file);
+    const files = code("src/engine");
+    if (files.length === 0) return;
     const restored: Record<string, string> = {};
     const notes: string[] = [];
-    for (const name of names) {
-      const file = `src/engine/${name}`;
-      if (CodeGuard.headStart(this.workspace.root, file) === null) continue;
+    for (const file of files) {
+      if (CodeGuard.headStart(this.workspace.root, file) === null) {
+        // A project copied with a fresh history (imported, or carried on from
+        // a copy) has no head-start commit; its engine is still ours when it
+        // opens like one of the catalogue's. Recognised, it is guarded, but
+        // there is no earlier version to restore from.
+        if (AutonomousOrchestrator.catalogueEngine(path.join(this.workspace.root, file), path.resolve(process.env.TEMPLATES_DIR ?? "templates/sites"))) {
+          if (!this.adoptedEngine.includes(file)) this.adoptedEngine.push(file);
+        }
+        continue;
+      }
       if (!this.adoptedEngine.includes(file)) this.adoptedEngine.push(file);
       const fix = CodeGuard.restoreEngine(this.workspace.root, file);
       if (fix) {
@@ -1354,6 +1454,29 @@ ${lines}
       `An earlier pass rewrote it: ${notes.join("; ")}. What it lost is back, and what it added is kept. Add to the engine; do not replace it.`,
       Object.keys(restored)
     );
+  }
+
+  /** Whether a project's engine file opens with the same header comment as a catalogue template's file of that name. */
+  static catalogueEngine(file: string, sitesDir: string): boolean {
+    const header = (text: string) => /^\s*\/\*\*[\s\S]*?\*\//.exec(text)?.[0].replace(/\s+/g, " ").trim() ?? "";
+    let mine = "";
+    try {
+      mine = header(fs.readFileSync(file, "utf8"));
+    } catch {
+      return false;
+    }
+    if (mine.length < 60) return false;
+    try {
+      return fs.readdirSync(sitesDir).some((id) => {
+        try {
+          return header(fs.readFileSync(path.join(sitesDir, id, "src", path.basename(file)), "utf8")) === mine;
+        } catch {
+          return false;
+        }
+      });
+    } catch {
+      return false;
+    }
   }
 
   private async adoptExemplarEngine(): Promise<void> {
@@ -1425,7 +1548,7 @@ ${lines}
     const engineNote = engine.length
       ? `\nAlready in the project (a tested engine — use it, do not plan to rewrite it):\n${engine.map((e) => `- ${e.file}: ${e.exports.join("; ")}`).join("\n")}\n${
           boards.length
-            ? `The game itself already plays: ${boards.map((b) => `${b.name} in ${b.file}`).join(", ")} draws it, runs the loop and handles touch, mouse and keys. Plan no files for input, controls, a game loop, drawing or physics: the game screen renders <${boards[0].name} settings={DEFAULT_SETTINGS} onScore={...} /> and the rest of the app (menus, saving, progression) goes around it.\n`
+            ? `The game itself already plays: ${boards.map((b) => `${b.name} in ${b.file}`).join(", ")} draws it, runs the loop, handles touch, mouse and keys, and has its own in-game panels (battles, controls, the map, the score bar). Plan no files for input, controls, a game loop, drawing, physics, battles or the map: the game screen renders <${boards[0].name} settings={DEFAULT_SETTINGS} onScore={...} /> and the rest of the app (menus, saving, progression) goes around it.\n`
             : ""
         }`
       : "";
@@ -1466,7 +1589,9 @@ Answer with JSON only:
       .filter(({ file, dupes, keep }) => !(dupes.length > 0 && dupes.length >= keep.length && !/\.tsx$/.test(file.path)))
       .map(({ file, keep }) => ({ ...file, exports: keep }))
       // With a playable board, logic files for what it already does are dropped.
-      .filter((file) => !(boards.length && AutonomousOrchestrator.duplicatesBoard(file)));
+      .filter((file) => !(boards.length && AutonomousOrchestrator.duplicatesBoard(file)))
+      // And with the engine's score table, a store of the model's own.
+      .filter((file) => !(engine.some((e) => /\/scores\.ts$/.test(e.file)) && AutonomousOrchestrator.duplicatesScores(file)));
     // Tests for the logic, when the plan forgot them.
     const logic = plan.find((file) => /^src\/lib\/[^/]+\.ts$/.test(file.path) && !/\.test\./.test(file.path));
     if (logic && !plan.some((file) => /\.test\.tsx?$/.test(file.path))) {
@@ -1479,6 +1604,20 @@ Answer with JSON only:
     if (plan.length < 2) {
       Logger.warn("Planned generation: no usable plan", { answer: answer.slice(0, 600) });
       return null;
+    }
+
+    // With a playable board, the game screen is the board and nothing else, so
+    // the builder writes it: told and hinted, a 7B model still rebuilt every
+    // move and battle around the board (setHero(move(state))) in three RPG
+    // builds out of three. The plan gets one, with props the app can rely on.
+    const gameScreen = boards.length ? AutonomousOrchestrator.builtInGameScreen(engine.map((e) => ({ file: e.file, text: e.text }))) : null;
+    if (gameScreen) {
+      const existing = plan.find((file) => /\.tsx$/.test(file.path) && /^(Game|Play|Main)(Screen|Page|View)?$/.test(path.basename(file.path, ".tsx")));
+      const entry = existing ?? { path: "src/components/GameScreen.tsx", purpose: "", exports: [] as string[] };
+      if (!existing) plan.push(entry);
+      const name = path.basename(entry.path, ".tsx");
+      entry.purpose = "the game itself: renders the tested board (already written by the builder — use it as it is)";
+      entry.exports = [`default ${name}(props: { onScore?: (score: number) => void; onChange?: (state: GameState) => void; onBack?: () => void })`];
     }
 
     // Logic first, then screens, App.tsx, and tests last: each file is written
@@ -1500,6 +1639,11 @@ The plan for the whole app:
 ${planText}
 `;
     for (const [index, file] of plan.entries()) {
+      if (gameScreen && /^(Game|Play|Main)(Screen|Page|View)?$/.test(path.basename(file.path, ".tsx")) && file.path.endsWith(".tsx")) {
+        written[file.path] = gameScreen(file.path);
+        this.emit("iteration-status", { iteration, status: "writing", attempt: index + 1 });
+        continue;
+      }
       const others = Object.entries(written)
         .map(([name, text]) => (text.length > 6000 ? `FILE: ${name} (exports: ${CodeGuard.exportSignatures(text).join("; ")})` : `FILE: ${name}\n\`\`\`\n${text}\n\`\`\``))
         .join("\n\n");
@@ -1634,6 +1778,82 @@ for it, make the app do it. Do one or the other completely; do not change both h
     );
   }
 
+  /**
+   * Contact details the customer never gave, emptied before a pass is checked
+   * and built: a made-up number on a live site rings a stranger. Done before
+   * the build, so the preview a customer opens never carries them.
+   */
+  private async removeInventedContact(): Promise<void> {
+    if (!this.config.workingDir || !fs.existsSync(path.join(this.workspace.root, "template.json")) || this.isStarter()) return;
+    const file = ["src/content.ts", "src/content.tsx", "src/content.js"].find((name) => fs.existsSync(path.join(this.workspace.root, name)));
+    if (!file) return;
+    const written = fs.readFileSync(path.join(this.workspace.root, file), "utf8");
+    const stripped = stripInventedContact(written, this.config.description);
+    // Diet tags a dish's own description contradicts (a vegetarian dish "filled with meats") come off too.
+    const diets = fixDietTags(stripped.source);
+    if (diets.fixed.length > 0) {
+      await this.workspace.writeFiles({ [file]: diets.source }, "Took off diet tags the dishes contradict");
+      this.think(
+        this.currentIteration,
+        "decision",
+        "Corrected diet tags",
+        `${diets.fixed.join(", ")} ${diets.fixed.length === 1 ? "was" : "were"} tagged vegetarian or vegan while ${diets.fixed.length === 1 ? "its" : "their"} description names meat, fish or dairy; those tags came off.`,
+        [file]
+      );
+    }
+    if (stripped.removed.length === 0) return;
+    await this.workspace.writeFiles({ [file]: diets.source }, "Removed contact details the customer never gave");
+    this.think(
+      this.currentIteration,
+      "decision",
+      "Removed made-up contact details",
+      `The brief does not give the business's ${stripped.removed.join(", ")}, so ${stripped.removed.length === 1 ? "it was" : "they were"} emptied in ${file} and the site leaves ${stripped.removed.length === 1 ? "it" : "them"} out. Ask the customer for ${stripped.removed.length === 1 ? "it" : "them"} before it goes live.`,
+      [file]
+    );
+  }
+
+  /** Set when the last tailoring check found most of the sample wording still there. */
+  private rewordNext = false;
+
+  /**
+   * The template's sample wording replaced line by line, when rewriting the
+   * whole content module has not got there: an order for the SaaS template
+   * spent five repairs on content.ts, each answer unparseable, missing its
+   * exports, or only adding a link, with 9% of the wording replaced. Asked for
+   * new sentences only (numbered, as JSON), the model cannot break the shape;
+   * the builder puts them in place.
+   */
+  private async rewordContent(): Promise<void> {
+    if (!this.rewordNext || !this.config.workingDir || !fs.existsSync(path.join(this.workspace.root, "template.json")) || this.isStarter()) return;
+    this.rewordNext = false;
+    const file = ["src/content.ts", "src/content.tsx", "src/content.js"].find((name) => fs.existsSync(path.join(this.workspace.root, name)));
+    if (!file) return;
+    let source = fs.readFileSync(path.join(this.workspace.root, file), "utf8");
+    const wording = sampleWording(source);
+    let changed = 0;
+    // In batches a small model can answer whole.
+    for (let i = 0; i < wording.length; i += 30) {
+      const batch = wording.slice(i, i + 30);
+      try {
+        const answer = await ModelRouter.generate(rewordPrompt(this.config.description, batch));
+        const result = applyRewording(source, batch, answer);
+        source = result.source;
+        changed += result.changed;
+      } catch (error: any) {
+        Logger.warn("Rewording the content failed", { error: error?.message });
+      }
+    }
+    if (changed === 0 || CodeGuard.syntaxErrors(file, source).length > 0) return;
+    await this.workspace.writeFiles({ [file]: source }, "Reworded the template's sample content for the customer");
+    this.think(
+      this.currentIteration,
+      "decision",
+      "Reworded the content line by line",
+      `Rewriting ${file} whole had not replaced the template's sample wording, so ${changed} of its ${wording.length} lines were reworded for the customer one by one, keeping every key and export as it was.`,
+      [file]
+    );
+  }
+
   /** Why the last content edit was refused by the shape guard, for the tailoring check to pass on. */
   private lastShapeRefusal: string | null = null;
 
@@ -1664,6 +1884,8 @@ for it, make the app do it. Do one or the other completely; do not change both h
       const sampleName = businessName(original);
       if (sampleName && businessName(now) === sampleName) reasons.push(`the business is still called "${sampleName}" (the template's sample)`);
       if (replaced < 0.3) reasons.push(`only ${Math.round(replaced * 100)}% of the sample wording has been replaced; the rest still describes the template's invented business`);
+      // Next pass, the wording is replaced line by line (the shape cannot break that way).
+      this.rewordNext = replaced < 0.3;
       reasons.push(...sampleFactsLeft(original, now, readFacts(this.config.description)));
     }
     if (/\bdemo\s*:\s*true\b/.test(now)) reasons.push(`${file} still has demo: true (the "template preview" ribbon)`);
@@ -1677,7 +1899,10 @@ for it, make the app do it. Do one or the other completely; do not change both h
       reasons.push(`it has placeholder text instead of real wording (${placeholders.slice(0, 4).map((value) => `"${value}"`).join(", ")})`);
     }
     const passed = reasons.length === 0;
-    if (passed) this.lastShapeRefusal = null;
+    if (passed) {
+      this.lastShapeRefusal = null;
+      this.rewordNext = false;
+    }
     return {
       name: "tailoring",
       applicable: true,
@@ -1688,7 +1913,9 @@ for it, make the app do it. Do one or the other completely; do not change both h
         : `Not tailored yet: ${reasons.join("; ")}.${this.lastShapeRefusal ? ` Note: ${this.lastShapeRefusal}.` : ""}
 Fix: write ${file} out in full with the customer's business name, wording, prices and details in place of the sample
 values, set demo: false, and keep every export and every key exactly as they are (change values, not the shape).
-No placeholders: where the brief does not give a detail, write realistic wording that fits their business.`
+No placeholders: where the brief does not give a detail, write realistic wording that fits their business, but never
+invent contact details: a phone, WhatsApp, email or street address the brief does not give stays "" (the site hides it),
+and social links stay as they are: the builder removes made-up ones, so adding them back changes nothing.`
     };
   }
 
@@ -1723,10 +1950,28 @@ No placeholders: where the brief does not give a detail, write realistic wording
       todo.push(...fakes.map((fake) => `make this real: ${fake}`));
     }
     for (const engine of engineUse(source, this.adoptedEngine)) {
+      // The score table is not driven like a game: what matters is that a finished game is saved to it.
+      if (/\/scores\.ts$/.test(engine.file)) {
+        if (!engine.used.includes("addScore") && /high.?scores?|leader.?boards?|hall of|best scores?|top scores?/i.test(brief)) {
+          reasons.push(`no score is ever saved: nothing calls addScore from ${engine.file}`);
+          todo.push(`save each finished game's score: when the game screen's onScore fires (the game is won or lost), call addScore({ name, score, detail }) from ${engine.file.replace(/^src\//, "./").replace(/\.ts$/, "")} and show the high-score table with loadScores()`);
+        }
+        continue;
+      }
       if (engine.used.length < Math.ceil((engine.used.length + engine.unused.length) / 2)) {
         reasons.push(`the app barely uses the engine in ${engine.file}: it never calls ${engine.unused.join(", ")}`);
         todo.push(`drive the game with the engine in ${engine.file}: call ${engine.unused.join(", ")} from the app (the game loop, the controls, starting a level) so it really plays`);
       }
+    }
+    const unreachable = unreachableScreens(source);
+    if (unreachable.length > 0) {
+      const named = unreachable.map((u) => (u.handler ? `${u.screen} (nothing calls ${u.handler})` : `${u.screen} (nothing switches to it)`)).join(", ");
+      reasons.push(`these screens can never be opened: ${named}`);
+      todo.push(
+        `make every screen reachable: ${unreachable
+          .map((u) => (u.handler ? `a button that calls ${u.handler} (for the ${u.screen} screen)` : `a button that switches to the ${u.screen} screen`))
+          .join(" and ")}, e.g. on the title or menu screen (pass the handlers to it as props and render a button for each), and give every screen a Back button to the title. Change only App.tsx and those screens: the game screen and board already exist, do not write new ones`
+      );
     }
     for (const unshown of unshownComponents(source, this.adoptedEngine)) {
       const [component] = unshown.components;
@@ -1751,7 +1996,7 @@ No placeholders: where the brief does not give a detail, write realistic wording
       let gaps = this.lastReview && head && this.lastReview.head === head ? this.lastReview.missing : null;
       if (!gaps) {
         try {
-          gaps = parseReview(await ModelRouter.generate(reviewPrompt(brief, source))) ?? [];
+          gaps = parseReview(await ModelRouter.generate(reviewPrompt(brief, source, undefined, this.adoptedEngine))) ?? [];
         } catch (error: any) {
           // Game mode switched on mid-pass: that is not a verdict. The pass
           // fails and is tried again once the build resumes.
@@ -1775,7 +2020,15 @@ No placeholders: where the brief does not give a detail, write realistic wording
     // for one thing, it builds that thing properly. So: one at a time.
     todo.unshift(...missing.map((item) => `"${item.label}" from the brief, as a real, working part of the app`));
     if (lines < minLines && todo.length === 0) {
-      todo.push("the app's main feature, done properly: real rules, states and feedback (levels, rewards, winning and losing for a game; validation and saved records for a booking app), not a counter or a list");
+      // With a playable board the game itself is done and tested: told to build
+      // "real rules, levels, rewards", a model rewrote the engine's battles
+      // beside it. What is thin is everything around the game.
+      const board = this.adoptedEngine.some((file) => /\.tsx$/.test(file));
+      todo.push(
+        board
+          ? "the screens around the game, done properly (the game itself is already built and tested: do not rewrite its rules, battles, moves or loop): show the real numbers from the game's onScore and onChange (the score, the hero or player and their stats, the level, wave or floor), a results screen when it is won or lost that saves the score with the engine's score table (addScore), a high-score table from loadScores(), and a how-to-play section on the title screen"
+          : "the app's main feature, done properly: real rules, states and feedback (levels, rewards, winning and losing for a game; validation and saved records for a booking app), not a counter or a list"
+      );
     }
     const passed = reasons.length === 0;
     return {
@@ -1911,10 +2164,49 @@ Rules that keep this build passing its checks (install, typecheck, build, tests)
       } catch {
         continue;
       }
+      // A file the builder wrote itself (the game screen around a board) stays as it is.
+      if (before.includes(AutonomousOrchestrator.BUILT_IN_MARK) && files[file] !== before) {
+        files[file] = before;
+        fragments.push(`• ${file}: written by the builder (it renders the tested board), so it stays as it is — change the screens around it instead.`);
+        continue;
+      }
       const problem = CodeGuard.fragmentProblem(this.workspace.root, file, before, files[file]);
       if (problem) {
         files[file] = before;
         fragments.push(`• ${file}: the new version ${problem}, so the working one stays.`);
+      }
+    }
+    // A build config is the project's, at its root: one written inside src/
+    // came out half-finished and held the typecheck for a whole pass.
+    for (const file of Object.keys(files)) {
+      if (/^src\/(?:(vite|vitest|postcss|tailwind|eslint)\.config\.(m?[jt]s|cjs)|tsconfig(\.\w+)?\.json|package(-lock)?\.json)$/.test(file)) {
+        delete files[file];
+        fragments.push(`• ${file}: a build config belongs at the project's root, where the working one already is, so this copy is not added.`);
+      }
+    }
+
+    // With a playable board, a repair may not add a second one: asked to make
+    // two screens reachable, a model wrote its own GameBoard.tsx and Game.tsx
+    // calling the engine's actions, and the build stopped compiling. New files
+    // that redo the board, or a second game screen beside the builder's, go.
+    if (this.adoptedEngine.some((file) => /\.tsx$/.test(file))) {
+      const builtIn = (() => {
+        try {
+          return fs
+            .readdirSync(path.join(this.workspace.root, "src", "components"))
+            .some((name) => fs.readFileSync(path.join(this.workspace.root, "src", "components", name), "utf8").includes(AutonomousOrchestrator.BUILT_IN_MARK));
+        } catch {
+          return false;
+        }
+      })();
+      for (const file of Object.keys(files)) {
+        if (fs.existsSync(path.join(this.workspace.root, file)) || this.adoptedEngine.includes(file)) continue;
+        const name = path.basename(file).replace(/\.tsx?$/, "");
+        const secondScreen = builtIn && /\.tsx$/.test(file) && /^(Game|Play|Main)(Screen|Page|View)?$/.test(name);
+        if (secondScreen || AutonomousOrchestrator.duplicatesBoard({ path: file, purpose: "" })) {
+          delete files[file];
+          fragments.push(`• ${file}: the game is already built (the tested board in src/engine/, shown by the builder's game screen), so a new copy of it is not added — change the screens around it instead.`);
+        }
       }
     }
     if (fragments.length > 0) {
@@ -2104,6 +2396,8 @@ Rules that keep this build passing its checks (install, typecheck, build, tests)
     // build then carried both into the project nobody asked to change. A copy
     // of one of our own builds or templates already has its runner.
     const fromOurTemplate = fs.existsSync(path.join(this.workspace.root, "template.json"));
+    await this.rewordContent();
+    await this.removeInventedContact();
     const verifyStarted = Date.now();
     let report = await Verifier.verify(this.workspace, { scaffoldTests: !this.config.workingDir, autofix: !this.config.workingDir || fromOurTemplate });
     // Our own apps (a template or the starter) are opened in a real browser:
