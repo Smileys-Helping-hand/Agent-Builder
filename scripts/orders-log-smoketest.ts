@@ -70,4 +70,19 @@ for (const [text, id] of [
   assert.equal(Catalog.match(text)?.id ?? null, id, text);
 }
 
+// Contact details the customer never gave are emptied, and the review note asks for them.
+const { stripInventedContact } = await import("../src/orchestrator/Tailoring.js");
+const { missingContact } = await import("../src/orders/OrderPipeline.js");
+const tailored = `export const site = {\n  business: {\n    name: "Comic Vault",\n    email: "quest@comicvault.co.za",\n    phone: "+27 21 555 0199",\n    whatsapp: "+27 71 123 4567",\n    address: "429 Kalk Street, Cape Town"\n  },\n  hero: { title: "Quest" }\n};\n`;
+const orderBrief = "A fantasy RPG for my comic shop Comic Vault in Cape Town. WhatsApp us on 071 123 4567.\nContact email from their order: thabo@comicvault.co.za";
+const stripped = stripInventedContact(tailored, orderBrief);
+assert.deepEqual(stripped.removed, ["email", "phone", "address"], "made-up email, phone and street go");
+assert.match(stripped.source, /whatsapp: "\+27 71 123 4567"/, "the WhatsApp number they gave stays (+27 and 0 forms match)");
+assert.match(stripped.source, /email: "",\n    phone: "",/);
+assert.deepEqual(stripInventedContact(stripped.source.replace('address: ""', 'address: "Cape Town"'), orderBrief).removed, [], "a town they named stays");
+const contactDir = fs.mkdtempSync(path.join(os.tmpdir(), "ab-contact-"));
+fs.mkdirSync(path.join(contactDir, "src"));
+fs.writeFileSync(path.join(contactDir, "src/content.ts"), stripped.source);
+assert.deepEqual(missingContact(contactDir), ["email", "phone number", "address"]);
+
 console.log("orders log: all checks passed");

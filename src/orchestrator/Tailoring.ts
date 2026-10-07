@@ -80,3 +80,33 @@ export const sampleFactsLeft = (original: string, now: string, facts: CustomerFa
   }
   return left;
 };
+
+/**
+ * Contact details the customer never gave, emptied. A tailored RPG for a comic
+ * shop came back with an email, a WhatsApp number and a street address the
+ * model made up: on a live site a made-up number rings a stranger. A value
+ * stays when the brief has it (digits for numbers, the words of an address);
+ * anything else becomes "" and the template hides it. Returns what went.
+ */
+export const stripInventedContact = (source: string, brief: string): { source: string; removed: string[] } => {
+  const block = /business\s*:\s*\{[\s\S]*?\n\s*\}/.exec(source);
+  if (!block) return { source, removed: [] };
+  const digits = (value: string) => value.replace(/\D/g, "").replace(/^27/, "0");
+  const briefNumbers = Array.from(brief.matchAll(new RegExp(PHONE.source, "g"))).map((m) => digits(m[1]));
+  const briefText = brief.toLowerCase();
+  const given = (key: string, value: string): boolean => {
+    if (!value.trim()) return true;
+    if (key === "email") return briefText.includes(value.toLowerCase());
+    if (key === "phone" || key === "whatsapp") return briefNumbers.includes(digits(value));
+    // An address is given when every word and number of it is in the brief ("Cape Town" yes, "429 Kalk Street" no).
+    const parts = (value.toLowerCase().match(/[a-z]{3,}|\d+/g) ?? []).filter((word) => !/^(street|road|avenue|drive|lane|south|africa)$/.test(word));
+    return parts.length > 0 && parts.every((part) => briefText.includes(part));
+  };
+  const removed: string[] = [];
+  const cleaned = block[0].replace(/\b(email|phone|whatsapp|address)\s*:\s*(["'`])([^"'`]*)\2/g, (whole, key: string, quote: string, value: string) => {
+    if (given(key, value)) return whole;
+    removed.push(key);
+    return `${key}: ${quote}${quote}`;
+  });
+  return { source: source.replace(block[0], cleaned), removed };
+};

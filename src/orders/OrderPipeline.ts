@@ -159,6 +159,11 @@ const buildPrompt = (order: Order, from: StartingPoint = "scratch"): string => {
     "What the customer asked for, in their words:",
     order.brief,
     "",
+    // Their email from the order is the business's unless their words give
+    // another (the first address in the brief wins). Nothing else is made up.
+    order.customerEmail ? `Contact email from their order: ${order.customerEmail}` : "",
+    "Never invent contact details: a phone, WhatsApp number, email or street address the customer did not give is left out, not made up.",
+    "",
     ...(template
       ? [
           `They chose "${template.name}" from our catalogue: ${template.description}`,
@@ -193,6 +198,21 @@ const notifyJarvis = (order: Order, subject: string, body: string): void => {
 
 /** The least a build must score to be shown to anyone: roughly install, typecheck and build all passing. */
 const SHIPPABLE_SCORE = 60;
+
+/** The business contact details a tailored site left empty because the customer never gave them. */
+export const missingContact = (outputDir: string): string[] => {
+  let source = "";
+  try {
+    source = fs.readFileSync(path.join(outputDir, "src", "content.ts"), "utf8");
+  } catch {
+    return [];
+  }
+  const block = /business\s*:\s*\{[\s\S]*?\n\s*\}/.exec(source)?.[0] ?? "";
+  const names: Record<string, string> = { email: "email", phone: "phone number", whatsapp: "WhatsApp number", address: "address" };
+  return Object.keys(names)
+    .filter((key) => new RegExp(`\\b${key}\\s*:\\s*(["'\`])\\1`).test(block))
+    .map((key) => names[key]);
+};
 
 /**
  * What a customer may be shown has to work, whatever it scored: it installs,
@@ -671,6 +691,7 @@ export const OrderPipeline = {
       // at; it is only null when the tunnel is down or the build produced
       // nothing servable.
       const previewUrl = shareableBuildPreview(record.buildId, readPublicUrl());
+      const missing = missingContact(record.outputDir);
 
       OrderStore.update(order.id, {
         status: wasMaintained ? "maintained" : "review",
@@ -695,7 +716,8 @@ export const OrderPipeline = {
             `It is in ${record.outputDir}.`,
             previewUrl
               ? `The customer can open it at ${previewUrl}`
-              : "There is no public address for it, so the customer has nothing to open: check the tunnel is up."
+              : "There is no public address for it, so the customer has nothing to open: check the tunnel is up.",
+            ...(missing.length ? [`They did not give their ${missing.join(", ")}, so the site leaves ${missing.length === 1 ? "it" : "them"} out: ask them before it goes live.`] : [])
           ].join("\n")
         );
         if (order.externalId) {

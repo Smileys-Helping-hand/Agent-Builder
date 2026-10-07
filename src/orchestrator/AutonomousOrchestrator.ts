@@ -3,7 +3,7 @@ import { CodeGuard } from "./CodeGuard.js";
 import { AutoFix } from "./AutoFix.js";
 import { TypeFixer } from "./TypeFixer.js";
 import { appSource, coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, reviewPrompt, stubs, unreachableScreens, unshownComponents } from "./Completeness.js";
-import { applyFacts, readFacts, sampleFactsLeft } from "./Tailoring.js";
+import { applyFacts, readFacts, sampleFactsLeft, stripInventedContact } from "./Tailoring.js";
 import { ExemplarMemory, type Exemplar } from "../learning/ExemplarMemory.js";
 import { GameModeOnError } from "../utils/GameMode.js";
 import fs from "fs";
@@ -1781,7 +1781,21 @@ for it, make the app do it. Do one or the other completely; do not change both h
     const file = ["src/content.ts", "src/content.tsx", "src/content.js"].find((name) => fs.existsSync(path.join(this.workspace.root, name)));
     if (!file) return null;
     const started = Date.now();
-    const now = fs.readFileSync(path.join(this.workspace.root, file), "utf8");
+    // Contact details the customer never gave go before anything is judged:
+    // a made-up number on a live site rings a stranger.
+    const written = fs.readFileSync(path.join(this.workspace.root, file), "utf8");
+    const stripped = stripInventedContact(written, this.config.description);
+    if (stripped.removed.length > 0) {
+      await this.workspace.writeFiles({ [file]: stripped.source }, "Removed contact details the customer never gave");
+      this.think(
+        this.currentIteration,
+        "decision",
+        "Removed made-up contact details",
+        `The brief does not give the business's ${stripped.removed.join(", ")}, so ${stripped.removed.length === 1 ? "it was" : "they were"} emptied in ${file} and the site leaves ${stripped.removed.length === 1 ? "it" : "them"} out. Ask the customer for ${stripped.removed.length === 1 ? "it" : "them"} before it goes live.`,
+        [file]
+      );
+    }
+    const now = stripped.source;
     const original = await this.templateOriginal(file);
     const reasons: string[] = [];
     // Text the visitor reads: string values of four characters or more.
@@ -1821,7 +1835,8 @@ for it, make the app do it. Do one or the other completely; do not change both h
         : `Not tailored yet: ${reasons.join("; ")}.${this.lastShapeRefusal ? ` Note: ${this.lastShapeRefusal}.` : ""}
 Fix: write ${file} out in full with the customer's business name, wording, prices and details in place of the sample
 values, set demo: false, and keep every export and every key exactly as they are (change values, not the shape).
-No placeholders: where the brief does not give a detail, write realistic wording that fits their business.`
+No placeholders: where the brief does not give a detail, write realistic wording that fits their business, but never
+invent contact details: a phone, WhatsApp, email or street address the brief does not give stays "" (the site hides it).`
     };
   }
 
