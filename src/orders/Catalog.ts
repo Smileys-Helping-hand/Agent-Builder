@@ -453,6 +453,41 @@ export const Catalog = {
     return this.list().find((item) => item.id === id) ?? null;
   },
 
+  /**
+   * The template an order clearly asks for when it does not name one. The
+   * site's quote form sends only a service type and the customer's words, so
+   * every order was built from nothing, the path a small model gets wrong
+   * most, while a matching template is tested code that scores 100 before a
+   * line is changed. Words that fit every template ("website", "game", "app")
+   * do not count on their own; a tie or no specific word means no template,
+   * and the order is built from the brief as before. Only templates with code.
+   */
+  match(text: string | null | undefined): TemplateDefinition | null {
+    const words = ` ${(text ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
+    const generic = new Set(["website", "game", "web app", "app", "fun", "play", "build", "launch", "content", "personal", "software", "platform", "starter", "products", "waves", "action", "arcade", "menu", "calendar", "portal", "hero", "battle", "party"]);
+    const scored = this.list()
+      .filter((item) => item.sourcePath && fs.existsSync(item.sourcePath))
+      .map((item) => {
+        const hits = (item.keywords ?? []).filter((keyword) => words.includes(` ${keyword.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()} `));
+        const specific = hits.filter((keyword) => !generic.has(keyword.toLowerCase()));
+        return { item, specific: specific.length, all: hits.length };
+      })
+      .sort((a, b) => b.specific - a.specific || b.all - a.all);
+    const pick = (pool: typeof scored) => {
+      const found = pool.filter((entry) => entry.specific > 0);
+      if (found.length === 0) return null;
+      if (found[1] && found[1].specific === found[0].specific && found[1].all === found[0].all) return null;
+      return found[0].item;
+    };
+    // A game is a game: "a fun game for my shop" is not an online shop.
+    if (/ (game|games|gaming|play|arcade) /.test(words)) {
+      const games = scored.filter((entry) => entry.item.category === "Games");
+      return pick(games) ?? games.find((entry) => entry.item.id === "game")?.item ?? null;
+    }
+    // A plain website for a business with no kind named is the business-website template.
+    return pick(scored) ?? (/ (website|site|web page|webpage|landing page) /.test(words) ? scored.find((entry) => entry.item.id === "landing")?.item ?? null : null);
+  },
+
   /** Everything, hidden included, for the app's template editor. */
   all(): TemplateDefinition[] {
     return merged();

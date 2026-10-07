@@ -119,7 +119,9 @@ const normalize = (raw: SiteOrder): Parameters<typeof OrderStore.create>[0] | nu
 
   // A catalogue pick is recorded by its id, the same way a template started
   // from the phone is, so buildPrompt can find the template again.
-  const template = Catalog.get(raw.templateId);
+  // Named, or (the site's quote form names none) the catalogue template the
+  // customer's own words clearly ask for: tested code to tailor, not a blank page.
+  const template = Catalog.get(raw.templateId) ?? Catalog.match(`${raw.serviceType ?? raw.productType ?? ""} ${brief}`);
   const productType = template?.id ?? ((raw.productType ?? raw.serviceType ?? "website").trim() || "website");
   const features = (raw.features ?? []).filter((feature) => typeof feature === "string" && !brief.includes(feature));
   return {

@@ -50,4 +50,24 @@ assert.deepEqual(customerSafe({ iterationDetail: [pass(72, ["runs"])], bestScore
 assert.deepEqual(customerSafe({ iterationDetail: [pass(90, []), pass(70, ["typecheck"])], bestScore: 90, qualityScore: 90 }).ok, true, "judged on the best pass, where the workspace is left");
 assert.equal(customerSafe({ iterationDetail: [], bestScore: 0, qualityScore: 0 }).ok, false, "nothing finished: nothing to show");
 
+// An order that names no template (the site's quote form never does) starts from
+// the one its words clearly ask for; a custom app is still built from the brief.
+const { Catalog } = await import("../src/orders/Catalog.js");
+for (const [text, id] of [
+  ["Website: I need a website for my restaurant with our menu and table reservations", "restaurant"],
+  ["E-commerce: an online shop to sell my handmade candles", "ecommerce"],
+  ["Web App: a booking system for my hair salon", "booking"],
+  ["Website: a website for my plumbing business", "landing"],
+  ["Game: a fantasy RPG adventure where a hero explores a dungeon", "rpg"],
+  ["Game: a tower defense game for my board game cafe", "strategy"],
+  ["Game: a fun game for my shop", "game"],
+  ["Game: a space shooter for my arcade", "shooter"],
+  ["Website: wedding invitation with RSVP", "event"],
+  ["Website: a blog for my travel stories", "blog"],
+  ["Web App: inventory tracking software for my warehouse", null],
+  ["Mobile App: an app to track my running", null]
+] as const) {
+  assert.equal(Catalog.match(text)?.id ?? null, id, text);
+}
+
 console.log("orders log: all checks passed");
