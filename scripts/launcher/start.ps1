@@ -162,7 +162,10 @@ $tailscaleExe = @(
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 
 if ($tailscaleExe) {
-    $candidate = (& $tailscaleExe ip -4 2>$null | Select-Object -First 1)
+    # Signed out or stopped, tailscale says so on stderr, and under "Stop" that
+    # ended the launcher before anything had started. No address is the answer then.
+    $candidate = $null
+    try { $candidate = (& $tailscaleExe ip -4 2>$null | Select-Object -First 1) } catch { $candidate = $null }
     if ($candidate -and $candidate -match "^100\.") {
         $tailscaleIp = $candidate.Trim()
         if ($ForceTunnel) {
