@@ -1407,16 +1407,27 @@ export default function ${name}({ onScore, onChange, onBack }: ${name}Props) {
         broken.map((item) => item.file)
       );
     }
-    let names: string[];
-    try {
-      names = fs.readdirSync(path.join(this.workspace.root, "src", "engine")).filter((name) => /\.(t|j)sx?$/.test(name) && !/\.(test|spec)\./.test(name));
-    } catch {
-      return;
-    }
+    const code = (dir: string) => {
+      try {
+        return fs.readdirSync(path.join(this.workspace.root, dir)).filter((name) => /\.(t|j)sx?$/.test(name) && !/\.(test|spec|d)\./.test(name)).map((name) => `${dir}/${name}`);
+      } catch {
+        return [];
+      }
+    };
+    // A template order keeps the template's tested code beside its content
+    // (src/game.ts, src/play.tsx, src/scores.ts): an order for the shooter
+    // rewrote scores.ts and broke its tests. Those files are guarded the same
+    // way, recognised by their header; content, App and main stay the model's.
+    const templateCode =
+      fs.existsSync(path.join(this.workspace.root, "template.json")) && !this.isStarter()
+        ? code("src").filter((file) => !/\/(content|App|main)\.(t|j)sx?$/.test(file) && AutonomousOrchestrator.catalogueEngine(path.join(this.workspace.root, file), path.resolve(process.env.TEMPLATES_DIR ?? "templates/sites")))
+        : [];
+    for (const file of templateCode) if (!this.adoptedEngine.includes(file)) this.adoptedEngine.push(file);
+    const files = code("src/engine");
+    if (files.length === 0) return;
     const restored: Record<string, string> = {};
     const notes: string[] = [];
-    for (const name of names) {
-      const file = `src/engine/${name}`;
+    for (const file of files) {
       if (CodeGuard.headStart(this.workspace.root, file) === null) {
         // A project copied with a fresh history (imported, or carried on from
         // a copy) has no head-start commit; its engine is still ours when it
