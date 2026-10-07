@@ -3,7 +3,7 @@ import { CodeGuard } from "./CodeGuard.js";
 import { AutoFix } from "./AutoFix.js";
 import { TypeFixer } from "./TypeFixer.js";
 import { appSource, coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, reviewPrompt, stubs, unreachableScreens, unshownComponents } from "./Completeness.js";
-import { applyFacts, readFacts, sampleFactsLeft, stripInventedContact } from "./Tailoring.js";
+import { applyFacts, readFacts, fixDietTags, sampleFactsLeft, stripInventedContact } from "./Tailoring.js";
 import { ExemplarMemory, type Exemplar } from "../learning/ExemplarMemory.js";
 import { GameModeOnError } from "../utils/GameMode.js";
 import fs from "fs";
@@ -1778,8 +1778,20 @@ for it, make the app do it. Do one or the other completely; do not change both h
     if (!file) return;
     const written = fs.readFileSync(path.join(this.workspace.root, file), "utf8");
     const stripped = stripInventedContact(written, this.config.description);
+    // Diet tags a dish's own description contradicts (a vegetarian dish "filled with meats") come off too.
+    const diets = fixDietTags(stripped.source);
+    if (diets.fixed.length > 0) {
+      await this.workspace.writeFiles({ [file]: diets.source }, "Took off diet tags the dishes contradict");
+      this.think(
+        this.currentIteration,
+        "decision",
+        "Corrected diet tags",
+        `${diets.fixed.join(", ")} ${diets.fixed.length === 1 ? "was" : "were"} tagged vegetarian or vegan while ${diets.fixed.length === 1 ? "its" : "their"} description names meat, fish or dairy; those tags came off.`,
+        [file]
+      );
+    }
     if (stripped.removed.length === 0) return;
-    await this.workspace.writeFiles({ [file]: stripped.source }, "Removed contact details the customer never gave");
+    await this.workspace.writeFiles({ [file]: diets.source }, "Removed contact details the customer never gave");
     this.think(
       this.currentIteration,
       "decision",

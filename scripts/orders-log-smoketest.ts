@@ -94,4 +94,18 @@ const social = stripInventedContact(`export const site = {
 assert.deepEqual(social.removed, ["social links"]);
 assert.ok(!social.source.includes("instagram.com/comicvault") && social.source.includes("facebook.com/realcomicvault"), social.source);
 
+// Diet tags a dish's own description contradicts come off; the template's correct menu is untouched.
+const { fixDietTags } = await import("../src/orchestrator/Tailoring.js");
+const menu = `items: [
+  { name: "Bunny Chow", description: "Filled with various meats and relishes.", price: 25, diet: ["vegetarian", "spicy"] },
+  { name: "Cheesecake", description: "Rich and creamy.", price: 30, diet: ["vegan", "vegetarian"] },
+  { name: "Kale Salad", description: "Kale, nuts and seeds.", price: 35, diet: ["vegan", "vegetarian"] }
+]`;
+const diet = fixDietTags(menu);
+assert.deepEqual(diet.fixed, ["Bunny Chow", "Cheesecake"]);
+assert.match(diet.source, /Bunny Chow[^\n]*diet: \["spicy"\]/);
+assert.match(diet.source, /Cheesecake[^\n]*diet: \["vegetarian"\]/);
+assert.match(diet.source, /Kale Salad[^\n]*diet: \["vegan", "vegetarian"\]/);
+assert.deepEqual(fixDietTags(fs.readFileSync(path.resolve("templates/sites/restaurant/src/content.ts"), "utf8")).fixed, [], "the template's own menu is right");
+
 console.log("orders log: all checks passed");

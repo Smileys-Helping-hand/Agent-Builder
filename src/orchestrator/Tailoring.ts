@@ -122,3 +122,36 @@ export const stripInventedContact = (source: string, brief: string): { source: s
   if (socialGone) removed.push("social links");
   return { source: source.replace(block[0], cleaned), removed };
 };
+
+const MEAT = /\b(meat|meats|beef|steak|sirloin|rump|chicken|lamb|mutton|pork|bacon|ham|sausage|boerewors|biltong|fish|prawns?|shrimp|calamari|squid|tuna|salmon|hake|seafood|oxtail|tripe|liver|duck|venison|anchov(y|ies)|gelatine?)\b/i;
+const ANIMAL = /\b(cheese|cheesecake|cream|creamy|butter|buttermilk|milk|yoghurt|yogurt|custard|egg|eggs|honey|mayo|mayonnaise|labneh|feta|halloumi|ghee|whey)\b/i;
+
+/**
+ * Diet tags a dish's own description contradicts, taken off: a tailored menu
+ * had "Bunny Chow — filled with various meats · Vegetarian" and a vegan
+ * cheesecake. Someone choosing by these tags may have a reason to. Meat or
+ * fish rules out vegetarian and vegan; dairy, egg or honey rules out vegan.
+ * Returns the source and the dishes changed.
+ */
+export const fixDietTags = (source: string): { source: string; fixed: string[] } => {
+  const fixed: string[] = [];
+  const out = source.replace(
+    /\{\s*name\s*:\s*(["'`])([^"'`]+)\1\s*,\s*description\s*:\s*(["'`])([^"'`]*)\3([^{}]*?)diet\s*:\s*\[([^\]]*)\]/g,
+    (whole, _q: string, name: string, _q2: string, description: string, middle: string, tags: string) => {
+      const text = `${name} ${description}`;
+      const list = Array.from(tags.matchAll(/(["'`])([^"'`]+)\1/g)).map((m) => m[2]);
+      const keep = list.filter((tag) => {
+        const t = tag.toLowerCase();
+        if ((t === "vegetarian" || t === "vegan") && MEAT.test(text)) return false;
+        // Coconut cream, almond milk and peanut butter are plants.
+        const plantless = text.replace(/\b(coconut|oat|soy|soya|almond|cashew|rice|peanut|nut|vegan|plant[- ]based|cocoa|shea)\s+(cream|milk|butter|cheese|mayo|mayonnaise|yoghurt|yogurt)\b/gi, "");
+        if (t === "vegan" && ANIMAL.test(plantless)) return false;
+        return true;
+      });
+      if (keep.length === list.length) return whole;
+      fixed.push(name);
+      return whole.replace(/diet\s*:\s*\[[^\]]*\]/, `diet: [${keep.map((tag) => JSON.stringify(tag)).join(", ")}]`);
+    }
+  );
+  return { source: out, fixed };
+};
