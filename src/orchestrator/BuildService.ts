@@ -404,7 +404,8 @@ export const BuildService = {
     // A fresh web build starts from a working app instead of an empty folder.
     const workingDir =
       options.workingDir ??
-      ((options.targetPlatforms ?? ["web"]).includes("web")
+      // Phone and PC apps are the web app wrapped (see AppBuilder), so they start from it too.
+      ((options.targetPlatforms ?? ["web"]).some((platform) => ["web", "android", "windows", "mobile", "desktop"].includes(platform))
         ? prepareStarter(options.projectName, options.description, options.starter) ?? undefined
         : undefined);
 

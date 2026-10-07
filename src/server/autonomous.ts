@@ -20,6 +20,7 @@ import { signLink, verifyLink } from "../utils/SignedLinks.js";
 
 import { BuildService, buildEvents, type BuildRecord } from "../orchestrator/BuildService.js";
 import { Packager } from "../orders/Packager.js";
+import { APP_PLATFORMS, AppBuilder, type AppPlatform } from "../orders/AppBuilder.js";
 import { SelfHeal } from "../orchestrator/SelfHeal.js";
 import { withStorageShim } from "./previews.js";
 import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
@@ -31,7 +32,7 @@ const errorMessage = (error: unknown): string => (error instanceof Error ? error
 const run = promisify(execFile);
 
 const PROFILES = new Set(["fast", "balanced", "deep"]);
-const PLATFORMS = new Set(["web", "desktop", "mobile", "cli", "api"]);
+const PLATFORMS = new Set(["web", "desktop", "mobile", "android", "windows", "cli", "api"]);
 const MAX_FILE_BYTES = 400 * 1024;
 const SKIP_DIRECTORIES = new Set(["node_modules", ".git", "dist", ".next", "out", "coverage", ".turbo", ".cache"]);
 
@@ -235,6 +236,53 @@ export const registerAutonomousRoutes = (app: Express) => {
       } catch (error) {
         res.status(500).json({ error: `Could not package it: ${error instanceof Error ? error.message : String(error)}` });
       }
+    }
+  );
+
+  /**
+   * The build as an app: an Android APK or a Windows program, made from its
+   * built site (see AppBuilder). Making one takes from seconds to a few
+   * minutes, longer than a request through the tunnel may wait, so: start it,
+   * poll its status, then fetch it through a signed link like the zip.
+   */
+  const appPlatform = (value: unknown): AppPlatform | null => (APP_PLATFORMS.includes(value as AppPlatform) ? (value as AppPlatform) : null);
+  const appView = (job: ReturnType<typeof AppBuilder.status>) =>
+    job ? { platform: job.platform, state: job.state, stage: job.stage, fileName: job.fileName, error: job.error, startedAt: job.startedAt, finishedAt: job.finishedAt } : { state: "none" };
+
+  app.post("/api/autonomous/:buildId/app", authenticateAgent("execute"), (req: Request, res: Response) => {
+    const build = BuildService.view(req.params.buildId);
+    if (!build) return res.status(404).json({ error: "Unknown build." });
+    const platform = appPlatform(req.body?.platform);
+    if (!platform) return res.status(400).json({ error: `Say which app: ${APP_PLATFORMS.join(" or ")}.` });
+    if (!build.outputDir || !fs.existsSync(build.outputDir)) return res.status(409).json({ error: "This build's folder is gone, so there is nothing to make an app from." });
+    res.json(appView(AppBuilder.start(build.buildId, platform, path.resolve(build.outputDir), build.projectName)));
+  });
+
+  app.get("/api/autonomous/:buildId/app/:platform", authenticateAgent("read"), (req: Request, res: Response) => {
+    const platform = appPlatform(req.params.platform);
+    if (!platform) return res.status(400).json({ error: `Unknown app type: ${APP_PLATFORMS.join(" or ")}.` });
+    res.json(appView(AppBuilder.status(req.params.buildId, platform)));
+  });
+
+  app.post("/api/autonomous/:buildId/app/:platform/link", authenticateAgent("read"), (req: Request, res: Response) => {
+    const platform = appPlatform(req.params.platform);
+    const job = platform ? AppBuilder.status(req.params.buildId, platform) : null;
+    if (!platform || !job || job.state !== "ready") return res.status(409).json({ error: "That app is not ready yet.", ...appView(job) });
+    const token = signLink(`app-download-${platform}`, req.params.buildId, 60 * 60 * 1000);
+    res.json({ path: `/api/autonomous/${encodeURIComponent(req.params.buildId)}/app/${platform}/download?t=${encodeURIComponent(token)}`, fileName: job.fileName, expiresInMinutes: 60 });
+  });
+
+  app.get(
+    "/api/autonomous/:buildId/app/:platform/download",
+    (req: Request, res: Response, next) => {
+      if (!verifyLink(`app-download-${req.params.platform}`, req.params.buildId, req.query.t)) return authenticateAgent("read")(req, res, next);
+      next();
+    },
+    (req: Request, res: Response) => {
+      const platform = appPlatform(req.params.platform);
+      const job = platform ? AppBuilder.status(req.params.buildId, platform) : null;
+      if (!job || job.state !== "ready" || !job.file || !fs.existsSync(job.file)) return res.status(404).json({ error: "That app is not ready." });
+      res.download(job.file, job.fileName ?? path.basename(job.file));
     }
   );
 

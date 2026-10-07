@@ -7,7 +7,7 @@ import { isLive, useActivity } from "../activity";
 import { Banner, Busy, CopyButton, Freshness, Header, Icon, Meter, Skeleton, ago, duration, useRemote, useToast } from "../ui";
 import { QUICK_STEERS, WritingPane } from "./writing";
 import { PreviewPane } from "../preview";
-import { DownloadBuild } from "./download";
+import { DownloadApp, DownloadBuild } from "./download";
 import { LiveEditor } from "../live-editor";
 import { BuildProgress, CHECK_LABEL, Checks, StateBadge, Stepper, bestPass, describe, latestPass, projectKey } from "./parts";
 
@@ -417,6 +417,8 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
                 {Icon.play} Try it
               </a>
               <DownloadBuild id={build.buildId} />
+              <DownloadApp id={build.buildId} platform="android" />
+              <DownloadApp id={build.buildId} platform="windows" />
               <button className={`btn small ${editing ? "accent" : ""}`} onClick={() => setEditing(!editing)} aria-pressed={editing}>
                 {Icon.wrench} {editing ? "Close the live editor" : "Edit it live"}
               </button>
