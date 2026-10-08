@@ -158,4 +158,15 @@ assert.ok(!/GameBoardProps from/.test(adoptedNote), "a props type is not a compo
 assert.ok(!/High scores, leaderboards/.test(adoptedNote), "no score note when the score table was not adopted");
 assert.ok(!adoptedNote.includes("FILE: src/game.ts"), "the engine is in the project: no need to repeat it in the prompt");
 
+// How sure a match is decides whether a new game starts as the whole catalogue game.
+const clash = ExemplarMemory.match(
+  "Build Clan Clash: a Clash of Clans clone for mobile.\nA Clash of Clans style game for my phone: build and upgrade a village, collect gold and elixir, train barbarians, archers and giants, and raid other villages for loot and stars."
+);
+assert.equal(clash?.exemplar.origin, "seed:clans");
+assert.equal(clash?.strong, true, "a Clash of Clans brief is a strong match for the clan village game");
+const city = ExemplarMemory.match("Build Mini City: a mini GTA clone for PC. Walk around a city, steal cars, drive, do missions, escape the police with a wanted level.");
+assert.equal(city?.exemplar.origin, "seed:city");
+assert.equal(city?.strong, true);
+assert.equal(ExemplarMemory.match("Quarterly tax filing for a shipping fleet with customs declarations"), null);
+
 console.log("exemplar memory: all checks passed");

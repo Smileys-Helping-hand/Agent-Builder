@@ -202,8 +202,15 @@ export class AutonomousOrchestrator extends EventEmitter {
 
       // A template order starts with the customer's name already in.
       await this.prefillTailoring().catch((error: any) => Logger.warn("Could not pre-fill the template", { error: error?.message }));
+      // A new game that clearly matches one of ours starts as that whole game;
+      // anything else close to a catalogue engine starts with the engine.
+      const wholeGame = await this.startFromCatalogueGame().catch((error: any) => {
+        Logger.warn("Could not start from the catalogue game", { error: error?.message });
+        return false;
+      });
+      if (wholeGame) await this.prefillTailoring().catch((error: any) => Logger.warn("Could not pre-fill the template", { error: error?.message }));
       // A new app close to one of our catalogue engines starts with that engine.
-      await this.adoptExemplarEngine().catch((error: any) => Logger.warn("Could not start from the example's engine", { error: error?.message }));
+      if (!wholeGame) await this.adoptExemplarEngine().catch((error: any) => Logger.warn("Could not start from the example's engine", { error: error?.message }));
       // A project carried on keeps the engine it started from, and gets back what a pass took out of it.
       await this.protectEngine().catch((error: any) => Logger.warn("Could not check the engine", { error: error?.message }));
 
@@ -1506,6 +1513,56 @@ export default function ${name}({ onScore, onChange, onBack }: ${name}Props) {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * A new game whose brief clearly matches one of our catalogue games starts
+   * as that whole game, working and tested, and the passes tailor and grow
+   * it. Given only the engine, a 7B model wrote its own village logic, saving
+   * and props around it, and three Clash of Clans runs never compiled
+   * (scores 35, 55, 20 after eight passes); the same game as a template order
+   * scores 100 from the first pass. A weak match (a shared opening word, the
+   * arcade fallback) or a catalogue app that is not a game keeps the engine-only start.
+   */
+  private async startFromCatalogueGame(): Promise<boolean> {
+    if (!this.config.workingDir || !this.isStarter() || !this.starterStillPlaceholder() || process.env.GAME_HEAD_START === "engine") return false;
+    let found: { exemplar: Exemplar; strong: boolean } | null = null;
+    try {
+      found = ExemplarMemory.match(`${this.config.projectName}\n${this.config.description}`);
+    } catch {
+      return false;
+    }
+    const seedId = found?.strong ? /^seed:(.+)$/.exec(found.exemplar.origin)?.[1] : undefined;
+    if (!found || !seedId) return false;
+    const source = path.resolve(process.env.TEMPLATES_DIR ?? "templates/sites", seedId);
+    const isGame = ["src/game.ts", "src/play.tsx", "template.json"].every((file) => fs.existsSync(path.join(source, file)));
+    if (!isGame) return false;
+    // Loaded here: ProjectBuilds reaches this class through BuildService.
+    const { listProjectFiles } = await import("../ecosystem/ProjectBuilds.js");
+    const files = await listProjectFiles(source);
+    if (files.length === 0) return false;
+
+    // The starter's own screens go; its build setup is replaced by the game's.
+    for (const file of await listProjectFiles(this.workspace.root)) {
+      if (file === ".gitignore" || file.startsWith(".git/")) continue;
+      fs.rmSync(path.join(this.workspace.root, file), { force: true });
+    }
+    for (const file of files) {
+      const target = path.join(this.workspace.root, file);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.copyFileSync(path.join(source, file), target);
+    }
+    await this.workspace.commitCurrentState(`Head start: ${found.exemplar.title}, a tested game to tailor`);
+    this.exemplar = found.exemplar;
+    ExemplarMemory.markUsed(found.exemplar.id);
+    this.think(
+      1,
+      "decision",
+      `Started from our ${found.exemplar.title}`,
+      "The brief is close to a game we have built and tested, so the build starts as that game, playing from the first pass, and every pass makes it more this brief's: its names, wording and screens, then what the brief adds.",
+      files.filter((file) => file.startsWith("src/"))
+    );
+    return true;
   }
 
   private async adoptExemplarEngine(): Promise<void> {
