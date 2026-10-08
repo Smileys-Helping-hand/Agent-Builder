@@ -1,6 +1,23 @@
-# Tower Defense Strategy Game
+# Clan Village Strategy Game
 
-A branded strategy game: build and upgrade towers along a path to stop waves of enemies, manage gold and lives, with a prize form that turns players into leads.
+A branded village strategy game in the style of Clash of Clans: grow and upgrade
+a village against timers, mine gold and elixir, train barbarians, archers and
+giants, and raid rival clans for loot and stars, with a prize form that turns
+players into leads.
+
+## The game
+
+- **`src/game.ts`** is the whole game with no drawing: buildings, levels and
+  costs, builders and timers, production, training, raids and stars. Change
+  `DEFAULT_SETTINGS` (or `site.game` in `src/content.ts`) to add levels, make
+  things cheaper or raids harder. Its tests are in `src/game.test.ts`.
+- **`src/play.tsx`** draws it and handles taps, clicks and keys. The village is
+  saved in the browser and keeps producing while the player is away.
+- **Pictures:** put PNGs in `public/assets/` and list them in
+  `public/assets/manifest.json` (`{"assets": {"townhall": {"file": "assets/townhall.png"}}}`).
+  Names: `townhall`, `goldmine`, `collector`, `barracks`, `camp`, `cannon`,
+  `wall`, `barbarian`, `archer`, `giant`, and `ground` for the grass. Anything
+  without a picture is drawn as a coloured block.
 
 ## Changing what it says
 
