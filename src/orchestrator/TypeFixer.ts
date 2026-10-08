@@ -13,6 +13,15 @@
  *    a value, or the model would have had to guard the whole screen);
  *  - "Parameter 'x' implicitly has an 'any' type" with no inferable type: `x: any`.
  *
+ *  - "'x' is declared but its value is never read" (the templates turn on
+ *    noUnusedLocals and noUnusedParameters): an unused import goes; an unused
+ *    parameter gets the underscore that tells TypeScript it is on purpose
+ *    (never deleted — that would break every caller); an unused local whose
+ *    value has no side effects goes, and one whose value does (a call) is kept
+ *    and marked used with `void x;`. One leftover import failed the typecheck,
+ *    so the build, and held a game at a score of 20 for pass after pass while
+ *    the model never thought it worth removing.
+ *
  * Only edits from that short list are made, a few rounds at most, and only to
  * the app's own files under src/. What it cannot fix is left for the repair.
  */
@@ -36,6 +45,8 @@ const loadTs = (): TsModule | null => {
 
 /** "X is possibly null/undefined" in its forms (TS 5: 18047-18049; older: 2531-2533). */
 const POSSIBLY_NULLISH = new Set([18047, 18048, 18049, 2531, 2532, 2533]);
+/** Declared but never read / never used, in their forms. */
+const UNUSED = new Set([6133, 6192, 6196, 6198, 6199, 6205]);
 /** Implicit any on a parameter or a destructured parameter. */
 const IMPLICIT_ANY = new Set([7006, 7031]);
 
@@ -64,6 +75,116 @@ interface Edit {
 const indentOf = (text: string, position: number): string => {
   const lineStart = text.lastIndexOf("\n", position - 1) + 1;
   return /^[ \t]*/.exec(text.slice(lineStart))?.[0] ?? "";
+};
+
+/**
+ * "Declared but never used", fixed the way an editor would — with TypeScript's
+ * own quick fixes, and only the harmless ones (see the header).
+ */
+const UnusedFix = {
+  /** Whether evaluating this expression could do something (a call, an assignment, an await). Functions are not run, so not entered. */
+  sideEffects(ts: TsModule, node: import("typescript").Node): boolean {
+    let found = false;
+    const visit = (n: import("typescript").Node): void => {
+      if (found) return;
+      if (
+        ts.isCallExpression(n) ||
+        ts.isNewExpression(n) ||
+        ts.isAwaitExpression(n) ||
+        ts.isYieldExpression(n) ||
+        ts.isDeleteExpression(n) ||
+        ts.isTaggedTemplateExpression(n) ||
+        ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)) ||
+        (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment)
+      ) {
+        found = true;
+        return;
+      }
+      if (ts.isFunctionLike(n) || ts.isClassLike(n)) return;
+      ts.forEachChild(n, visit);
+    };
+    visit(node);
+    return found;
+  },
+
+  choose(
+    ts: TsModule,
+    service: import("typescript").LanguageService,
+    source: import("typescript").SourceFile | undefined,
+    fileName: string,
+    start: number,
+    end: number,
+    code: number,
+    format: import("typescript").FormatCodeSettings,
+    preferences: import("typescript").UserPreferences
+  ): { edits: Edit[]; note: string; fileName?: string } | null {
+    if (!source) return null;
+    let node: import("typescript").Node | undefined;
+    const visit = (child: import("typescript").Node) => {
+      if (child.getStart(source) <= start && child.getEnd() >= end) {
+        node = child;
+        ts.forEachChild(child, visit);
+      }
+    };
+    ts.forEachChild(source, visit);
+    if (!node) return null;
+    const name = source.text.slice(start, end);
+    const fixes = service.getCodeFixesAtPosition(fileName, start, end, [code], format, preferences);
+    const asEdits = (fix: import("typescript").CodeFixAction | undefined) =>
+      fix && fix.changes.every((c) => c.fileName === fileName)
+        ? fix.changes.flatMap((c) => c.textChanges.map((t) => ({ start: t.span.start, end: t.span.start + t.span.length, text: t.newText })))
+        : null;
+
+    let at: import("typescript").Node | undefined = node;
+    while (at && !ts.isImportDeclaration(at) && !ts.isParameter(at) && !ts.isVariableDeclaration(at) && !ts.isBindingElement(at) && !ts.isFunctionDeclaration(at) && !ts.isTypeAliasDeclaration(at) && !ts.isInterfaceDeclaration(at) && !ts.isTypeParameterDeclaration(at)) {
+      at = at.parent;
+    }
+    if (!at) return null;
+
+    // An import nobody reads: remove it.
+    if (ts.isImportDeclaration(at)) {
+      const edits = asEdits(fixes.find((f) => f.fixId === "unusedIdentifier_deleteImports" || /^Remove (import|unused declaration)/.test(f.description)));
+      return edits ? { edits, note: `removed the unused import ${name}` } : null;
+    }
+    // A parameter: never removed (callers pass it), only marked as unused on purpose.
+    if (ts.isParameter(at) || (ts.isBindingElement(at) && ts.isParameter(at.parent?.parent))) {
+      const edits = asEdits(fixes.find((f) => f.fixId === "unusedIdentifier_prefix"));
+      return edits ? { edits, note: `marked parameter ${name} as unused on purpose (_${name})` } : null;
+    }
+    // A type parameter, a type or an interface nobody uses, or a local function: nothing runs, so it can go.
+    if (ts.isTypeParameterDeclaration(at) || ts.isTypeAliasDeclaration(at) || ts.isInterfaceDeclaration(at) || ts.isFunctionDeclaration(at)) {
+      if (ts.isFunctionDeclaration(at) && at.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)) return null;
+      const edits = asEdits(fixes.find((f) => f.fixId === "unusedIdentifier_delete"));
+      return edits ? { edits, note: `removed ${name}, declared but never used` } : null;
+    }
+    // A local: removed when its value does nothing; otherwise kept, and marked used.
+    const declaration = ts.isBindingElement(at)
+      ? (() => {
+          let up: import("typescript").Node | undefined = at;
+          while (up && !ts.isVariableDeclaration(up)) up = up.parent;
+          return up as import("typescript").VariableDeclaration | undefined;
+        })()
+      : (at as import("typescript").VariableDeclaration);
+    if (!declaration) return null;
+    const effects = declaration.initializer ? UnusedFix.sideEffects(ts, declaration.initializer) : false;
+    // One name out of a destructuring: the value is still read for the others, so dropping it changes nothing.
+    if (ts.isBindingElement(at) && code === 6133) {
+      const edits = asEdits(fixes.find((f) => f.fixId === "unusedIdentifier_delete"));
+      return edits ? { edits, note: `removed ${name} from a destructuring; it was never used` } : null;
+    }
+    if (!effects) {
+      const edits = asEdits(fixes.find((f) => f.fixId === "unusedIdentifier_delete"));
+      return edits ? { edits, note: `removed ${name}, declared but never used` } : null;
+    }
+    const statement = declaration.parent?.parent;
+    if (ts.isIdentifier(declaration.name) && statement && ts.isVariableStatement(statement)) {
+      return {
+        edits: [{ start: statement.getEnd(), end: statement.getEnd(), text: `\n${indentOf(source.text, statement.getStart(source))}void ${declaration.name.text};` }],
+        note: `kept ${name} (its value comes from a call) and marked it used`,
+      };
+    }
+    return null;
+  },
 };
 
 /** Attributes a component from src/engine/ does not accept, removed from where it is rendered. */
@@ -912,6 +1033,15 @@ export const TypeFixer = {
               notes.push(`${rel}:${line}: ${edit.note}`);
               continue;
             }
+          }
+
+          if (UNUSED.has(diagnostic.code)) {
+            const fix = UnusedFix.choose(ts, service, service.getProgram()?.getSourceFile(fileName), fileName, start, end, diagnostic.code, format, preferences);
+            if (fix) {
+              for (const edit of fix.edits) add(path.resolve(fix.fileName ?? fileName), edit);
+              notes.push(`${rel}:${line}: ${fix.note}`);
+            }
+            continue;
           }
 
           const fixes = service.getCodeFixesAtPosition(fileName, start, end, [diagnostic.code], format, preferences);
