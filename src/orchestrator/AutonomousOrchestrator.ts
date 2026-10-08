@@ -1265,6 +1265,28 @@ export default function ${name}({ onScore, onChange, onBack }: ${name}Props) {
   }
 
   /** A planned logic file that would redo what a playable board does: input, controls, the loop, drawing, physics. */
+  /** The type names the adopted engine exports (GameState, Building, ...). */
+  private engineTypeNames(): Set<string> {
+    const names = new Set<string>();
+    for (const file of this.adoptedEngine) {
+      if (!/\.tsx?$/.test(file)) continue;
+      try {
+        const text = fs.readFileSync(path.join(this.workspace.root, file), "utf8");
+        for (const m of text.matchAll(/^export\s+(?:declare\s+)?(?:interface|type|class|enum)\s+([A-Z]\w*)/gm)) names.add(m[1]);
+      } catch {
+        // Not written yet.
+      }
+    }
+    return names;
+  }
+
+  /** The engine's type names a new version of a file declares as its own (and the old one did not). */
+  static copiesEngineTypes(engineTypes: Set<string>, before: string, after: string): string[] {
+    const declared = (text: string) => new Set([...text.matchAll(/^\s*export\s+(?:declare\s+)?(?:interface|type|class|enum)\s+([A-Z]\w*)/gm)].map((m) => m[1]));
+    const had = declared(before);
+    return [...declared(after)].filter((name) => engineTypes.has(name) && !had.has(name));
+  }
+
   static duplicatesBoard(file: { path: string; purpose: string }): boolean {
     if (/\.test\./.test(file.path)) return false;
     // Screens for what the board already shows: an RPG build planned a
@@ -2286,6 +2308,29 @@ Rules that keep this build passing its checks (install, typecheck, build, tests)
           delete files[file];
           fragments.push(`• ${file}: the game is already built (the tested board in src/engine/, shown by the builder's game screen), so a new copy of it is not added — change the screens around it instead.`);
         }
+      }
+    }
+    // Nor a second copy of the engine's types: a Clash build wrote its own
+    // GameState in src/lib/engine/game.ts beside the engine's, and five repairs
+    // went into errors saying one GameState is not the other. A file may use
+    // the engine's types, imported, but not declare its own under their names.
+    const engineTypes = this.engineTypeNames();
+    if (engineTypes.size > 0) {
+      for (const file of Object.keys(files)) {
+        if (this.adoptedEngine.includes(file) || !/\.tsx?$/.test(file) || /\.test\./.test(file)) continue;
+        let before = "";
+        try {
+          before = fs.readFileSync(path.join(this.workspace.root, file), "utf8");
+        } catch {
+          // A new file.
+        }
+        const copies = AutonomousOrchestrator.copiesEngineTypes(engineTypes, before, files[file]);
+        if (copies.length === 0) continue;
+        if (before) files[file] = before;
+        else delete files[file];
+        fragments.push(
+          `• ${file}: it declares its own ${copies.join(", ")}, which the engine already has, so it is not ${before ? "changed" : "added"} — import ${copies.length === 1 ? "it" : "them"} from the engine (src/engine/${path.basename(this.adoptedEngine.find((f) => /game\.ts$/.test(f)) ?? "game.ts", ".ts")}) instead.`
+        );
       }
     }
     if (fragments.length > 0) {

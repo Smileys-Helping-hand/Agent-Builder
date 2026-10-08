@@ -430,6 +430,14 @@ assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/storage.ts"
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/progression.ts", purpose: "unlock levels and track high scores" }), false);
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/gameLogic.ts", purpose: "handles game events and updates the game state" }), true, "a reducer around the board's own actions");
 assert.equal(AutonomousOrchestrator.duplicatesScores({ path: "src/lib/highScores.ts", purpose: "keeps the best heroes" }), true, "the engine's score table does this");
+const engineTypes = new Set(["GameState", "Building", "TroopKind"]);
+assert.deepEqual(
+  AutonomousOrchestrator.copiesEngineTypes(engineTypes, "", 'import { Building } from "../../engine/game";\nexport type GameState = { gold: number; buildings: Building[] };\n'),
+  ["GameState"],
+  "a second GameState beside the engine's is refused"
+);
+assert.deepEqual(AutonomousOrchestrator.copiesEngineTypes(engineTypes, "", 'import type { GameState } from "../engine/game";\ntype Props = { state: GameState };\n'), [], "using the engine's types is fine");
+assert.deepEqual(AutonomousOrchestrator.copiesEngineTypes(engineTypes, "export type GameState = {};\n", "export type GameState = { a: 1 };\n"), [], "a file that already had it is not judged again");
 assert.equal(AutonomousOrchestrator.duplicatesScores({ path: "src/lib/leaderboard.ts", purpose: "top ten" }), true);
 assert.equal(AutonomousOrchestrator.duplicatesScores({ path: "src/lib/hallOfFame.ts", purpose: "" }), true);
 assert.equal(AutonomousOrchestrator.duplicatesScores({ path: "src/components/HallOfHeroes.tsx", purpose: "shows the best scores" }), false, "a screen that shows the table stays");
