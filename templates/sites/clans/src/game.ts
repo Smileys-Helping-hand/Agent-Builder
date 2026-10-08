@@ -8,11 +8,17 @@
  * Time is in game seconds (step(state, dt)); a raid is simulated on the same
  * clock. Randomness (enemy villages) comes from a seed in the state, so the
  * same game plays the same way in a test.
+ *
+ * Troops are data: every troop is an entry in settings.troops (in this app,
+ * `game.troops` in src/content.ts). To add one (a dragon, a wizard), add its
+ * entry there; training, the army, raids and the board all follow. This file
+ * does not need to change for it.
  */
 
 export type BuildingKind = "townhall" | "goldmine" | "collector" | "barracks" | "camp" | "cannon" | "wall";
 export type Resource = "gold" | "elixir";
-export type TroopKind = "barbarian" | "archer" | "giant";
+/** A troop's key in settings.troops: "barbarian", "archer", "giant", or any troop the app adds. */
+export type TroopKind = string;
 
 export interface LevelSpec {
   /** What it costs to reach this level (level 1: to build it). */
@@ -58,6 +64,12 @@ export interface TroopSpec {
   space: number;
   /** Giants go for the defences first. */
   prefers?: "defences";
+  /** The barracks level it needs to be trained (1 when not given). */
+  barracksLevel?: number;
+  /** Drawn bigger on the board (giants, dragons). */
+  big?: boolean;
+  /** A picture-free stand-in on the board: an emoji. */
+  icon?: string;
   color: string;
 }
 
@@ -252,7 +264,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   troops: {
     barbarian: { name: "Barbarian", cost: 25, seconds: 3, hp: 45, dps: 8, range: 1, speed: 1.6, space: 1, color: "#f59e0b" },
     archer: { name: "Archer", cost: 50, seconds: 4, hp: 20, dps: 7, range: 3.5, speed: 1.6, space: 1, color: "#ec4899" },
-    giant: { name: "Giant", cost: 250, seconds: 10, hp: 300, dps: 11, range: 1, speed: 1, space: 5, prefers: "defences", color: "#22c55e" }
+    giant: { name: "Giant", cost: 250, seconds: 10, hp: 300, dps: 11, range: 1, speed: 1, space: 5, prefers: "defences", barracksLevel: 2, big: true, color: "#22c55e" }
   }
 };
 
@@ -282,7 +294,7 @@ export const housing = (state: GameState): { total: number; used: number } => {
   const total = state.buildings
     .filter((b) => b.kind === "camp" && b.upgrading === null)
     .reduce((sum, b) => sum + (levelOf(state.settings, "camp", b.level).housing ?? 0), 0);
-  const ready = (Object.keys(state.army) as TroopKind[]).reduce((sum, kind) => sum + state.army[kind] * state.settings.troops[kind].space, 0);
+  const ready = (Object.keys(state.army) as TroopKind[]).reduce((sum, kind) => sum + (state.army[kind] ?? 0) * (state.settings.troops[kind]?.space ?? 1), 0);
   const queued = state.training.reduce((sum, t) => sum + state.settings.troops[t.kind].space, 0);
   return { total, used: ready + queued };
 };
@@ -298,6 +310,22 @@ const recalcScore = (state: GameState): void => {
   state.score = state.trophies * 100 + levels * 20 + state.raidsWon * 150;
 };
 
+/** No troops of any kind the settings list. */
+export const emptyArmy = (settings: GameSettings): Record<TroopKind, number> =>
+  Object.fromEntries(Object.keys(settings.troops).map((kind) => [kind, 0]));
+
+/**
+ * A saved village made to fit today's troops: one the app has since added
+ * starts at 0, one it has since taken out leaves the army and the training queue.
+ */
+export function fitToSettings(state: GameState): GameState {
+  const known = (kind: string) => Object.prototype.hasOwnProperty.call(state.settings.troops, kind);
+  const kept = Object.entries(state.army ?? {}).filter(([kind, count]) => known(kind) && Number.isFinite(count));
+  state.army = { ...emptyArmy(state.settings), ...Object.fromEntries(kept) };
+  state.training = (state.training ?? []).filter((item) => known(item.kind));
+  return state;
+}
+
 export function newGame(settings: GameSettings, seed = 23): GameState {
   const middle = Math.floor(settings.size / 2) - 1;
   const state: GameState = {
@@ -306,7 +334,7 @@ export function newGame(settings: GameSettings, seed = 23): GameState {
     gold: settings.start.gold,
     elixir: settings.start.elixir,
     buildings: [],
-    army: { barbarian: 0, archer: 0, giant: 0 },
+    army: emptyArmy(settings),
     training: [],
     raid: null,
     trophies: 0,
@@ -426,7 +454,9 @@ export function collectAll(state: GameState): GameEvent[] {
 export function whyNotTrain(state: GameState, kind: TroopKind): string | null {
   if (!state.buildings.some((b) => b.kind === "barracks" && b.upgrading === null)) return "You need a working barracks.";
   const spec = state.settings.troops[kind];
-  if (kind === "giant" && !state.buildings.some((b) => b.kind === "barracks" && b.level >= 2 && b.upgrading === null)) return "Giants need level 2 barracks.";
+  if (!spec) return "There is no such troop.";
+  const level = spec.barracksLevel ?? 1;
+  if (level > 1 && !state.buildings.some((b) => b.kind === "barracks" && b.level >= level && b.upgrading === null)) return `${spec.name}s need level ${level} barracks.`;
   const { total, used } = housing(state);
   if (used + spec.space > total) return "The army camps are full.";
   if (state.elixir < spec.cost) return "Not enough elixir.";
@@ -483,10 +513,10 @@ export function enemyVillage(state: GameState): Raid {
 /** Start a raid with the army you have. */
 export function startRaid(state: GameState): GameEvent[] {
   if (state.status !== "village") return [];
-  const troops = (Object.keys(state.army) as TroopKind[]).reduce((sum, kind) => sum + state.army[kind], 0);
+  const troops = (Object.keys(state.army) as TroopKind[]).reduce((sum, kind) => sum + (state.army[kind] ?? 0), 0);
   if (troops === 0) return [];
   state.raid = enemyVillage(state);
-  state.army = { barbarian: 0, archer: 0, giant: 0 };
+  state.army = emptyArmy(state.settings);
   state.status = "raiding";
   note(state, `Raiding ${state.raid.name}! Tap the edge of their village to send troops in.`);
   return ["raid-started"];
@@ -495,7 +525,7 @@ export function startRaid(state: GameState): GameEvent[] {
 /** Send a troop into the raid at a spot outside the enemy's buildings. */
 export function placeTroop(state: GameState, kind: TroopKind, x: number, y: number): GameEvent[] {
   const raid = state.raid;
-  if (state.status !== "raiding" || !raid || raid.over || raid.reserve[kind] <= 0) return [];
+  if (state.status !== "raiding" || !raid || raid.over || !((raid.reserve[kind] ?? 0) > 0)) return [];
   if (x < 0 || y < 0 || x >= state.settings.size || y >= state.settings.size) return [];
   if (raid.buildings.some((b) => b.hp > 0 && Math.abs(b.x - x) < 1 && Math.abs(b.y - y) < 1)) return [];
   raid.reserve[kind] -= 1;
@@ -514,7 +544,7 @@ const finishRaid = (state: GameState, events: GameEvent[]): void => {
   state.gold += Math.max(0, Math.min(room.gold, raid.loot.gold));
   state.elixir += Math.max(0, Math.min(room.elixir, raid.loot.elixir));
   // Troops that were never sent come home.
-  for (const kind of Object.keys(raid.reserve) as TroopKind[]) state.army[kind] += raid.reserve[kind];
+  for (const kind of Object.keys(raid.reserve) as TroopKind[]) state.army[kind] = (state.army[kind] ?? 0) + raid.reserve[kind];
   if (raid.stars > 0) {
     state.trophies += raid.stars;
     state.raidsWon += 1;
@@ -617,7 +647,7 @@ export function step(state: GameState, dt: number): GameEvent[] {
     left -= spent;
     if (first.left <= 1e-9) {
       state.training.shift();
-      state.army[first.kind] += 1;
+      state.army[first.kind] = (state.army[first.kind] ?? 0) + 1;
       events.push("trained");
     }
   }

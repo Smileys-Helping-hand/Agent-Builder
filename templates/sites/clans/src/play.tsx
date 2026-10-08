@@ -20,6 +20,7 @@ import {
   build,
   collect,
   collectAll,
+  fitToSettings,
   freeBuilders,
   housing,
   newGame,
@@ -36,7 +37,6 @@ import {
 } from "./game";
 
 const BUILDABLE: BuildingKind[] = ["goldmine", "collector", "cannon", "barracks", "camp", "wall"];
-const TROOPS: TroopKind[] = ["barbarian", "archer", "giant"];
 const EMOJI: Record<string, string> = {
   townhall: "🏰",
   goldmine: "⛏️",
@@ -92,7 +92,7 @@ const load = (key: string, settings: GameSettings): GameState => {
   try {
     const saved = JSON.parse(localStorage.getItem(key) ?? "null") as { version: number; at: number; state: Omit<GameState, "settings" | "raid"> } | null;
     if (saved?.version === SAVE_VERSION && saved.state) {
-      const state: GameState = { ...saved.state, settings, raid: null, status: "village" };
+      const state = fitToSettings({ ...saved.state, settings, raid: null, status: "village" });
       let away = Math.min((Date.now() - saved.at) / 1000, 8 * 3600);
       while (away > 0) {
         const chunk = Math.min(away, 5);
@@ -200,7 +200,7 @@ function draw(ctx: CanvasRenderingContext2D, state: GameState, pictures: Picture
   for (const troop of raid.troops) {
     if (troop.hp <= 0) continue;
     const spec = state.settings.troops[troop.kind];
-    const r = cell * (troop.kind === "giant" ? 0.4 : 0.28);
+    const r = cell * (spec?.big ? 0.4 : 0.28);
     const cx = (troop.x + 0.5) * cell;
     const cy = (troop.y + 0.5) * cell;
     if (pictures[troop.kind]) ctx.drawImage(pictures[troop.kind], cx - r, cy - r, r * 2, r * 2);
@@ -237,7 +237,9 @@ export function GameBoard({ settings, accent = "#facc15", onScore, onChange, sav
   const picturesRef = useRef(pictures);
   picturesRef.current = pictures;
   const [placing, setPlacing] = useState<BuildingKind | null>(null);
-  const [troop, setTroop] = useState<TroopKind>("barbarian");
+  // Every troop the settings list, the app's own included.
+  const troops: TroopKind[] = Object.keys(settings.troops);
+  const [troop, setTroop] = useState<TroopKind>(troops[0] ?? "barbarian");
   const [selected, setSelected] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [, setTick] = useState(0);
@@ -334,7 +336,7 @@ export function GameBoard({ settings, accent = "#facc15", onScore, onChange, sav
       if (event.key === "Escape") {
         setPlacing(null);
         setSelected(null);
-      } else if (state.status === "raiding" && ["1", "2", "3"].includes(event.key)) setTroop(TROOPS[Number(event.key) - 1]);
+      } else if (state.status === "raiding" && /^[1-9]$/.test(event.key) && troops[Number(event.key) - 1]) setTroop(troops[Number(event.key) - 1]);
       else if (event.key.toLowerCase() === "c") collectAll(state);
       sync();
     };
@@ -416,7 +418,7 @@ export function GameBoard({ settings, accent = "#facc15", onScore, onChange, sav
             })}
           </div>
           <div className="btn-row" style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
-            {TROOPS.map((kind) => (
+            {troops.map((kind) => (
               <button
                 key={kind}
                 className="btn btn-ghost"
@@ -427,7 +429,7 @@ export function GameBoard({ settings, accent = "#facc15", onScore, onChange, sav
                   sync();
                 }}
               >
-                Train {EMOJI[kind]} {settings.troops[kind].name} · {settings.troops[kind].cost}💧 ({state.army[kind]})
+                Train {EMOJI[kind] ?? settings.troops[kind]?.icon ?? "⚔️"} {settings.troops[kind].name} · {settings.troops[kind].cost}💧 ({state.army[kind] ?? 0})
               </button>
             ))}
             <button
@@ -441,7 +443,7 @@ export function GameBoard({ settings, accent = "#facc15", onScore, onChange, sav
             </button>
             <button
               className="btn btn-primary"
-              disabled={TROOPS.every((kind) => state.army[kind] === 0)}
+              disabled={troops.every((kind) => (state.army[kind] ?? 0) === 0)}
               onClick={() => {
                 startRaid(state);
                 setSelected(null);
@@ -483,9 +485,9 @@ export function GameBoard({ settings, accent = "#facc15", onScore, onChange, sav
         </>
       ) : state.status === "raiding" && raid ? (
         <div className="btn-row game-controls" style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
-          {TROOPS.map((kind, i) => (
-            <button key={kind} className={button(troop === kind)} aria-pressed={troop === kind} onClick={() => setTroop(kind)} disabled={raid.reserve[kind] === 0}>
-              {i + 1}. {EMOJI[kind]} {settings.troops[kind].name} × {raid.reserve[kind]}
+          {troops.map((kind, i) => (
+            <button key={kind} className={button(troop === kind)} aria-pressed={troop === kind} onClick={() => setTroop(kind)} disabled={!raid.reserve[kind]}>
+              {i + 1}. {EMOJI[kind] ?? settings.troops[kind]?.icon ?? "⚔️"} {settings.troops[kind].name} × {raid.reserve[kind] ?? 0}
             </button>
           ))}
           <span className="muted small" style={{ alignSelf: "center" }}>

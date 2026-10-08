@@ -8,6 +8,7 @@ import {
   collectAll,
   counts,
   enemyVillage,
+  fitToSettings,
   freeBuilders,
   housing,
   newGame,
@@ -236,5 +237,27 @@ describe("raids", () => {
     startRaid(state);
     step(state, 10);
     expect(mine.stored).toBeCloseTo(20, 5);
+  });
+});
+
+describe("troops are data", () => {
+  const withDragon = {
+    ...DEFAULT_SETTINGS,
+    troops: { ...DEFAULT_SETTINGS.troops, dragon: { name: "Dragon", cost: 400, seconds: 12, hp: 500, dps: 20, range: 2, speed: 1.2, space: 10, barracksLevel: 3, big: true, icon: "🐉", color: "#ef4444" } }
+  };
+
+  it("a troop the app adds starts at 0 and needs the barracks level it names", () => {
+    const state = newGame(withDragon);
+    expect(state.army.dragon).toBe(0);
+    expect(whyNotTrain(state, "dragon")).toBe("Dragons need level 3 barracks.");
+  });
+
+  it("an older save gets new troops at 0 and loses ones the app took out", () => {
+    const state = newGame(withDragon);
+    const old = { ...state, army: { barbarian: 4, archer: 2, giant: 1, goblin: 3 } as Record<string, number>, training: [{ kind: "goblin", left: 2 }, { kind: "archer", left: 1 }] } as GameState;
+    fitToSettings(old);
+    expect(old.army).toEqual({ barbarian: 4, archer: 2, giant: 1, dragon: 0 });
+    expect(old.training.map((t) => t.kind)).toEqual(["archer"]);
+    expect(Number.isNaN(housing(old).used)).toBe(false);
   });
 });
