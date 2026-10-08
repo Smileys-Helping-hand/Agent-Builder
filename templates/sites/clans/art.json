@@ -1,0 +1,16 @@
+{
+  "style": "stylized mobile strategy game art, vibrant colours, soft lighting, clean shapes",
+  "pictures": [
+    { "name": "townhall", "subject": "a grand medieval town hall with a golden roof and banners", "kind": "sprite" },
+    { "name": "goldmine", "subject": "a wooden gold mine entrance with a cart full of gold nuggets", "kind": "sprite" },
+    { "name": "collector", "subject": "a magic pump collecting glowing pink elixir into a glass tank", "kind": "sprite" },
+    { "name": "barracks", "subject": "a stone army barracks with a red roof and crossed swords sign", "kind": "sprite" },
+    { "name": "camp", "subject": "an army camp with a campfire and tents", "kind": "sprite" },
+    { "name": "cannon", "subject": "a black iron cannon on a wooden base", "kind": "sprite" },
+    { "name": "wall", "subject": "a short stone wall segment", "kind": "sprite" },
+    { "name": "barbarian", "subject": "a blond barbarian warrior with a sword, full body", "kind": "sprite" },
+    { "name": "archer", "subject": "a pink-haired female archer with a bow, full body", "kind": "sprite" },
+    { "name": "giant", "subject": "a big strong giant with huge fists, full body", "kind": "sprite" },
+    { "name": "ground", "subject": "a lush green grass field seen from directly above, a few small flowers and stones, seamless", "kind": "background" }
+  ]
+}

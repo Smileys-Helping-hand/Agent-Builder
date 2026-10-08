@@ -15,6 +15,8 @@ import { QualityAnalyzer } from "./QualityAnalyzer.js";
 import { ImprovementEngine, type ImprovementPlan, type ImprovementSuggestion } from "./ImprovementEngine.js";
 import { HardwareScaler } from "../utils/HardwareScaler.js";
 import { APP_PLATFORMS, AppBuilder, type AppPlatform } from "../orders/AppBuilder.js";
+import { Packager } from "../orders/Packager.js";
+import { ArtStudio, type ArtRequest } from "../media/ArtStudio.js";
 import { Workspace } from "./Workspace.js";
 import { Verifier, type CheckResult, type VerificationReport } from "./Verifier.js";
 import { Executor } from "./Executor.js";
@@ -262,6 +264,9 @@ export class AutonomousOrchestrator extends EventEmitter {
             threshold: this.config.qualityThreshold
           });
           this.rememberSuccess(iteration);
+
+          // Its pictures, before the phone and PC apps are made from it.
+          if (iteration.verification?.passed) await this.drawArt(iteration).catch((error: any) => Logger.warn("Could not draw the game's pictures", { error: error?.message }));
 
           // A score above threshold isn't the same as every applicable check
           // passing — e.g. a heavily-weighted install pass can clear a low
@@ -1495,14 +1500,86 @@ export default function ${name}({ onScore, onChange, onBack }: ${name}Props) {
         .filter(([file]) => !fs.existsSync(path.join(this.workspace.root, file)))
     );
     if (Object.keys(fresh).length === 0) return;
+    // The pictures its board can draw come with it, for the art pass once the build passes.
+    const seedId = /^seed:(.+)$/.exec(this.exemplar.origin)?.[1];
+    const artList = seedId ? path.resolve(process.env.TEMPLATES_DIR ?? "templates/sites", seedId, "art.json") : null;
+    if (artList && fs.existsSync(artList) && !fs.existsSync(path.join(this.workspace.root, "art.json"))) fresh["art.json"] = fs.readFileSync(artList, "utf8");
     await this.workspace.writeFiles(fresh, `Head start: the engine from ${this.exemplar.title}`);
-    this.adoptedEngine = Object.keys(fresh);
+    this.adoptedEngine = Object.keys(fresh).filter((file) => file !== "art.json");
     this.think(
       1,
       "decision",
       `Started from a tested engine: ${this.adoptedEngine.join(", ")}`,
       `From our "${this.exemplar.title}". The app is built on it, so the rules (levels, scoring, winning and losing) work from the first pass.`,
       this.adoptedEngine
+    );
+  }
+
+  /**
+   * The game's pictures, once it passes: the list its board can draw
+   * (art.json, from the engine's template) adapted to this brief by the model
+   * in one short answer, drawn by ArtStudio into public/assets, and the site
+   * rebuilt so the preview and the phone and PC apps carry them. Without the
+   * image engine running, or for an app with no art list, nothing happens and
+   * the board draws its shapes.
+   */
+  private async drawArt(iteration: BuildIteration): Promise<void> {
+    if (!this.config.workingDir || process.env.ART === "off") return;
+    const listPath = path.join(this.workspace.root, "art.json");
+    if (!fs.existsSync(listPath)) return;
+    let list: { style?: string; pictures?: ArtRequest[] };
+    try {
+      list = JSON.parse(fs.readFileSync(listPath, "utf8"));
+    } catch {
+      return;
+    }
+    const pictures = (list.pictures ?? []).filter((p) => p?.name && p?.subject && p?.kind);
+    if (pictures.length === 0) return;
+    if (!(await ArtStudio.available())) {
+      this.think(iteration.iteration, "decision", "No pictures this time", "The image engine (ComfyUI) is not running, so the game uses its built-in shapes. Start it and carry the build on to add the art.");
+      return;
+    }
+    // The model fits each picture to this game: a space colony's "town hall" is a command dome.
+    let style = list.style ?? "";
+    let subjects = pictures.map((p) => p.subject);
+    try {
+      const answer = await ModelRouter.generate(`You are art-directing a game. The game, in the customer's words:
+${this.config.description.split(/\nWhat our research confirmed/i)[0].slice(0, 1500)}
+
+The game needs these pictures. For each, write what it should show for THIS game, in under 20 words: keep what it is
+(a building stays a building, a troop stays a character), change its look to fit the game's theme. Then one line of art
+style for all of them.
+
+${pictures.map((p, i) => `${i + 1}. ${p.name}: ${p.subject}`).join("\n")}
+
+Answer with JSON only: {"style": "...", "pictures": {"1": "...", "2": "..."}}`);
+      const parsed = JSON.parse(/\{[\s\S]*\}/.exec(answer)?.[0] ?? "{}") as { style?: unknown; pictures?: Record<string, unknown> };
+      if (typeof parsed.style === "string" && parsed.style.trim().length > 5) style = parsed.style.trim().slice(0, 200);
+      subjects = pictures.map((p, i) => {
+        const next = parsed.pictures?.[String(i + 1)];
+        return typeof next === "string" && next.trim().length > 5 ? next.trim().slice(0, 200) : p.subject;
+      });
+    } catch {
+      // The list's own words will do.
+    }
+    const started = Date.now();
+    const results = await ArtStudio.drawAll(
+      this.workspace.root,
+      pictures.map((p, i) => ({ ...p, subject: subjects[i] })),
+      style,
+      (done, total, name) => this.emit("stage", { stage: `drawing ${name} (${done + 1}/${total})` })
+    );
+    const drawn = results.filter((r) => r.file).length;
+    if (drawn === 0) return;
+    // Rebuilt, so dist/ (the preview, the download, the apps) has the pictures.
+    await Packager.buildWebsite(this.workspace.root, this.buildId);
+    await this.workspace.commitCurrentState(`Drew ${drawn} picture${drawn === 1 ? "" : "s"} for the game`).catch(() => undefined);
+    this.think(
+      iteration.iteration,
+      "decision",
+      `Drew ${drawn} of ${pictures.length} pictures`,
+      `${results.map((r) => `${r.name}${r.file ? "" : ` (not drawn: ${r.error})`}`).join(", ")}, in ${Math.round((Date.now() - started) / 1000)} s. Style: ${style}.`,
+      results.filter((r) => r.file).map((r) => `public/${r.file}`)
     );
   }
 
