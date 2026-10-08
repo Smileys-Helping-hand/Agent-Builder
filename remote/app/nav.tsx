@@ -7,12 +7,13 @@ import { useActivity } from "./activity";
 import { Icon } from "./ui";
 
 // Eight is the most that stays legible across the bottom of a phone. Feed,
-// Research, Settings and Help live one tap deeper, under Control.
+// Research, Settings, Help and the prompt builder live one tap deeper, under
+// All (every dashboard, and the install button), which the logo also opens.
 const items = [
   { href: "/", label: "Home", icon: Icon.power },
   { href: "/build", label: "Build", icon: Icon.sparkle },
   { href: "/try", label: "Try it", icon: Icon.play },
-  { href: "/prompt", label: "Prompt", icon: Icon.code },
+  { href: "/dashboards", label: "All", icon: Icon.expand },
   { href: "/orders", label: "Orders", icon: Icon.list },
   { href: "/projects", label: "Projects", icon: Icon.folder },
   { href: "/studio", label: "Media", icon: Icon.image },

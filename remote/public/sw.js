@@ -1,10 +1,11 @@
 // Offline shell. The app's data always comes live from your machine — only the
 // interface itself is cached, so opening the app with no signal still shows
 // something useful instead of a browser error page.
-const CACHE = "agent-builder-shell-v1";
+const CACHE = "agent-builder-shell-v2";
+const SHELL = ["/", "/dashboards/", "/manifest.webmanifest", "/icon-192.png"];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(["/", "/manifest.webmanifest"])).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL).catch(() => cache.addAll(["/"]))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (event) => {
@@ -15,13 +16,15 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const request = event.request;
+  const url = new URL(request.url);
   // Never cache calls to the machine: stale status would be worse than none.
-  if (request.method !== "GET" || new URL(request.url).origin !== self.location.origin) return;
+  // Served by the builder itself, its API is on the same origin as the app.
+  if (request.method !== "GET" || url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
   event.respondWith(
     fetch(request)
       .then((response) => {
         const copy = response.clone();
-        caches.open(CACHE).then((cache) => cache.put(request, copy)).catch(() => {});
+        if (response.ok) caches.open(CACHE).then((cache) => cache.put(request, copy)).catch(() => {});
         return response;
       })
       .catch(() => caches.match(request).then((cached) => cached ?? caches.match("/")))

@@ -364,7 +364,7 @@ export type BuildProfile = "fast" | "balanced" | "deep";
 /** One of the builder's settings, as Settings → How the builder works shows it. */
 export interface BuilderSetting {
   name: string;
-  group: "Models" | "Orders" | "Projects" | "Site";
+  group: "Models" | "Builds" | "Orders" | "Projects" | "Site";
   label: string;
   help: string;
   kind: "model" | "bool" | "number" | "text" | "choice";
@@ -375,6 +375,30 @@ export interface BuilderSetting {
   min?: number;
   max?: number;
   restart?: boolean;
+  /** A setting of the model server itself: saving it restarts the model server. */
+  server?: boolean;
+}
+
+/** How a new build begins: written from the prompt, on one of our engines, or as one of our games. */
+export type HeadStart = "prompt" | "engine" | "template";
+
+/** The coding model as it sits: how much is on the graphics card and how much in RAM. */
+export interface ModelStatus {
+  server: "up" | "down" | "degraded";
+  model: string;
+  reviewModel: string;
+  options: { num_ctx: number; num_predict: number; num_gpu?: number; num_thread?: number };
+  serverSettings: Record<string, string>;
+  loaded: Array<{ name: string; totalGB: number; gpuGB: number; ramGB: number; onGpuPercent: number; context: number | null; until: string | null }>;
+}
+
+/** One thing Jarvis can ask the builder to do through his bridge. */
+export interface BridgeAction {
+  name: string;
+  area: string;
+  label: string;
+  scope: "read" | "write" | "execute";
+  params: Record<string, string>;
 }
 
 /** Where a new build starts: a working React app, an empty folder, or whichever fits. */
@@ -1053,6 +1077,7 @@ export const api = {
     qualityThreshold?: number;
     maxIterations?: number;
     starter?: StarterChoice;
+    headStart?: HeadStart;
   }) => request<{ buildId: string }>("/api/autonomous/start", { method: "POST", body: JSON.stringify(config) }, 60000),
   /** Add an instruction to a build that is already running. */
   guideBuild: (id: string, text: string) =>
@@ -1324,6 +1349,11 @@ export const api = {
     request<{ document: TopicDocumentMeta & { markdown: string } }>(`/api/research/topics/${id}/documents/${documentId}`),
 
   warmModel: () => request<{ success: boolean; model: string; seconds: number; message: string }>("/api/power/warm-model", { method: "POST" }, 200000),
+  modelStatus: () => request<ModelStatus>("/api/power/model", {}, 15000),
+  restartModelServer: (force = false) =>
+    request<{ success: boolean; message: string }>("/api/power/model/restart", { method: "POST", body: JSON.stringify({ force }) }, 90000),
+  /** Everything Jarvis can do through his bridge. */
+  bridgeCatalogue: () => request<{ actions: BridgeAction[]; howTo: string; address: string | null }>("/api/agent-builder/bridge", {}, 15000),
   restartBuilder: (force = false) =>
     request<{ success: boolean; message: string }>("/api/power/restart", { method: "POST", body: JSON.stringify({ force }) }, 30000),
   builderLog: (lines = 200, level?: "warn" | "error") =>

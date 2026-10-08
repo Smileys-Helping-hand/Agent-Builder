@@ -142,7 +142,10 @@ export const Header = ({
           {Icon.back}
         </button>
       ) : (
-        <div className="mark">A</div>
+        // The logo opens every dashboard, from any screen.
+        <Link className="mark" href="/dashboards/" aria-label="All dashboards">
+          A
+        </Link>
       )}
       <div style={{ minWidth: 0 }}>
         <h1>{title}</h1>

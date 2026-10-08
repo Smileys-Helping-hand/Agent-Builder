@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api, type BuildProfile, type StarterChoice } from "@/lib/api";
+import { api, type BuildProfile, type HeadStart, type StarterChoice } from "@/lib/api";
 import { isLive, useActivity } from "../activity";
 import { Banner, Busy, Freshness, Header, Icon, NotConnected, Skeleton, useConnected, usePersistentState, useToast } from "../ui";
 import { BuildDetail } from "./detail";
@@ -31,6 +31,20 @@ const STARTERS: Array<{ id: StarterChoice; label: string; hint: string }> = [
   { id: "auto", label: "Auto", hint: "A working React app for anything that runs in a browser; an empty folder for Python, bots, servers and the like." },
   { id: "web", label: "Starter app", hint: "Always start from the working React + TypeScript app. Fastest route to something that builds and passes its checks." },
   { id: "none", label: "Empty folder", hint: "Let the model choose everything, from the language up. Slower, and more likely to need repairs." }
+];
+
+/** How a new build begins; "settings" leaves it to Settings → Builds. */
+const HEAD_STARTS: Array<{ id: HeadStart | "settings"; label: string; hint: string }> = [
+  { id: "settings", label: "As in Settings", hint: "Whatever Settings → Builds says (written from the prompt, unless you changed it)." },
+  { id: "prompt", label: "From my prompt", hint: "Planned and written from your words, file by file. Our games are shown to the model as examples, never copied in. Games still get pictures drawn for them." },
+  { id: "engine", label: "Our engine", hint: "A game close to one of ours starts with its tested rules (game.ts); the screens are written from your prompt." },
+  { id: "template", label: "Our whole game", hint: "A game that clearly matches one of ours starts as that whole working game, then is tailored to your prompt." }
+];
+
+/** Apps made from the same build once it passes (see AppBuilder on the builder). */
+const APPS: Array<{ id: "android" | "windows"; label: string }> = [
+  { id: "android", label: "Android app (.apk)" },
+  { id: "windows", label: "Windows app (.exe)" }
 ];
 
 type Filter = "all" | "live" | "works" | "look";
@@ -69,6 +83,8 @@ export default function BuildPage() {
   const [search, setSearch] = useState("");
   const [advanced, setAdvanced] = useState(false);
   const [starter, setStarter] = usePersistentState<StarterChoice>("build-starter", "auto");
+  const [headStart, setHeadStart] = usePersistentState<HeadStart | "settings">("build-head-start", "settings");
+  const [apps, setApps] = usePersistentState<Array<"android" | "windows">>("build-apps", []);
   const [maxPasses, setMaxPasses] = useState("");
   const [target, setTarget] = useState("");
   const [busy, setBusy] = useState(false);
@@ -117,7 +133,9 @@ export default function BuildPage() {
         profile: draft.profile,
         maxIterations: maxPasses && Number.isFinite(passes) ? passes : undefined,
         qualityThreshold: target && Number.isFinite(quality) ? quality : undefined,
-        starter
+        starter,
+        headStart: headStart === "settings" ? undefined : headStart,
+        targetPlatforms: apps.length ? ["web", ...apps] : undefined
       });
       setDraft({ name: "", description: "", profile: draft.profile });
       toast("Building. You can close this — it keeps going on the PC.", "ok");
@@ -205,6 +223,26 @@ export default function BuildPage() {
                 </small>
               </div>
 
+              <div className="field">
+                <span>Also make</span>
+                <div className="chips">
+                  {APPS.map((option) => (
+                    <button
+                      key={option.id}
+                      className={`chip ${apps.includes(option.id) ? "on" : ""}`}
+                      aria-pressed={apps.includes(option.id)}
+                      onClick={() => setApps(apps.includes(option.id) ? apps.filter((id) => id !== option.id) : [...apps, option.id])}
+                    >
+                      {apps.includes(option.id) ? "✓ " : ""}
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <small className="muted" style={{ display: "block", marginTop: 7 }}>
+                  {apps.length ? "Made from the website once every check passes; download them from the build." : "Just the website. You can still make the phone or PC app from a finished build."}
+                </small>
+              </div>
+
               <button className="btn ghost small" onClick={() => setAdvanced((value) => !value)}>
                 {Icon.gear} {advanced ? "Hide" : "More"} options
               </button>
@@ -220,6 +258,17 @@ export default function BuildPage() {
                       ))}
                     </div>
                     <small className="muted" style={{ display: "block", marginTop: 7 }}>{STARTERS.find((option) => option.id === starter)?.hint}</small>
+                  </div>
+                  <div className="field" style={{ gridColumn: "1 / -1" }}>
+                    <span>How it begins</span>
+                    <div className="segmented">
+                      {HEAD_STARTS.map((option) => (
+                        <button key={option.id} className={headStart === option.id ? "on" : ""} onClick={() => setHeadStart(option.id)}>
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                    <small className="muted" style={{ display: "block", marginTop: 7 }}>{HEAD_STARTS.find((option) => option.id === headStart)?.hint}</small>
                   </div>
                   <label className="field">
                     <span>Most passes</span>

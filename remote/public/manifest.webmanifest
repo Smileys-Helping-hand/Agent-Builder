@@ -1,15 +1,27 @@
 {
+  "id": "/",
   "name": "Agent Builder",
   "short_name": "Builder",
-  "description": "Run your builder from anywhere.",
+  "description": "Run your builder from anywhere: build, fix, draw, and every dashboard.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#0a0f1a",
   "theme_color": "#0a0f1a",
-  "orientation": "portrait",
+  "orientation": "any",
+  "categories": ["developer", "productivity"],
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
     { "src": "/icon-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Build", "short_name": "Build", "description": "Describe it and it gets built", "url": "/build/", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Projects", "short_name": "Projects", "description": "Diagnose, repair, carry on", "url": "/projects/", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Media Studio", "short_name": "Media", "description": "Sprites, icons, backgrounds", "url": "/studio/", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Orders", "short_name": "Orders", "url": "/orders/", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Control", "short_name": "Control", "description": "The model, services and power", "url": "/control/", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Jarvis", "short_name": "Jarvis", "url": "/jarvis/", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "All dashboards", "short_name": "All", "url": "/dashboards/", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
   ]
 }

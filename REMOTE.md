@@ -47,10 +47,12 @@ A build that needs the local model starts it if it is not running.
 | **Orders** | Customer orders, from arriving to handed over. See [ORDERS.md](ORDERS.md). |
 | **Projects** | Every project, filtered by what needs a look. Tap for a briefing, Diagnose or Repair. |
 | **Research** | Start a topic, watch findings accumulate, pause or resume. |
-| **Control** | The machine room: every service, the hardware, the Jarvis connection, and the way to Feed, Settings and Help. |
+| **Control** | The machine room: the coding model (how much is on the graphics card and how much in RAM, Load it now, Restart model server, the 14b / 7b switch), every service, the hardware and the Jarvis connection. |
+| **All** | Every dashboard on one screen, and the button that installs the app. The **A** logo at the top of any screen opens it too. |
 
-Feed, Settings and Help moved one tap deeper, under **Control** — six tabs is
-as many as stays readable across the bottom of a phone.
+Feed, Settings, Help, Research, Jarvis and the prompt builder are one tap
+deeper, under **All** — eight tabs is as many as stays readable across the
+bottom of a phone.
 
 Three buttons that are easy to confuse:
 
@@ -71,6 +73,44 @@ next pass and stays there for the rest of the build, so it is standing direction
 rather than a one-off. Pause frees the GPU without losing the work; Stop ends it.
 
 You can close the app. The build keeps going on the PC.
+
+**Also make** adds the Android app (.apk) and the Windows app (.exe), made from
+the website once every check passes; a finished build can make them later too.
+
+**How it begins** (under More options, default in Settings → Builds):
+
+- **From my prompt** (the default) — planned and written from your words, file by
+  file. Our tested games are shown to the model as examples, never copied in. A
+  game still gets pictures: the model lists them before the first pass, the code
+  draws a shape for each until the image engine has drawn it (src/lib/art.ts).
+- **Our engine** — a game close to one of ours starts with its tested rules.
+- **Our whole game** — a game that clearly matches one of ours starts as that game.
+
+### The model on an 8 GB card
+
+Control → *The coding model* switches between two set-ups, measured on this PC
+(RTX 3060 Ti 8 GB, 32 GB RAM):
+
+| | On the card | Loads | Writes |
+| --- | --- | --- | --- |
+| **qwen2.5-coder:14b, split** | 28 of 49 layers (6.2 GB), the rest from RAM | ~20 s | ~5 tokens/s |
+| qwen2.5-coder:7b | all of it | ~5 s | much faster, weaker code |
+
+Both at a 16k window with flash attention and an 8-bit KV cache, one model
+loaded at a time (Jarvis included, so neither pushes the other off the card). A
+32k window put only 24 layers on the card: 4.4 tokens/s and a 103 s load. Forcing
+more layers than fit makes Windows page the card's memory (a load took ten
+minutes), so *Layers on the graphics card* stays on Automatic.
+
+### Jarvis
+
+Jarvis can do anything the app can, through his bridge
+(`POST /api/agent-builder/bridge`, `metadata.action`): builds from a prompt to a
+passing app, carrying on and fixing, the phone and PC apps, drawing sprites,
+icons and backgrounds, MediaGen, projects, research, orders, the model and
+settings. `GET` on the bridge lists every action and what it takes; the Jarvis
+screen shows the same list. Each action is made with his key, so it can do
+nothing his key could not; keys and accounts are only changed in the app.
 
 ### Keeping track of builds
 
@@ -203,6 +243,9 @@ quick tunnel would otherwise inherit.
 
 ## Install it as an app
 
+- **Anywhere**: **All** → *Install Agent Builder*. Installed, it opens in its own
+  window, and a long-press (or right-click) on its icon goes straight to Build,
+  Projects, Media, Orders, Control, Jarvis or All.
 - **Android / desktop Chrome or Edge**: open the site, menu → *Install app*.
 - **iPhone**: Share → *Add to Home Screen*.
 - **Android APK**: `release/Agent Builder.apk`. Copy it to the phone and open it
