@@ -354,6 +354,18 @@ assert.match(fixedGame, /handleSave\(\)/, "a different name is NOT swapped in (h
 assert.ok(typeNotes.length >= 3, `notes: ${typeNotes.join(" | ")}`);
 assert.deepEqual(TypeFixer.run(typed).filter((note) => !/handleSave/.test(note)), [], "nothing left to fix but the real gap");
 
+// A lone arrow parameter given a type keeps it on the parameter: `(b): { id: number } =>` is a return type.
+const arrows = fs.mkdtempSync(path.join(os.tmpdir(), "ab-arrows-"));
+fs.mkdirSync(path.join(arrows, "src"));
+fs.writeFileSync(path.join(arrows, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", noEmit: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(path.join(arrows, "src/find.ts"), "export function pick(list, id: number) {\n  return list.find(b => b.id === id);\n}\nexport const twice = (handler) => [1, 2].map(n => handler(n));\n");
+TypeFixer.run(arrows);
+const arrowFile = fs.readFileSync(path.join(arrows, "src/find.ts"), "utf8");
+assert.doesNotMatch(arrowFile, /\)\s*:\s*\{[^}]*\}\s*=>/, `no parameter type became a return type:\n${arrowFile}`);
+const ts = await import("typescript");
+const parsed = ts.default.transpileModule(arrowFile, { reportDiagnostics: true, compilerOptions: { target: ts.default.ScriptTarget.ES2020 } });
+assert.equal(parsed.diagnostics?.length ?? 0, 0, `still valid TypeScript:\n${arrowFile}`);
+
 // The live Pgame build's mistakes: engine mutators used as if they returned the
 // state, a type imported from a file that only uses it, and a second local copy
 // of an imported type.
