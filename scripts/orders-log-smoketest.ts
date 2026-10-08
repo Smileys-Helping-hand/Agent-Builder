@@ -62,6 +62,8 @@ for (const [text, id] of [
   ["Game: a tower defense game for my board game cafe", "strategy"],
   ["Game: a fun game for my shop", "game"],
   ["Game: a space shooter for my arcade", "shooter"],
+  ["Game: a Clash of Clans clone for my gaming lounge", "clans"],
+  ["Game: a mini GTA with cars and police for my arcade bar", "city"],
   ["Website: wedding invitation with RSVP", "event"],
   ["Website: a blog for my travel stories", "blog"],
   ["Web App: inventory tracking software for my warehouse", null],
