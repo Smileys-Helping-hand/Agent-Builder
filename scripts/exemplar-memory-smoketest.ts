@@ -71,11 +71,13 @@ for (const [brief, title] of [
   ["Build Kingdoms: a strategy game where you defend your castle", "Tower Defense Strategy Game"],
   ["Build Dungeon Quest: an RPG with a hero and monsters", "Fantasy RPG Adventure"],
   ["Build Hero's Journey: an adventure game with battles and levelling up", "Fantasy RPG Adventure"],
+  ["Build Clash Kingdom: a Clash of Clans clone for mobile", "Clan Village Strategy Game"],
+  ["Build Village Wars: a base building game where you train troops and raid other villages", "Clan Village Strategy Game"],
   ["Build Brick Bash: a brick breaker game", "Arcade Promo Game"]
 ] as const) {
   assert.equal(ExemplarMemory.relevant(brief)?.title, title, brief);
 }
-for (const genre of ["Space Shooter Game", "Tower Defense Strategy Game", "Fantasy RPG Adventure"]) {
+for (const genre of ["Space Shooter Game", "Tower Defense Strategy Game", "Fantasy RPG Adventure", "Clan Village Strategy Game"]) {
   const seed = ExemplarMemory.list().find((e) => e.title === genre)!;
   assert.deepEqual(Object.keys(ExemplarMemory.engineFiles(seed, path.resolve("templates/sites"))).sort(), ["src/game.ts", "src/play.tsx", "src/scores.ts"], `${genre} brings its engine, its board and its score table`);
   const note = ExemplarMemory.formatForPrompt(seed, ["src/engine/game.ts", "src/engine/play.tsx", "src/engine/scores.ts"]);

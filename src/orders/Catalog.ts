@@ -302,6 +302,27 @@ const BUILT_IN_ITEMS: TemplateDefinition[] = [
     keywords: ["rpg", "role-playing", "roleplaying", "adventure", "dungeon", "quest", "fantasy", "hero", "battle", "turn-based", "game"]
   },
   {
+    id: "clans",
+    name: "Clan Village Strategy Game",
+    kind: "app",
+    category: "Games",
+    description: "A village-building strategy game in your brand, in the style of Clash of Clans: build and upgrade a village against timers, mine gold and elixir, train an army and raid rival villages for loot and stars, plus a prize form for top players.",
+    price: 12500,
+    currency: "ZAR",
+    timeframe: "3-4 weeks",
+    icon: "🛡️",
+    features: [
+      "A village to build and upgrade, with builders working against timers",
+      "Gold and elixir from mines and collectors, saved between visits",
+      "Barbarians, archers and giants trained in barracks",
+      "Raids on rival villages for loot and three stars",
+      "Your name, colours, buildings and prize",
+      "Touch and mouse controls for phones and PCs"
+    ],
+    techStack: ["React", "TypeScript", "Canvas", "Vite"],
+    keywords: ["clash", "clans", "clash of clans", "base builder", "base building", "village", "village builder", "builder", "raid", "troops", "army", "elixir", "town hall", "game"]
+  },
+  {
     id: "event",
     name: "Event & Invitation",
     kind: "template",
