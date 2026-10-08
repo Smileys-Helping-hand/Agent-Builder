@@ -28,6 +28,8 @@ export interface ArtRequest {
   /** What it is, in a few words: "a knight in silver armour". */
   subject: string;
   kind: ArtKind;
+  /** What to steer away from (an edit's overridden details: "a red roof"). */
+  avoid?: string;
 }
 
 export interface ArtResult {
@@ -65,15 +67,16 @@ export const artName = (name: string): string =>
  */
 export const artPrompts = (request: ArtRequest, style: string): { positive: string; negative: string } => {
   const look = style.trim() || "stylized mobile game art, vibrant colours";
+  const avoid = request.avoid?.trim() ? `(${request.avoid.trim()}:1.3), ` : "";
   if (request.kind === "background") {
     return {
       positive: `${request.subject}, wide game background, ${look}, no characters, no text, clean composition`,
-      negative: "text, watermark, logo, characters, people, user interface, frame, border, blurry"
+      negative: `${avoid}text, watermark, logo, characters, people, user interface, frame, border, blurry`
     };
   }
   return {
     positive: `(one single object:1.4), ${request.subject}, isolated object, centered, full view, ${look}, plain white background`,
-    negative: "(multiple objects:1.5), crowd, village, town, tiles, map, pattern, grid, scenery, landscape, ground, text, watermark, logo, cropped, cut off, frame"
+    negative: `${avoid}(multiple objects:1.5), crowd, village, town, tiles, map, pattern, grid, scenery, landscape, ground, text, watermark, logo, cropped, cut off, frame`
   };
 };
 
@@ -214,7 +217,8 @@ export const ArtStudio = {
       const queued = await fetch(`${COMFY()}/prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: workflow, client_id: clientId }),
+        // Preview frames whatever ComfyUI was started with (newer ComfyUI takes it per prompt).
+        body: JSON.stringify({ prompt: workflow, client_id: clientId, extra_data: { preview_method: "auto" } }),
         signal: AbortSignal.timeout(30_000)
       });
       const body = (await queued.json().catch(() => ({}))) as { prompt_id?: string; error?: unknown; node_errors?: unknown };

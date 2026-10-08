@@ -78,7 +78,9 @@ const run = (job: ArtJob) => {
     try {
       const { request } = job;
       let source: string | undefined;
-      if (request.parent) {
+      // An edit at full strength is a redraw from the changed description (same seed, so the same
+      // look): img2img holds on to the old colours, and "make the roof blue" stayed orange.
+      if (request.parent && (request.strength ?? 0) < REDRAW) {
         const parent = ArtLibrary.get(request.parent);
         if (!parent) throw new Error("the picture to edit is gone");
         source = await ArtStudio.upload(ArtLibrary.fileOf(parent));
@@ -89,11 +91,11 @@ const run = (job: ArtJob) => {
       try {
         png = await ArtStudio.render(
           artWorkflow(
-            { name: request.name, subject: request.edit ? `${request.subject}, ${request.edit}` : request.subject, kind: request.kind },
+            request.edit ? { name: request.name, ...editPrompt(request.subject, request.edit), kind: request.kind } : { name: request.name, subject: request.subject, kind: request.kind },
             request.style,
             request.seed,
             `agentbuilder/library-${artName(request.name)}`,
-            { source, denoise: request.strength ?? undefined }
+            { source, denoise: source ? (request.strength ?? undefined) : undefined }
           ),
           {
             onProgress: (value, max) => (job.progress = { value, max }),
@@ -142,6 +144,44 @@ const run = (job: ArtJob) => {
   });
 };
 
+/**
+ * The prompt for an edit: the change first and weighted, and the parts of
+ * the original description it overrides left out. "Make the roof blue" on
+ * "a barracks with a red roof" kept the roof red while "red roof" stayed in.
+ */
+/** At or above this strength an edit redraws from its description instead of from the picture. */
+const REDRAW = 0.95;
+
+const COLOURS = new Set(
+  "red orange yellow green blue purple violet pink brown black white grey gray silver gold golden teal cyan magenta crimson scarlet navy beige".split(" ")
+);
+
+/** "Make the roof blue", "turn it green": a change of colour (not "add a red cape"). */
+export const isRecolour = (change: string): boolean =>
+  !/^\s*(?:please\s+)?add\b/i.test(change) && change.toLowerCase().split(/[^a-z]+/).some((w) => COLOURS.has(w));
+
+export const editPrompt = (subject: string, change: string): { subject: string; avoid: string } => {
+  let wanted = change.trim().replace(/^(?:please\s+)?(?:make|turn|change|paint|colou?r|give\s+it|give\s+them|have)\s+/i, "");
+  const STOP = new Set(["the", "a", "an", "it", "its", "to", "and", "with", "more", "less", "some", "into", "make", "turn", "change", "add", "all", "very"]);
+  const words = wanted.toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 2 && !STOP.has(w));
+  const names = (part: string, word: string) => part.toLowerCase().split(/[^a-z]+/).some((w) => w === word || w === `${word}s`);
+  // A new colour replaces the old ones: "turn the car green" on "a red sports car".
+  const recolour = !/^add\b/i.test(wanted) && words.some((w) => COLOURS.has(w));
+  // "the roof blue" reads to the model as a roof; "blue roof" as blue.
+  const trailing = /^(?:the\s+|its\s+)?([a-z][a-z\s]*?)\s+([a-z]+)$/i.exec(wanted);
+  if (recolour && trailing && COLOURS.has(trailing[2].toLowerCase())) wanted = `${trailing[2]} ${trailing[1]}`;
+  const parts = subject.split(/,|\bwith\b|\band\b/i).map((part) => part.trim()).filter(Boolean);
+  // The clauses of the original that name what is being changed ("with a red roof") go, and are steered away from.
+  const dropped = parts.filter((part, i) => i > 0 && words.some((w) => names(part, w)));
+  const oldColours = recolour ? parts.flatMap((part) => part.split(/\s+/)).filter((w) => COLOURS.has(w.toLowerCase()) && !words.includes(w.toLowerCase())) : [];
+  const kept = parts
+    .filter((part) => !dropped.includes(part))
+    .map((part) => (recolour ? part.split(/\s+/).filter((w) => !COLOURS.has(w.toLowerCase())).join(" ") : part));
+  // "Add a red cape": what is added is the point, not the word "add".
+  const shown = wanted.replace(/^add\s+/i, "");
+  return { subject: `(${shown}:1.4), ${kept.join(", ")}`, avoid: (dropped.length ? dropped : oldColours).join(", ") };
+};
+
 export interface DrawRequest {
   subject: string;
   name?: string;
@@ -182,7 +222,7 @@ export const ArtLibrary = {
         id: newId("job"),
         state: "queued",
         request: {
-          name: request.name?.trim() || subject.split(/[,.]/)[0].split(/\s+/).slice(0, 4).join(" "),
+          name: request.name?.trim() || subject.split(/[,.]/)[0].replace(/^(?:an?|the|some)\s+/i, "").split(/\s+/).slice(0, 3).join(" "),
           subject,
           style: (request.style ?? "").trim().slice(0, 300),
           kind: request.kind ?? "sprite",
@@ -204,15 +244,21 @@ export const ArtLibrary = {
     });
   },
 
-  /** Start an edit: the picture redrawn with a change, as much as `strength` (0.2 a touch, 0.9 nearly new) allows. */
-  edit(id: string, change: string, strength = 0.55): ArtJob {
+  /**
+   * Start an edit: the picture redrawn with a change, as much as `strength`
+   * allows: 0.2 a touch, 0.9 nearly new, 1 a redraw from the changed
+   * description with the same seed (best for colours and swapped details).
+   */
+  edit(id: string, change: string, asked?: number): ArtJob {
+    // Unsaid: a colour change redraws, anything else stays close to the picture.
+    const strength = asked ?? (isRecolour(change) ? 1 : 0.65);
     const parent = ArtLibrary.get(id);
     if (!parent) throw new Error("No such picture.");
     if (!change.trim()) throw new Error("Say what to change.");
     const job: ArtJob = {
       id: newId("job"),
       state: "queued",
-      request: { name: parent.name, subject: parent.subject, style: parent.style, kind: parent.kind, seed: parent.seed + 1, parent: parent.id, edit: change.trim().slice(0, 300), strength },
+      request: { name: parent.name, subject: parent.subject, style: parent.style, kind: parent.kind, seed: strength >= REDRAW ? parent.seed : parent.seed + 1, parent: parent.id, edit: change.trim().slice(0, 300), strength: Math.min(1, Math.max(0.2, strength)) },
       progress: { value: 0, max: 22 },
       hasPreview: false,
       item: null,

@@ -55,6 +55,12 @@ assert.throws(() => ArtLibrary.draw({ subject: "   " }), /Say what to draw/);
 assert.throws(() => ArtLibrary.edit(sky.id, " "), /Say what to change/);
 assert.throws(() => ArtLibrary.edit("missing", "blue"), /No such picture/);
 
+// An edit's prompt leads with the change and drops what it overrides.
+const { editPrompt } = await import("../src/media/ArtLibrary.js");
+assert.deepEqual(editPrompt("a medieval stone barracks with a red roof and banners", "make the roof blue"), { subject: "(blue roof:1.4), a medieval stone barracks, banners", avoid: "a red roof" });
+assert.deepEqual(editPrompt("a red sports car seen from above", "turn the car green"), { subject: "(green car:1.4), a sports car seen from above", avoid: "red" });
+assert.deepEqual(editPrompt("a knight in silver armour, full body", "add a red cape"), { subject: "(a red cape:1.4), a knight in silver armour, full body", avoid: "" }, "adding keeps the colours there are");
+
 assert.equal(ArtLibrary.remove(sky.id), true);
 assert.equal(ArtLibrary.remove(sky.id), false);
 assert.ok(!fs.existsSync(ArtLibrary.fileOf(sky)), "its file goes too");

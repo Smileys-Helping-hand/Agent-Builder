@@ -42,6 +42,8 @@ const STARTERS = [
 
 type Format = "png" | "jpg" | "webp" | "ico";
 
+const RECOLOUR = /\b(?:red|orange|yellow|green|blue|purple|violet|pink|brown|black|white|grey|gray|silver|gold|golden|teal|cyan|magenta|crimson|navy)\b/i;
+
 /** Load a library picture into a canvas at a size (keeping its shape inside the square). */
 const toCanvas = async (link: string, size: number | null): Promise<HTMLCanvasElement> => {
   const url = URL.createObjectURL(await api.artBlob(link));
@@ -233,7 +235,8 @@ export default function Studio() {
   // Jobs started elsewhere (Jarvis, another device) show up live too.
   useEffect(() => {
     if (!connected) return;
-    void api.artJobs().then(({ jobs }) => setLive((now) => [...now, ...jobs.filter((j) => (j.state === "queued" || j.state === "drawing") && !now.some((n) => n.id === j.id))]));
+    void api.artJobs().then(({ jobs }) => setLive((now) => [...now, ...jobs.filter((j) => (j.state === "queued" || j.state === "drawing") && !now.some((n) => n.id === j.id))]))
+      .catch(() => undefined);
   }, [connected]);
 
   const draw = async () => {
@@ -461,7 +464,8 @@ const UseInBuild = ({ ids }: { ids: string[] }) => {
 const Detail = ({ item, onClose, onChanged, onJob, mediagen }: { item: ArtItem; onClose: () => void; onChanged: () => void; onJob: (job: ArtJob) => void; mediagen: boolean }) => {
   const toast = useToast();
   const [change, setChange] = useState("");
-  const [strength, setStrength] = useState(0.55);
+  const [strength, setStrength] = useState(0.65);
+  const [strengthSet, setStrengthSet] = useState(false);
   const [format, setFormat] = useState<Format>("png");
   const [size, setSize] = useState<number | null>(null);
   const [newName, setNewName] = useState(item.name);
@@ -505,11 +509,31 @@ const Detail = ({ item, onClose, onChanged, onJob, mediagen }: { item: ArtItem; 
             <h3 className="section-title">Change it</h3>
             <label className="field">
               <span>What to change</span>
-              <input value={change} onChange={(e) => setChange(e.target.value)} placeholder="make the roof blue, add snow" />
+              <input
+                value={change}
+                onChange={(e) => {
+                  setChange(e.target.value);
+                  // A colour change comes out best redrawn from the description; the rest stays close.
+                  if (!strengthSet) setStrength(RECOLOUR.test(e.target.value) && !/^\s*add\b/i.test(e.target.value) ? 1 : 0.65);
+                }}
+                placeholder="make the roof blue, add snow"
+              />
             </label>
             <label className="field">
-              <span>How much: {strength < 0.4 ? "a touch" : strength < 0.7 ? "clearly" : "nearly new"}</span>
-              <input type="range" min={0.2} max={0.9} step={0.05} value={strength} onChange={(e) => setStrength(Number(e.target.value))} />
+              <span>
+                How much: {strength >= 0.95 ? "redraw from the description, same look (best for colours)" : strength < 0.4 ? "a touch" : strength < 0.7 ? "clearly" : "nearly new"}
+              </span>
+              <input
+                type="range"
+                min={0.2}
+                max={1}
+                step={0.05}
+                value={strength}
+                onChange={(e) => {
+                  setStrengthSet(true);
+                  setStrength(Number(e.target.value));
+                }}
+              />
             </label>
             <div className="btn-row">
               <button
