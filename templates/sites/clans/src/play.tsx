@@ -173,7 +173,7 @@ function draw(ctx: CanvasRenderingContext2D, state: GameState, pictures: Picture
       } else if ((b.kind === "goldmine" || b.kind === "collector") && b.stored >= 10) {
         ctx.font = "14px system-ui";
         ctx.textAlign = "center";
-        ctx.fillText(b.kind === "goldmine" ? "🪙" : "💧", x + cell - 8, y + 10);
+        ctx.fillText(b.kind === "goldmine" ? "💰" : "💧", x + cell - 8, y + 10);
       }
       if (b.level > 0) {
         ctx.fillStyle = "#fff";
@@ -352,7 +352,7 @@ export function GameBoard({ settings, accent = "#facc15", onScore, onChange, sav
       <div className="hud" aria-live="polite" style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
         {state.status === "village" ? (
           <>
-            <span>🪙 <b>{Math.floor(state.gold)}</b></span>
+            <span>💰 <b>{Math.floor(state.gold)}</b></span>
             <span>💧 <b>{Math.floor(state.elixir)}</b> / {storage(state)}</span>
             <span>🔨 {freeBuilders(state)}/{settings.builders}</span>
             <span>⚔️ {space.used}/{space.total}</span>
@@ -363,7 +363,7 @@ export function GameBoard({ settings, accent = "#facc15", onScore, onChange, sav
             <span>⏱ <b>{Math.ceil(raid?.timeLeft ?? 0)}s</b></span>
             <span>{"★".repeat(raid?.stars ?? 0)}{"☆".repeat(3 - (raid?.stars ?? 0))}</span>
             <span>{Math.round((raid?.destroyed ?? 0) * 100)}% destroyed</span>
-            <span>🪙 {raid?.loot.gold ?? 0} · 💧 {raid?.loot.elixir ?? 0}</span>
+            <span>💰 {raid?.loot.gold ?? 0} · 💧 {raid?.loot.elixir ?? 0}</span>
           </>
         )}
       </div>
@@ -390,7 +390,7 @@ export function GameBoard({ settings, accent = "#facc15", onScore, onChange, sav
           >
             <strong>{raid.stars > 0 ? `Victory! ${"★".repeat(raid.stars)}` : "Defeat"}</strong>
             <span>
-              {raid.name}: {Math.round(raid.destroyed * 100)}% destroyed · 🪙 {raid.loot.gold} · 💧 {raid.loot.elixir}
+              {raid.name}: {Math.round(raid.destroyed * 100)}% destroyed · 💰 {raid.loot.gold} · 💧 {raid.loot.elixir}
             </span>
             <span>Tap to go home</span>
           </button>
@@ -410,7 +410,7 @@ export function GameBoard({ settings, accent = "#facc15", onScore, onChange, sav
               return (
                 <button key={kind} className={button(placing === kind)} aria-pressed={placing === kind} onClick={() => setPlacing(placing === kind ? null : kind)} style={placing === kind ? { outline: `2px solid ${accent}` } : undefined}>
                   {EMOJI[kind]} {spec.name} · {spec.levels[0].cost}
-                  {spec.pays === "gold" ? "🪙" : "💧"}
+                  {spec.pays === "gold" ? "💰" : "💧"}
                 </button>
               );
             })}
@@ -469,7 +469,7 @@ export function GameBoard({ settings, accent = "#facc15", onScore, onChange, sav
                   }}
                 >
                   Upgrade · {settings.buildings[chosen.kind].levels[chosen.level].cost}
-                  {settings.buildings[chosen.kind].pays === "gold" ? "🪙" : "💧"}
+                  {settings.buildings[chosen.kind].pays === "gold" ? "💰" : "💧"}
                 </button>
               ) : (
                 <span className="muted">Highest level</span>
