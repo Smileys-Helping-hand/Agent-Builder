@@ -1134,4 +1134,16 @@ await assert.rejects(ModelRouter.waitingOut(async () => { calls++; throw new Err
 assert.equal(calls, 1, "a real error is not retried");
 await assert.rejects(ModelRouter.waitingOut(async () => { throw down; }, 50, [10]), /fetch failed/, "gives up after the limit");
 
+// Game art: one object per sprite, cut out with the mask flipped, scaled for phones.
+const { artWorkflow, artName, artPrompts } = await import("../src/media/ArtStudio.js");
+assert.equal(artName("Gold Mine!"), "gold-mine");
+const spriteFlow = artWorkflow({ name: "barracks", subject: "a stone barracks", kind: "sprite" }, "stylized", 7, "agentbuilder/x") as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+const byType = (type: string) => Object.entries(spriteFlow).find(([, node]) => node.class_type === type);
+assert.ok(byType("RemoveBackground") && byType("InvertMask") && byType("JoinImageWithAlpha"), "sprites are cut out");
+assert.deepEqual(byType("JoinImageWithAlpha")![1].inputs.alpha, [byType("InvertMask")![0], 0], "the alpha is the flipped mask");
+assert.equal(byType("ImageScale")![1].inputs.width, 256, "sprites are phone-sized");
+assert.match(artPrompts({ name: "b", subject: "a barracks", kind: "sprite" }, "").negative, /multiple objects/);
+const backgroundFlow = artWorkflow({ name: "sky", subject: "a sky", kind: "background" }, "", 1, "p") as Record<string, { class_type: string }>;
+assert.ok(!Object.values(backgroundFlow).some((node) => node.class_type === "RemoveBackground"), "backgrounds keep their background");
+
 console.log("builder guards: all checks passed");
