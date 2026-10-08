@@ -20,6 +20,7 @@ import path from "path";
 
 import {
   AutonomousOrchestrator,
+  HEAD_STARTS,
   PROFILE_DEFAULTS,
   type AutonomousConfig,
   type BuildGuidance,
@@ -421,7 +422,8 @@ export const BuildService = {
       profile,
       maxRepairAttempts: options.maxRepairAttempts,
       patience: options.patience,
-      workingDir
+      workingDir,
+      headStart: options.headStart && HEAD_STARTS.includes(options.headStart) ? options.headStart : undefined
     };
 
     const orchestrator = new AutonomousOrchestrator(config);

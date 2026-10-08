@@ -47,7 +47,14 @@ export const ollamaOptions = () => ({
   num_ctx: positiveInt(process.env.OLLAMA_NUM_CTX, 16384),
   // A ceiling on the answer, so a model that loses its way cannot hold the
   // GPU (and every build queued behind it) for ten minutes.
-  num_predict: positiveInt(process.env.OLLAMA_NUM_PREDICT, 8192)
+  num_predict: positiveInt(process.env.OLLAMA_NUM_PREDICT, 8192),
+  // How the model is split between the graphics card and RAM. Left out, Ollama
+  // puts as many layers on the GPU as fit (28 of a 14b's 49 on 8 GB) and runs
+  // the rest from RAM. A number forces that many: more than fit makes Windows
+  // page the card's memory, and a load took ten minutes.
+  ...(positiveInt(process.env.OLLAMA_NUM_GPU, 0) > 0 ? { num_gpu: positiveInt(process.env.OLLAMA_NUM_GPU, 0) } : {}),
+  // CPU threads for the layers in RAM: the physical cores, unless set.
+  ...(positiveInt(process.env.OLLAMA_NUM_THREAD, 0) > 0 ? { num_thread: positiveInt(process.env.OLLAMA_NUM_THREAD, 0) } : {})
 });
 
 const generateWithOllama = async (prompt: string, model?: string): Promise<string> => {

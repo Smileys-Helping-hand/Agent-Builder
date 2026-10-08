@@ -4,6 +4,8 @@
  *   GET  /api/power/log?lines=200&level=error   the builder's own log, newest last
  *   POST /api/power/warm-model                   load the coding model into the GPU now
  *   POST /api/power/restart                      restart the builder (needs the launcher)
+ *   GET  /api/power/model                        what is loaded, split between GPU and RAM
+ *   POST /api/power/model/restart                restart the model server with its settings
  *
  * Restart only goes ahead when the launcher is running: it is the launcher's
  * watchdog that starts the builder again. Without it, a restart would be a
@@ -18,7 +20,7 @@ import type { Express, Request, Response } from "express";
 import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
 import { BuildService } from "../orchestrator/BuildService.js";
 import { Logger } from "../utils/Logger.js";
-import { OLLAMA_URL, ensureOllama } from "../utils/Ollama.js";
+import { OLLAMA_URL, checkOllama, ensureOllama, loadedModels, ollamaServerEnv, restartOllama } from "../utils/Ollama.js";
 import { ollamaOptions } from "../tools/ModelRouter.js";
 
 const run = promisify(execFile);
@@ -103,6 +105,34 @@ export const registerPowerToolRoutes = (app: Express) => {
     } catch (error) {
       res.status(502).json({ error: `Could not load ${model}: ${error instanceof Error ? error.message : String(error)}` });
     }
+  });
+
+  /** The model as it sits now: how much of it is on the graphics card and how much in RAM. */
+  app.get("/api/power/model", authenticateAgent("read"), async (_req: Request, res: Response) => {
+    const [server, loaded] = await Promise.all([checkOllama(), loadedModels()]);
+    res.json({
+      server: server.state,
+      model: process.env.OLLAMA_MODEL ?? "qwen2.5-coder:7b",
+      reviewModel: process.env.DEEP_REVIEW_MODEL ?? "qwen2.5-coder:14b",
+      options: ollamaOptions(),
+      serverSettings: ollamaServerEnv(),
+      loaded
+    });
+  });
+
+  /** Restart the model server so its own settings (KV cache, flash attention, window) take effect. */
+  app.post("/api/power/model/restart", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const building = BuildService.active().filter((build) => build.state === "running");
+    if (building.length && req.body?.force !== true) {
+      return res.status(409).json({
+        error: `${building.length} build(s) are using the model: ${building.map((build) => build.projectName).join(", ")}. Restarting it loses the pass each is on. Restart anyway?`,
+        building: building.length
+      });
+    }
+    Logger.log("Model server restarting at the app's request", { by: (req as AgentRequest).actor ?? "app", settings: ollamaServerEnv() });
+    const ok = await restartOllama();
+    if (!ok) return res.status(502).json({ error: "The model server did not come back. Press Switch everything on, or start Ollama at the PC." });
+    res.json({ success: true, settings: ollamaServerEnv(), message: "The model server restarted with its settings. The model loads on the next build (or press Load model now)." });
   });
 
   app.post("/api/power/restart", authenticateAgent("execute"), async (req: Request, res: Response) => {

@@ -20,6 +20,7 @@ import { signLink, verifyLink } from "../utils/SignedLinks.js";
 
 import { BuildService, buildEvents, type BuildRecord } from "../orchestrator/BuildService.js";
 import { Packager } from "../orders/Packager.js";
+import { HEAD_STARTS, type HeadStart } from "../orchestrator/AutonomousOrchestrator.js";
 import { APP_PLATFORMS, AppBuilder, type AppPlatform } from "../orders/AppBuilder.js";
 import { SelfHeal } from "../orchestrator/SelfHeal.js";
 import { withStorageShim } from "./previews.js";
@@ -159,6 +160,8 @@ export const registerAutonomousRoutes = (app: Express) => {
         patience: clampNumber(body.patience, 1, 50),
         autoPackaging: body.autoPackaging === false ? false : undefined,
         starter: body.starter === "web" || body.starter === "none" ? body.starter : "auto",
+        // prompt / engine / template; anything else is the Settings choice.
+        headStart: typeof body.headStart === "string" && (HEAD_STARTS as readonly string[]).includes(body.headStart) ? (body.headStart as HeadStart) : undefined,
         startedBy: (req as AgentRequest).actor ?? "unknown"
       });
 
