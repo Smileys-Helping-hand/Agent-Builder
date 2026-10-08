@@ -53,7 +53,10 @@ export const MediaGen = {
     try {
       const res = await fetch(`${base()}/api/system-stats`, { headers: { Authorization: `Bearer ${key()}` }, signal: AbortSignal.timeout(10_000) });
       if (res.status === 401) return { configured: true, reachable: true, workerOnline: null, url: base(), error: "MediaGen did not accept the key (is MEDIA_API_KEY set on it?)" };
-      return { configured: true, reachable: true, workerOnline: res.ok, url: base() };
+      if (!res.ok) return { configured: true, reachable: true, workerOnline: null, url: base(), error: `MediaGen answered ${res.status}` };
+      // It always answers 200; whether its worker (this PC) has reported in lately is `online`.
+      const body = (await res.json().catch(() => ({}))) as { online?: unknown };
+      return { configured: true, reachable: true, workerOnline: body.online === true, url: base() };
     } catch (error) {
       return { configured: true, reachable: false, workerOnline: null, url: base(), error: error instanceof Error ? error.message : String(error) };
     }

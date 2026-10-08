@@ -11,7 +11,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { api, type ArtItem, type ArtJob, type Build, type ArtKind, type MediaGenJob } from "@/lib/api";
+import { api, type ArtItem, type ArtJob, type ArtKind, type ArtStatus, type Build, type MediaGenJob } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, useConnected, usePersistentState, useRemote, useToast } from "../ui";
 
 const KINDS: { id: ArtKind; label: string; hint: string }[] = [
@@ -412,7 +412,7 @@ export default function Studio() {
           </div>
         </section>
 
-        {mediagen?.configured ? <MediaGenPanel onImported={() => library.refresh()} /> : (
+        {mediagen?.configured ? <MediaGenPanel status={mediagen} onImported={() => library.refresh()} /> : (
           <section className="card">
             <h2>MediaGen</h2>
             <p className="hint">
@@ -630,7 +630,7 @@ const Detail = ({ item, onClose, onChanged, onJob, mediagen }: { item: ArtItem; 
 };
 
 /** The owner's MediaGen gallery: images to bring into the library, videos to watch and download. */
-const MediaGenPanel = ({ onImported }: { onImported: () => void }) => {
+const MediaGenPanel = ({ onImported, status }: { onImported: () => void; status: ArtStatus["mediagen"] }) => {
   const toast = useToast();
   const gallery = useRemote(() => api.mediagenGallery(), 30000, "studio.mediagen");
   const items: MediaGenJob[] = gallery.data?.items ?? [];
@@ -638,6 +638,11 @@ const MediaGenPanel = ({ onImported }: { onImported: () => void }) => {
     <section className="card">
       <h2>MediaGen gallery</h2>
       <p className="hint">Your MediaGen app&apos;s finished images and videos. Bring images into the library to reuse them in builds.</p>
+      {status.error ? (
+        <Banner kind="error">{status.error}</Banner>
+      ) : status.workerOnline === false ? (
+        <Banner kind="info">MediaGen&apos;s worker on this PC is not running: videos you ask for wait in its queue until it starts.</Banner>
+      ) : null}
       {gallery.error ? <Banner kind="error">{gallery.error}</Banner> : null}
       <div className="studio-grid">
         {items.slice(0, 24).map((job) => (

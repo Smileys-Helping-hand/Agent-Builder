@@ -66,5 +66,44 @@ assert.equal(ArtLibrary.remove(sky.id), false);
 assert.ok(!fs.existsSync(ArtLibrary.fileOf(sky)), "its file goes too");
 assert.equal(ArtLibrary.list().length, 2);
 
+// MediaGen, against a stand-in that answers the way its API does.
+const http = await import("http");
+const seen: { method: string; url: string; auth: string; body: Record<string, unknown> | null }[] = [];
+const mock = http.createServer((req, res) => {
+  let raw = "";
+  req.on("data", (c) => (raw += c));
+  req.on("end", () => {
+    seen.push({ method: req.method ?? "", url: req.url ?? "", auth: String(req.headers.authorization ?? ""), body: raw ? JSON.parse(raw) : null });
+    res.setHeader("Content-Type", "application/json");
+    if (req.headers.authorization !== "Bearer test-media-key-0123456789abcdef") return res.writeHead(401).end(JSON.stringify({ error: "Unauthorized" }));
+    if (req.url === "/api/system-stats") return res.end(JSON.stringify({ online: false, status: "OFFLINE" }));
+    if (req.url?.startsWith("/api/jobs?")) {
+      return res.end(JSON.stringify({ records: [{ id: "j1", prompt: "a fox", status: "completed", mediaType: "image", mediaUrl: "http://x/a.png" }, { id: "j2", prompt: "b", status: "processing", mediaUrl: null }] }));
+    }
+    if (req.method === "POST" && req.url === "/api/jobs") return res.end(JSON.stringify({ success: true, job: { id: "j3", status: "queued" } }));
+    res.writeHead(404).end("{}");
+  });
+});
+await new Promise<void>((resolve) => mock.listen(0, "127.0.0.1", resolve));
+const port = (mock.address() as { port: number }).port;
+const { MediaGen } = await import("../src/media/MediaGen.js");
+assert.equal(MediaGen.configured(), false);
+assert.deepEqual(await MediaGen.status(), { configured: false, reachable: false, workerOnline: null, url: null });
+process.env.MEDIAGEN_URL = `http://127.0.0.1:${port}/`;
+process.env.MEDIAGEN_API_KEY = "wrong-key";
+assert.match((await MediaGen.status()).error ?? "", /did not accept the key/);
+process.env.MEDIAGEN_API_KEY = "test-media-key-0123456789abcdef";
+const mgStatus = await MediaGen.status();
+assert.equal(mgStatus.reachable, true);
+assert.equal(mgStatus.workerOnline, false, "read from its online flag, not the 200");
+assert.deepEqual((await MediaGen.gallery()).map((j) => j.id), ["j1"], "only finished items with a file");
+await assert.rejects(MediaGen.queue({ prompt: "x", type: "video_short" }), /starts from a picture/);
+const queued = await MediaGen.queue({ prompt: "a barracks", type: "video_short", fromFile: ArtLibrary.fileOf(barracks) });
+assert.equal(queued.id, "j3");
+const posted = seen.find((s) => s.method === "POST")!.body!;
+assert.equal(posted.mediaType, "video_short");
+assert.match(String(posted.referenceImage), /^data:image\/png;base64,/, "the picture travels inline");
+mock.close();
+
 fs.rmSync(dir, { recursive: true, force: true });
 console.log("art library: all checks passed");
