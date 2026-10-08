@@ -436,12 +436,13 @@ try {
         # the model server and the tunnel with it.
         try {
 
-            # The builder: gone, or up but not answering for a minute.
+            # The builder: gone, or up but not answering for two minutes (a busy PC
+            # slows it; restarting it then only adds a boot to the load).
             $apiAlive = $started.api -and (Get-Process -Id $started.api -ErrorAction SilentlyContinue)
             $apiAnswers = Test-Endpoint "http://127.0.0.1:4000/api/update/check" 5
             if ($apiAnswers) { $apiMisses = 0 } else { $apiMisses++ }
 
-            if (-not $apiAnswers -and (-not $apiAlive -or $apiMisses -ge 4)) {
+            if (-not $apiAnswers -and (-not $apiAlive -or $apiMisses -ge 8)) {
                 $wait = $backoff[[Math]::Min($apiFailures, $backoff.Count - 1)]
                 $why = if ($apiAlive) { "stopped answering" } else { "exited" }
                 Write-LauncherLog "Builder $why; restarting in ${wait}s (restart $($apiFailures + 1))"

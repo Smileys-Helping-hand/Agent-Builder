@@ -58,9 +58,10 @@ const sweep = async (): Promise<void> => {
 export const EcosystemLoop = {
   start(): void {
     if (timer) return;
-    // First sweep shortly after boot, so the registry is useful immediately
-    // without delaying startup.
-    setTimeout(() => void sweep(), 5_000);
+    // First sweep two minutes after boot: soon enough for the registry, and
+    // out of the way of starting up. At five seconds it ran into every restart
+    // on a busy PC (141 s for 68 repos) and the watchdog restarted the builder again.
+    setTimeout(() => void sweep(), 120_000);
     timer = setInterval(() => void sweep(), DEFAULT_INTERVAL_MS);
     timer.unref?.();
     Logger.log("Ecosystem loop started", { intervalMs: DEFAULT_INTERVAL_MS });
