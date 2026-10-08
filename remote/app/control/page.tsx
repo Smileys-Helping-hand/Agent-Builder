@@ -910,6 +910,7 @@ export default function Control() {
           <div className="quick">
             <Link href="/projects">{Icon.folder} Projects &amp; Code</Link>
             <Link href="/build">{Icon.sparkle} Build Studio</Link>
+            <Link href="/studio">{Icon.image} Media Studio</Link>
             <Link href="/research">{Icon.flask} Continuous Research</Link>
             <Link href="/feed">{Icon.list} Activity Feed</Link>
             <Link href="/orders">{Icon.list} Customer Orders</Link>

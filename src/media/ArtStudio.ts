@@ -78,17 +78,37 @@ export const artPrompts = (request: ArtRequest, style: string): { positive: stri
 };
 
 /** The ComfyUI workflow (API format) that draws one picture and saves it. */
-export const artWorkflow = (request: ArtRequest, style: string, seed: number, prefix: string): Record<string, unknown> => {
+export interface WorkflowOptions {
+  /** Start from this picture (its name in ComfyUI's input folder) instead of noise: an edit. */
+  source?: string;
+  /** How far an edit may move from its source, 0.2 (a touch) to 0.9 (nearly new). */
+  denoise?: number;
+}
+
+export const artWorkflow = (request: ArtRequest, style: string, seed: number, prefix: string, options: WorkflowOptions = {}): Record<string, unknown> => {
   const size = SIZES[request.kind];
   const { positive, negative } = artPrompts(request, style);
   const nodes: Record<string, { class_type: string; inputs: Record<string, unknown> }> = {
     "1": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: CHECKPOINT() } },
     "2": { class_type: "CLIPTextEncode", inputs: { clip: ["1", 1], text: positive } },
     "3": { class_type: "CLIPTextEncode", inputs: { clip: ["1", 1], text: negative } },
-    "4": { class_type: "EmptyLatentImage", inputs: { width: size.width, height: size.height, batch_size: 1 } },
+    "4": options.source
+      ? { class_type: "VAEEncode", inputs: { pixels: ["13", 0], vae: ["1", 2] } }
+      : { class_type: "EmptyLatentImage", inputs: { width: size.width, height: size.height, batch_size: 1 } },
     "5": {
       class_type: "KSampler",
-      inputs: { model: ["1", 0], positive: ["2", 0], negative: ["3", 0], latent_image: ["4", 0], seed, steps: 22, cfg: 7, sampler_name: "dpmpp_2m", scheduler: "karras", denoise: 1 }
+      inputs: {
+        model: ["1", 0],
+        positive: ["2", 0],
+        negative: ["3", 0],
+        latent_image: ["4", 0],
+        seed,
+        steps: 22,
+        cfg: 7,
+        sampler_name: "dpmpp_2m",
+        scheduler: "karras",
+        denoise: options.source ? Math.max(0.15, Math.min(0.95, options.denoise ?? 0.55)) : 1
+      }
     },
     "6": { class_type: "VAEDecode", inputs: { samples: ["5", 0], vae: ["1", 2] } }
   };
@@ -109,6 +129,11 @@ export const artWorkflow = (request: ArtRequest, style: string, seed: number, pr
     inputs: { image, upscale_method: "lanczos", width: size.out, height: Math.round((size.out * size.height) / size.width), crop: "disabled" }
   };
   nodes["11"] = { class_type: "SaveImage", inputs: { images: ["10", 0], filename_prefix: prefix } };
+  if (options.source) {
+    // The source, scaled to the size the model draws at.
+    nodes["14"] = { class_type: "LoadImage", inputs: { image: options.source } };
+    nodes["13"] = { class_type: "ImageScale", inputs: { image: ["14", 0], upscale_method: "lanczos", width: size.width, height: size.height, crop: "center" } };
+  }
   return nodes;
 };
 
@@ -141,40 +166,93 @@ export const ArtStudio = {
     }).catch(() => undefined);
   },
 
+  /** Put a picture into the image engine's input folder, for an edit to start from. Returns its name there. */
+  async upload(file: string): Promise<string> {
+    const form = new FormData();
+    form.append("image", new Blob([fs.readFileSync(file)], { type: "image/png" }), `agentbuilder-${Date.now()}-${path.basename(file)}`);
+    form.append("overwrite", "true");
+    const res = await fetch(`${COMFY()}/upload/image`, { method: "POST", body: form, signal: AbortSignal.timeout(30_000) });
+    const body = (await res.json().catch(() => ({}))) as { name?: string; subfolder?: string };
+    if (!res.ok || !body.name) throw new Error(`the image engine would not take the picture (${res.status})`);
+    return body.subfolder ? `${body.subfolder}/${body.name}` : body.name;
+  },
+
+  /**
+   * Run one drawing and return the finished PNG. Progress (step of steps) and
+   * the image engine's preview frames come through its websocket as it draws,
+   * for a live view; without the socket it still finishes, just silently.
+   */
+  async render(workflow: Record<string, unknown>, live: { onProgress?: (value: number, max: number) => void; onPreview?: (jpeg: Buffer) => void } = {}): Promise<Buffer> {
+    const clientId = `agentbuilder-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    let socket: WebSocket | null = null;
+    let promptId: string | null = null;
+    try {
+      if (typeof WebSocket !== "undefined" && (live.onProgress || live.onPreview)) {
+        socket = new WebSocket(`${COMFY().replace(/^http/, "ws")}/ws?clientId=${clientId}`);
+        socket.binaryType = "arraybuffer";
+        socket.onmessage = (event) => {
+          if (typeof event.data === "string") {
+            try {
+              const message = JSON.parse(event.data) as { type?: string; data?: { value?: number; max?: number; prompt_id?: string } };
+              if (message.type === "progress" && (!promptId || message.data?.prompt_id === promptId)) live.onProgress?.(message.data?.value ?? 0, message.data?.max ?? 1);
+            } catch {
+              // Not for us.
+            }
+          } else if (event.data instanceof ArrayBuffer && event.data.byteLength > 8) {
+            // A preview frame: 4 bytes event type (1), 4 bytes format (1 JPEG, 2 PNG), then the picture.
+            const view = new DataView(event.data);
+            if (view.getUint32(0) === 1) live.onPreview?.(Buffer.from(event.data.slice(8)));
+          }
+        };
+        await new Promise<void>((resolve) => {
+          const done = () => resolve();
+          socket!.onopen = done;
+          socket!.onerror = done;
+          setTimeout(done, 3000);
+        });
+      }
+      const queued = await fetch(`${COMFY()}/prompt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: workflow, client_id: clientId }),
+        signal: AbortSignal.timeout(30_000)
+      });
+      const body = (await queued.json().catch(() => ({}))) as { prompt_id?: string; error?: unknown; node_errors?: unknown };
+      if (!queued.ok || !body.prompt_id) throw new Error(`the image engine refused the request: ${JSON.stringify(body.error ?? body.node_errors ?? queued.status).slice(0, 300)}`);
+      promptId = body.prompt_id;
+      // A picture takes ~40 s on this PC, longer when the model first loads.
+      for (let waited = 0; waited < 10 * 60_000; waited += 1500) {
+        await sleep(1500);
+        const history = (await fetch(`${COMFY()}/history/${promptId}`, { signal: AbortSignal.timeout(10_000) })
+          .then((res) => res.json())
+          .catch(() => ({}))) as Record<string, { outputs?: Record<string, { images?: Array<{ filename: string; subfolder: string; type: string }> }>; status?: { status_str?: string } }>;
+        const entry = history[promptId];
+        if (entry?.status?.status_str === "error") throw new Error("the image engine failed while drawing");
+        const image = Object.values(entry?.outputs ?? {}).flatMap((output) => output.images ?? [])[0];
+        if (!image) continue;
+        const res = await fetch(`${COMFY()}/view?filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(image.subfolder)}&type=${encodeURIComponent(image.type)}`, {
+          signal: AbortSignal.timeout(30_000)
+        });
+        if (!res.ok) throw new Error(`could not fetch the picture (${res.status})`);
+        return Buffer.from(await res.arrayBuffer());
+      }
+      throw new Error("the image engine took more than ten minutes");
+    } finally {
+      socket?.close();
+    }
+  },
+
   /** Draw one picture and save it into the project; returns its path relative to the project. */
   async draw(projectRoot: string, request: ArtRequest, style: string, seed = 1 + Math.floor(Math.random() * 1_000_000)): Promise<string> {
     const name = artName(request.name);
-    const prefix = `agentbuilder/${path.basename(projectRoot)}-${name}`;
-    const queued = await fetch(`${COMFY()}/prompt`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: artWorkflow(request, style, seed, prefix) }),
-      signal: AbortSignal.timeout(30_000)
-    });
-    const body = (await queued.json().catch(() => ({}))) as { prompt_id?: string; error?: unknown; node_errors?: unknown };
-    if (!queued.ok || !body.prompt_id) throw new Error(`the image engine refused the request: ${JSON.stringify(body.error ?? body.node_errors ?? queued.status).slice(0, 300)}`);
-    // A picture takes ~40 s on this PC, longer when the model first loads.
-    for (let waited = 0; waited < 10 * 60_000; waited += 3000) {
-      await sleep(3000);
-      const history = (await fetch(`${COMFY()}/history/${body.prompt_id}`, { signal: AbortSignal.timeout(10_000) })
-        .then((res) => res.json())
-        .catch(() => ({}))) as Record<string, { outputs?: Record<string, { images?: Array<{ filename: string; subfolder: string; type: string }> }>; status?: { status_str?: string } }>;
-      const entry = history[body.prompt_id];
-      if (entry?.status?.status_str === "error") throw new Error("the image engine failed while drawing");
-      const image = Object.values(entry?.outputs ?? {}).flatMap((output) => output.images ?? [])[0];
-      if (!image) continue;
-      const res = await fetch(`${COMFY()}/view?filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(image.subfolder)}&type=${encodeURIComponent(image.type)}`, {
-        signal: AbortSignal.timeout(30_000)
-      });
-      if (!res.ok) throw new Error(`could not fetch the picture (${res.status})`);
-      const dir = path.join(projectRoot, "public", "assets");
-      fs.mkdirSync(dir, { recursive: true });
-      const file = path.join(dir, `${name}.png`);
-      fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
-      return `assets/${name}.png`;
-    }
-    throw new Error("the image engine took more than ten minutes");
+    const png = await ArtStudio.render(artWorkflow(request, style, seed, `agentbuilder/${path.basename(projectRoot)}-${name}`));
+    const dir = path.join(projectRoot, "public", "assets");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${name}.png`), png);
+    return `assets/${name}.png`;
   },
+
+
 
   /**
    * Draw every picture a project asks for and write public/assets/manifest.json.

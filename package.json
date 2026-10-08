@@ -34,6 +34,7 @@
     "test:research-edit": "tsx scripts/research-edit-smoketest.ts",
     "test:game-mode": "tsx scripts/game-mode-smoketest.ts",
     "test:builder-guards": "tsx scripts/builder-guards-smoketest.ts",
+    "test:art": "tsx scripts/art-library-smoketest.ts",
     "test:research-chat": "tsx scripts/research-chat-smoketest.ts",
     "test:exemplars": "tsx scripts/exemplar-memory-smoketest.ts",
     "key:agent": "tsx scripts/mint-agent-key.ts",

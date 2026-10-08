@@ -579,6 +579,60 @@ export interface PipelineStatus {
   hold?: { until: string; reason: string | null } | null;
 }
 
+export type ArtKind = "sprite" | "background" | "icon" | "ui";
+
+/** A picture in the Studio's library. */
+export interface ArtItem {
+  id: string;
+  name: string;
+  subject: string;
+  style: string;
+  kind: ArtKind;
+  seed: number;
+  parent: string | null;
+  edit: string | null;
+  file: string;
+  bytes: number;
+  createdAt: string;
+  tags: string[];
+  /** A signed link to the picture, from the library list. */
+  url?: string;
+}
+
+/** A picture being drawn. */
+export interface ArtJob {
+  id: string;
+  state: "queued" | "drawing" | "done" | "failed";
+  request: { name: string; subject: string; style: string; kind: ArtKind; seed: number; parent: string | null; edit: string | null; strength: number | null };
+  progress: { value: number; max: number };
+  hasPreview: boolean;
+  item: ArtItem | null;
+  error: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
+export interface ArtStatus {
+  engine: "ready" | "offline";
+  mediagen: { configured: boolean; reachable: boolean; workerOnline: boolean | null; url: string | null; error?: string };
+}
+
+/** An item in (or on its way to) the owner's MediaGen gallery. */
+export interface MediaGenJob {
+  id: string;
+  prompt: string;
+  modelType: string;
+  mediaType: string;
+  status: "queued" | "claimed" | "processing" | "completed" | "failed" | "interrupted";
+  percentage: number;
+  mediaUrl: string | null;
+  error: string | null;
+  etaSeconds: number | null;
+  queuePosition?: number;
+  workerOnline?: boolean;
+  createdAt: string;
+}
+
 /** A build's phone or PC app: whether it is being made, ready, or failed. */
 export interface AppStatus {
   platform?: "android" | "windows";
@@ -1170,6 +1224,54 @@ export const api = {
     const res = await request<{ path: string }>(`/api/autonomous/${encodeURIComponent(id)}/download-link`, { method: "POST" });
     return `${conn.address}${res.path}`;
   },
+
+  // --- Studio (pictures) ---
+  artStatus: () => request<ArtStatus>("/api/art/status"),
+  artDraw: (input: { subject: string; name?: string; kind?: ArtKind; style?: string; seed?: number; count?: number }) =>
+    request<{ jobs: ArtJob[] }>("/api/art/draw", { method: "POST", body: JSON.stringify(input) }),
+  artEdit: (id: string, change: string, strength: number) =>
+    request<{ job: ArtJob }>(`/api/art/${encodeURIComponent(id)}/edit`, { method: "POST", body: JSON.stringify({ change, strength }) }),
+  artJobs: () => request<{ jobs: ArtJob[] }>("/api/art/jobs"),
+  artJob: (id: string) => request<ArtJob>(`/api/art/jobs/${encodeURIComponent(id)}`),
+  artLibrary: (q?: string, kind?: ArtKind | "") =>
+    request<{ items: ArtItem[] }>(`/api/art?${new URLSearchParams({ ...(q ? { q } : {}), ...(kind ? { kind } : {}) }).toString()}`),
+  artUpdate: (id: string, patch: { name?: string; tags?: string[] }) =>
+    request<ArtItem>(`/api/art/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  artDelete: (id: string) => request<{ ok: boolean }>(`/api/art/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  artUse: (buildId: string, ids: string[]) => request<{ added: string[]; note: string }>("/api/art/use", { method: "POST", body: JSON.stringify({ buildId, ids }) }),
+  /** A signed link to a game asset pack (PNGs + manifest.json) of the chosen pictures. */
+  artPackUrl: async (ids: string[]): Promise<string> => {
+    const conn = loadConnection();
+    if (!conn) throw new ApiError("Not connected to a machine yet.", 0);
+    const res = await request<{ path: string }>("/api/art/pack", { method: "POST", body: JSON.stringify({ ids }) }, 120000);
+    return `${conn.address}${res.path}`;
+  },
+  /** Full address of a path the API returned (a signed image link). */
+  artUrl: (pathOrUrl: string): string => {
+    const conn = loadConnection();
+    return pathOrUrl.startsWith("http") || !conn ? pathOrUrl : `${conn.address}${pathOrUrl}`;
+  },
+  /** A library picture's bytes, fetched with the key (so the browser may redraw it: other formats, sprite sheets). */
+  artBlob: async (pathOrUrl: string): Promise<Blob> => {
+    const conn = loadConnection();
+    if (!conn) throw new ApiError("Not connected to a machine yet.", 0);
+    const res = await fetch(api.artUrl(pathOrUrl), { headers: { "x-agent-key": conn.key } });
+    if (!res.ok) throw new ApiError(`Could not fetch the picture (${res.status}).`, res.status);
+    return res.blob();
+  },
+  /** The latest preview frame of a drawing in progress, as an object URL (null until the first frame). */
+  artPreview: async (jobId: string): Promise<string | null> => {
+    const conn = loadConnection();
+    if (!conn) return null;
+    const res = await fetch(`${conn.address}/api/art/jobs/${encodeURIComponent(jobId)}/preview`, { headers: { "x-agent-key": conn.key } }).catch(() => null);
+    if (!res || !res.ok) return null;
+    return URL.createObjectURL(await res.blob());
+  },
+  mediagenQueue: (input: { prompt?: string; type: "image_fast" | "image_hd" | "video_short"; fromId?: string; aspectRatio?: string }) =>
+    request<{ job: MediaGenJob }>("/api/art/mediagen/queue", { method: "POST", body: JSON.stringify(input) }),
+  mediagenJob: (id: string) => request<MediaGenJob>(`/api/art/mediagen/jobs/${encodeURIComponent(id)}`),
+  mediagenGallery: (q?: string) => request<{ items: MediaGenJob[] }>(`/api/art/mediagen/gallery${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  mediagenImport: (jobId: string) => request<{ item: ArtItem }>("/api/art/mediagen/import", { method: "POST", body: JSON.stringify({ jobId }) }, 120000),
 
   /** Start making a build's phone or PC app (or see the one already made or in progress). */
   startApp: (id: string, platform: "android" | "windows") =>
