@@ -67,7 +67,17 @@ const webhookUrl = (): string | null => {
   return list.length > 0 ? list[0] : null;
 };
 
-const deliver = async (event: JarvisEvent): Promise<{ ok: boolean; detail: string }> => {
+/** What Jarvis said back, when his reply carries an acknowledgement in his own words. */
+const acknowledgementIn = (text: string): string | undefined => {
+  try {
+    const value = (JSON.parse(text) as { acknowledgement?: unknown }).acknowledgement;
+    return typeof value === "string" && value.trim() ? value.trim().slice(0, 400) : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const deliver = async (event: JarvisEvent): Promise<{ ok: boolean; detail: string; acknowledgement?: string }> => {
   const urls = webhookCandidates();
   if (urls.length === 0) {
     return { ok: false, detail: "No Jarvis webhook configured (set JARVIS_WEBHOOK_URL or JARVIS_HOST + JARVIS_API_KEY)." };
@@ -107,7 +117,7 @@ const deliver = async (event: JarvisEvent): Promise<{ ok: boolean; detail: strin
       }
 
       lastWorkingUrl = url;
-      return { ok: true, detail: text.slice(0, 200) || "delivered" };
+      return { ok: true, detail: text.slice(0, 200) || "delivered", acknowledgement: acknowledgementIn(text) };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       lastError = message.includes("timeout") ? "Jarvis did not answer in time." : `Could not reach Jarvis: ${message}`;
@@ -144,7 +154,7 @@ export const JarvisClient = {
   },
 
   /** Report something. Never throws; failures are queued and retried. */
-  async send(event: JarvisEvent): Promise<{ ok: boolean; detail: string }> {
+  async send(event: JarvisEvent): Promise<{ ok: boolean; detail: string; acknowledgement?: string }> {
     const result = await deliver(event);
     lastResult = { at: new Date().toISOString(), ...result };
     // The app's Jarvis log shows what we told him as well as what he did here.
