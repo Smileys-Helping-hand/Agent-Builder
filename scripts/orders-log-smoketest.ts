@@ -123,4 +123,25 @@ for (const id of fs.readdirSync(path.resolve("templates/sites")).filter((d) => f
 }
 assert.equal(applyRewording('const a = "Hello there";', ["Hello there"], "not json").changed, 0, "an answer that is not JSON changes nothing");
 
+// Apps: names every toolchain accepts, a real PNG icon, and a website made installable.
+const { appNames } = await import("../src/orders/AppBuilder.js");
+const { iconPng } = await import("../src/orders/AppIcons.js");
+const { Packager } = await import("../src/orders/Packager.js");
+assert.deepEqual(appNames("Mama Zulu's Kitchen"), { display: "Mama Zulu's Kitchen", slug: "mama-zulu-s-kitchen", id: "za.co.arpcloud.mamazuluskitchen" });
+assert.equal(appNames("2Fast: Racing!").id, "za.co.arpcloud.app2fastracing", "a package segment never starts with a digit");
+assert.equal(appNames("2Fast").slug, "app-2fast", "a crate name starts with a letter");
+const png = iconPng("#f59e0b", 64);
+assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10], "a PNG signature");
+assert.equal(png.readUInt32BE(16), 64, "64 px wide");
+const site = fs.mkdtempSync(path.join(os.tmpdir(), "ab-pwa-"));
+fs.writeFileSync(path.join(site, "index.html"), "<!doctype html><html><head><title>x</title></head><body><p>hi</p></body></html>");
+Packager.makeInstallable(site, "Sweet Rise", "#f59e0b");
+const installable = fs.readFileSync(path.join(site, "index.html"), "utf8");
+assert.match(installable, /<link rel="manifest" href="manifest.webmanifest">.*<\/head>/s);
+assert.match(installable, /serviceWorker.*<\/body>/s);
+assert.equal(JSON.parse(fs.readFileSync(path.join(site, "manifest.webmanifest"), "utf8")).name, "Sweet Rise");
+assert.ok(fs.existsSync(path.join(site, "sw.js")) && fs.existsSync(path.join(site, "icon-512.png")));
+Packager.makeInstallable(site, "Sweet Rise", "#f59e0b");
+assert.equal((fs.readFileSync(path.join(site, "index.html"), "utf8").match(/rel="manifest"/g) ?? []).length, 1, "made installable once");
+
 console.log("orders log: all checks passed");

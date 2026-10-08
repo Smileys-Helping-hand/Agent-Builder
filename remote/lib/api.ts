@@ -579,6 +579,15 @@ export interface PipelineStatus {
   hold?: { until: string; reason: string | null } | null;
 }
 
+/** A build's phone or PC app: whether it is being made, ready, or failed. */
+export interface AppStatus {
+  platform?: "android" | "windows";
+  state: "none" | "building" | "ready" | "failed";
+  stage?: string;
+  fileName?: string | null;
+  error?: string | null;
+}
+
 export interface JarvisStatus {
   configured: boolean;
   url: string | null;
@@ -1159,6 +1168,18 @@ export const api = {
     const conn = loadConnection();
     if (!conn) throw new ApiError("Not connected to a machine yet.", 0);
     const res = await request<{ path: string }>(`/api/autonomous/${encodeURIComponent(id)}/download-link`, { method: "POST" });
+    return `${conn.address}${res.path}`;
+  },
+
+  /** Start making a build's phone or PC app (or see the one already made or in progress). */
+  startApp: (id: string, platform: "android" | "windows") =>
+    request<AppStatus>(`/api/autonomous/${encodeURIComponent(id)}/app`, { method: "POST", body: JSON.stringify({ platform }) }),
+  appStatus: (id: string, platform: "android" | "windows") => request<AppStatus>(`/api/autonomous/${encodeURIComponent(id)}/app/${platform}`),
+  /** A signed, hour-long link to a finished app. */
+  appUrl: async (id: string, platform: "android" | "windows"): Promise<string> => {
+    const conn = loadConnection();
+    if (!conn) throw new ApiError("Not connected to a machine yet.", 0);
+    const res = await request<{ path: string }>(`/api/autonomous/${encodeURIComponent(id)}/app/${platform}/link`, { method: "POST" });
     return `${conn.address}${res.path}`;
   },
 

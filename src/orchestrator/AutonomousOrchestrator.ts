@@ -14,7 +14,7 @@ import { Logger } from "../utils/Logger.js";
 import { QualityAnalyzer } from "./QualityAnalyzer.js";
 import { ImprovementEngine, type ImprovementPlan, type ImprovementSuggestion } from "./ImprovementEngine.js";
 import { HardwareScaler } from "../utils/HardwareScaler.js";
-import { PackagingAgent } from "../agents/PackagingAgent.js";
+import { APP_PLATFORMS, AppBuilder, type AppPlatform } from "../orders/AppBuilder.js";
 import { Workspace } from "./Workspace.js";
 import { Verifier, type CheckResult, type VerificationReport } from "./Verifier.js";
 import { Executor } from "./Executor.js";
@@ -137,7 +137,6 @@ export class AutonomousOrchestrator extends EventEmitter {
   private qualityAnalyzer: QualityAnalyzer;
   private improvementEngine: ImprovementEngine;
   private hardwareScaler: HardwareScaler;
-  private packagingAgent: PackagingAgent;
   private workspace: Workspace;
 
   // Further instructions given mid-build. They are cumulative direction rather
@@ -167,7 +166,6 @@ export class AutonomousOrchestrator extends EventEmitter {
     this.qualityAnalyzer = new QualityAnalyzer();
     this.improvementEngine = new ImprovementEngine();
     this.hardwareScaler = new HardwareScaler();
-    this.packagingAgent = new PackagingAgent();
     this.workspace = new Workspace(this.outputDir);
 
     Logger.log("AutonomousOrchestrator initialized", { buildId: this.buildId, config });
@@ -442,7 +440,11 @@ export class AutonomousOrchestrator extends EventEmitter {
         LessonMemory.markApplied(repairLessonIds);
 
         let critique: string | null = null;
-        if (profileSettings.reviewModel && this.isOllamaProvider()) {
+        // Only once a repair is stuck (third attempt on): the bigger model does
+        // not fit an 8 GB card beside the builder's, so each critique swapped
+        // models and took ~2 minutes of a ~3 minute repair, and on a first or
+        // second attempt it said less than the fixer's own hints.
+        if (profileSettings.reviewModel && this.isOllamaProvider() && repairAttempt >= 3) {
           critique = await this.getRepairCritique(profileSettings.reviewModel, currentFiles, verification);
           if (critique) {
             Logger.log(`Iteration ${iterationNum}: deep-mode critique (${profileSettings.reviewModel})`, { critique });
@@ -2574,15 +2576,23 @@ Rules that keep this build passing its checks (install, typecheck, build, tests)
     iteration.status = "packaging";
     this.emit("iteration-status", { iteration: iteration.iteration, status: "packaging" });
 
-    const packages = await this.packagingAgent.package({
-      buildId: this.buildId,
-      artifacts: iteration.artifacts,
-      platforms: this.config.targetPlatforms,
-      outputDir: this.outputDir
-    });
-
-    this.emit("packaged", { packages });
-    Logger.log("Build packaged successfully", { packages: packages.length });
+    // Phone and PC apps are made from the built site (AppBuilder: Capacitor
+    // for Android, Tauri for Windows), in the background: the build is done,
+    // and the app follows in a minute or two. The old packager ran pkg (a
+    // bundler for Node command-line tools) over web apps and made nothing usable.
+    const asked = this.config.targetPlatforms.map((platform) => (platform === "mobile" ? "android" : platform === "desktop" ? "windows" : platform));
+    const apps = Array.from(new Set(asked)).filter((platform): platform is AppPlatform => APP_PLATFORMS.includes(platform as AppPlatform));
+    for (const platform of apps) AppBuilder.start(this.buildId, platform, path.resolve(this.outputDir), this.config.projectName);
+    if (apps.length > 0) {
+      this.think(
+        iteration.iteration,
+        "decision",
+        `Making the ${apps.join(" and ")} app${apps.length === 1 ? "" : "s"}`,
+        `The website passed every check, so it is being wrapped as ${apps.map((p) => (p === "android" ? "an Android app (APK)" : "a Windows program (.exe)")).join(" and ")}. It is ready to download in a minute or two.`
+      );
+    }
+    this.emit("packaged", { packages: apps });
+    Logger.log("Build packaged", { apps });
   }
 
   /**
