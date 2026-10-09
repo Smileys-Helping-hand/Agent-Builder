@@ -23,7 +23,7 @@ import { EcosystemStore } from "../ecosystem/EcosystemStore.js";
 import { GitHubClient } from "../ecosystem/GitHubClient.js";
 import { JarvisClient } from "../integrations/JarvisClient.js";
 import { Logger } from "../utils/Logger.js";
-import { OLLAMA_URL, checkOllama, ollamaBinary } from "../utils/Ollama.js";
+import { OLLAMA_URL, checkOllama, ollamaBinary, spawnOllama } from "../utils/Ollama.js";
 import { ResearchEngine } from "../research/ResearchEngine.js";
 import { ResearchStore } from "../research/ResearchStore.js";
 import { SystemResourceService, type SystemMetrics } from "../utils/SystemResourceService.js";
@@ -309,9 +309,7 @@ export const registerServiceRoutes = (app: Express) => {
       const binary = ollamaBinary();
       if (binary) {
         try {
-          // Detached: it must outlive this request, and its output is its own business.
-          const child = spawn(binary, ["serve"], { detached: true, stdio: "ignore", windowsHide: true });
-          child.unref();
+          spawnOllama(binary);
           // Wait for it to actually answer rather than assuming. A cold start
           // takes a few seconds, and reporting failure before then made the
           // step list contradict the service list on the same screen.
@@ -466,8 +464,7 @@ export const registerServiceRoutes = (app: Express) => {
       if (shouldStart) {
         const bin = ollamaBinary();
         if (!bin) return res.status(400).json({ error: "Ollama is not installed on this machine." });
-        const child = spawn(bin, ["serve"], { detached: true, stdio: "ignore", windowsHide: true });
-        child.unref();
+        spawnOllama(bin);
         let now = await checkOllama();
         for (let waited = 0; waited < 15000 && now.state !== "up"; waited += 750) {
           await new Promise((r) => setTimeout(r, 750));
@@ -537,8 +534,7 @@ export const registerServiceRoutes = (app: Express) => {
     if (fixId === "start_ollama") {
       const bin = ollamaBinary();
       if (!bin) return res.status(400).json({ error: "Ollama is not installed on this machine." });
-      const child = spawn(bin, ["serve"], { detached: true, stdio: "ignore", windowsHide: true });
-      child.unref();
+      spawnOllama(bin);
       return res.json({ ok: true, message: "Ollama starting in background..." });
     }
 
@@ -605,7 +601,7 @@ export const registerServiceRoutes = (app: Express) => {
     } else if (lower.includes("start ollama") || lower.includes("turn on ollama")) {
       const bin = ollamaBinary();
       if (bin) {
-        spawn(bin, ["serve"], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+        spawnOllama(bin);
         actionExecuted = "start_ollama";
         reply = "Starting the Ollama server in background.";
       } else {

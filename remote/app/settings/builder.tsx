@@ -12,13 +12,28 @@ import { api, type BuilderSetting } from "@/lib/api";
 import { Banner, Busy, Icon, Skeleton, useRemote, useToast } from "../ui";
 
 const GROUPS: Array<{ id: BuilderSetting["group"]; title: string; hint: string }> = [
-  { id: "Models", title: "Models", hint: "Which local models do the work, and how long they stay loaded." },
+  { id: "Models", title: "Models", hint: "Which local models do the work, how they are split between the graphics card and RAM, and how long they stay loaded." },
+  { id: "Builds", title: "Builds", hint: "How a new build begins: from your prompt, or from one of our tested games." },
   { id: "Orders", title: "Customer orders", hint: "What happens to orders from the site without you pressing anything." },
   { id: "Site", title: "Ordering site", hint: "Where orders come from and templates are sold." },
   { id: "Projects", title: "Projects", hint: "Where the builder looks for your code." }
 ];
 
-const KEEP_ALIVE_WORDS: Record<string, string> = { "-1": "Always", "5m": "5 min", "15m": "15 min", "30m": "30 min", "1h": "1 hour", "4h": "4 hours" };
+const CHOICE_WORDS: Record<string, string> = {
+  "-1": "Always",
+  "5m": "5 min",
+  "15m": "15 min",
+  "30m": "30 min",
+  "1h": "1 hour",
+  "4h": "4 hours",
+  auto: "Automatic",
+  prompt: "Write it from my prompt",
+  engine: "Start a game on our tested engine",
+  template: "Start a matching game as our whole game",
+  q8_0: "q8_0 (half the memory)",
+  q4_0: "q4_0 (a quarter)",
+  f16: "f16 (full)"
+};
 
 export function BuilderSettings() {
   const toast = useToast();
@@ -79,6 +94,7 @@ export function BuilderSettings() {
                       <strong>{setting.label}</strong>
                       <small>{setting.help}</small>
                       {setting.restart ? <small className="setting-restart">Takes effect after a restart</small> : null}
+                      {setting.server ? <small className="setting-restart">Saving restarts the model server (unless a build is using it)</small> : null}
                     </div>
                     <div className="setting-control">
                       {setting.kind === "bool" ? (
@@ -104,7 +120,7 @@ export function BuilderSettings() {
                         <select value={value} onChange={(event) => set(setting.name, event.target.value)} aria-label={setting.label}>
                           {setting.choices?.map((choice) => (
                             <option key={choice} value={choice}>
-                              {KEEP_ALIVE_WORDS[choice] ?? choice}
+                              {CHOICE_WORDS[choice] ?? choice}
                             </option>
                           ))}
                         </select>

@@ -16,6 +16,8 @@ import { AgentActivity } from "../state/AgentActivity.js";
 import { setEnvValues } from "../utils/EnvFile.js";
 import { Logger } from "../utils/Logger.js";
 import { readPublicUrl } from "../utils/PublicUrl.js";
+import { HEAD_STARTS, type HeadStart } from "../orchestrator/AutonomousOrchestrator.js";
+import { bridgeCatalogue, callAsCaller, resolveBridgeAction } from "./jarvisActions.js";
 
 /** The agent key Jarvis uses to reach into the builder. */
 const JARVIS_KEY_NAME = "jarvis";
@@ -231,11 +233,13 @@ export const registerJarvisRoutes = (app: Express) => {
       name: "Agent Builder",
       address: readPublicUrl(),
       building: active.map((build) => ({ buildId: build.buildId, projectName: build.projectName, quality: build.bestScore ?? build.qualityScore ?? 0 })),
-      accepts: ["build", "guidance", "status", "note"]
+      accepts: ["build", "guidance", "status", "note", ...bridgeCatalogue().actions.map((action) => action.name), "api"],
+      // Everything he can do here, what each action takes, and the scope it needs.
+      ...bridgeCatalogue()
     });
   });
 
-  app.post("/api/agent-builder/bridge", authenticateAgent("write"), (req: Request, res: Response) => {
+  app.post("/api/agent-builder/bridge", authenticateAgent("write"), async (req: Request, res: Response) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const metadata = body.metadata && typeof body.metadata === "object" ? (body.metadata as Record<string, unknown>) : {};
     const eventType = String(metadata.action ?? body.eventType ?? "note").toLowerCase();
@@ -249,7 +253,10 @@ export const registerJarvisRoutes = (app: Express) => {
     if (eventType === "build" || eventType === "build_request") {
       if (!canExecute) return res.status(403).json({ ok: false, error: 'Starting a build needs the "execute" scope.' });
       if (!message) return res.status(400).json({ ok: false, error: "Say what to build in message." });
-      const record = BuildService.start({ projectName: title || "Jarvis request", description: message, startedBy: actor });
+      const platforms = Array.isArray(metadata.targetPlatforms) ? metadata.targetPlatforms.filter((p): p is string => typeof p === "string") : undefined;
+      const headStart = typeof metadata.headStart === "string" && (HEAD_STARTS as readonly string[]).includes(metadata.headStart) ? (metadata.headStart as HeadStart) : undefined;
+      const profile = metadata.profile === "fast" || metadata.profile === "balanced" || metadata.profile === "deep" ? metadata.profile : undefined;
+      const record = BuildService.start({ projectName: title || "Jarvis request", description: message, startedBy: actor, targetPlatforms: platforms?.length ? platforms : undefined, headStart, profile });
       note(`Build started: ${record.projectName}`);
       return res.json({ ok: true, action: "build", buildId: record.buildId, projectName: record.projectName });
     }
@@ -270,6 +277,27 @@ export const registerJarvisRoutes = (app: Express) => {
         building: BuildService.active().map((build) => ({ buildId: build.buildId, projectName: build.projectName, state: build.state, quality: build.bestScore ?? 0 })),
         recent: BuildService.list().slice(0, 5).map((build) => ({ buildId: build.buildId, projectName: build.projectName, state: build.state, passed: build.passed, quality: build.bestScore ?? 0 }))
       });
+    }
+
+    // Any other action in the catalogue (art, apps, projects, the model…), or
+    // "api" for a route it does not name: made as Jarvis, with his key.
+    const params: Record<string, unknown> = { ...metadata, ...(title && metadata.title === undefined ? { title } : {}), ...(message && metadata.message === undefined ? { message } : {}) };
+    const resolved = eventType === "note" || eventType === "jarvis_directive" ? null : resolveBridgeAction(eventType, params);
+    if (resolved && !("error" in resolved)) {
+      const scope = resolved.action?.scope ?? (resolved.call[0] === "GET" ? "read" : "execute");
+      if (scope === "execute" && !canExecute) return res.status(403).json({ ok: false, action: eventType, error: `"${eventType}" needs the "execute" scope.` });
+      try {
+        const result = await callAsCaller(req, resolved.call);
+        note(`${eventType}: ${resolved.call[0]} ${resolved.call[1].split("?")[0]} → ${result.status}`);
+        const payload = result.body && typeof result.body === "object" && !Array.isArray(result.body) ? (result.body as Record<string, unknown>) : { result: result.body };
+        return res.status(result.status).json({ ok: result.status < 400, action: eventType, status: result.status, ...payload });
+      } catch (error) {
+        return res.status(502).json({ ok: false, action: eventType, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    if (resolved && "error" in resolved && eventType !== "note" && !/^(jarvis_|note)/.test(eventType)) {
+      // A name that looks like an action but is not one, or one missing what it needs: say so, rather than file it as a note.
+      if (eventType.includes(".") || eventType === "api" || resolved.error.includes(" needs ")) return res.status(400).json({ ok: false, action: eventType, error: resolved.error });
     }
 
     note(`${title || "Note"}${message ? `: ${message.slice(0, 160)}` : ""}`);

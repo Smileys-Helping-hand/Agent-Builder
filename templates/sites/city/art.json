@@ -1,0 +1,9 @@
+{
+  "style": "top-down view from directly above, stylized game art, clean shapes, bright colours",
+  "pictures": [
+    { "name": "car", "subject": "a red sports car seen from directly above, facing right", "kind": "sprite" },
+    { "name": "police", "subject": "a black and white police car with a light bar seen from directly above, facing right", "kind": "sprite" },
+    { "name": "player", "subject": "a shiny yellow muscle car seen from directly above, facing right", "kind": "sprite" },
+    { "name": "person", "subject": "a person seen from directly above, walking", "kind": "sprite" }
+  ]
+}

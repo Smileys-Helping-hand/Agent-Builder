@@ -296,6 +296,16 @@ export const ExemplarMemory = {
 
   /** The closest example for a brief, or null when nothing is close enough or worth showing. */
   relevant(brief: string): Exemplar | null {
+    return ExemplarMemory.match(brief)?.exemplar ?? null;
+  },
+
+  /**
+   * The closest example and how sure the match is: `strong` when one of our
+   * catalogue apps clears the similarity bar on its own words (a Clash of Clans
+   * brief and the Clan Village game), not when it only shares the opening or
+   * is the arcade game every unplaced game brief falls back to.
+   */
+  match(brief: string): { exemplar: Exemplar; strong: boolean } | null {
     const wanted = stems(briefCore(brief));
     const head = stems(briefHead(brief));
     if (wanted.size === 0) return null;
@@ -334,7 +344,17 @@ export const ExemplarMemory = {
     // description to follow. A Pgame that passed with four buttons instead of
     // a game was remembered and preferred, and the next Pgame started with no
     // engine. Remembered builds teach the kinds of app the catalogue lacks.
-    return (bestSeed ?? best ?? headSeed)?.exemplar ?? null;
+    const found = (bestSeed ?? best ?? headSeed)?.exemplar ?? null;
+    if (found) return { exemplar: found, strong: Boolean(bestSeed) && found === bestSeed?.exemplar };
+    // A game that fits no genre still gets a game engine: each new genre made
+    // "game" and "play" rarer, and with six of them the original Pgame brief
+    // ("a nice fun phone game … with progression") matched nothing at all.
+    // The plain arcade engine is the general one.
+    if (["game", "play", "arcad"].some((word) => wanted.has(word) || [...wanted].some((token) => token.startsWith(word)))) {
+      const arcade = rows.find((row) => row.origin === "seed:game");
+      if (arcade) return { exemplar: fromRow(arcade), strong: false };
+    }
+    return null;
   },
 
   /**

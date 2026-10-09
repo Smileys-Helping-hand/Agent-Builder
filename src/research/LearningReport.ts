@@ -291,7 +291,8 @@ export const LearningReports = {
       body: `${report.markdown.slice(0, 6000)}${report.markdown.length > 6000 ? "\n\n…(the full report is in your knowledge base)" : ""}`,
       metadata: { reportId: report.id, rules: report.rules, stats: report.stats }
     });
-    const webhook = sent.ok ? "Jarvis has it" : JarvisClient.isConfigured() ? `Jarvis did not answer (${sent.detail}); it is retried` : "Jarvis is not set up on this PC (JARVIS_HOST / JARVIS_API_KEY)";
+    // His own words when he sends them; an older Jarvis only answers 201.
+    const webhook = sent.ok ? (sent.acknowledgement ? `Jarvis: ${sent.acknowledgement}` : "Jarvis has it") : JarvisClient.isConfigured() ? `Jarvis did not answer (${sent.detail}); it is retried` : "Jarvis is not set up on this PC (JARVIS_HOST / JARVIS_API_KEY)";
     const updated = { ...report, sentToJarvisAt: new Date().toISOString(), sentResult: `${knowledge}; ${webhook}` };
     save(updated);
     return { report: updated, knowledge, webhook, ok: sent.ok };

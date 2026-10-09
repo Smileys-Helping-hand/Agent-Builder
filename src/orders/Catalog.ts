@@ -302,6 +302,48 @@ const BUILT_IN_ITEMS: TemplateDefinition[] = [
     keywords: ["rpg", "role-playing", "roleplaying", "adventure", "dungeon", "quest", "fantasy", "hero", "battle", "turn-based", "game"]
   },
   {
+    id: "clans",
+    name: "Clan Village Strategy Game",
+    kind: "app",
+    category: "Games",
+    description: "A village-building strategy game in your brand, in the style of Clash of Clans: build and upgrade a village against timers, mine gold and elixir, train an army and raid rival villages for loot and stars, plus a prize form for top players.",
+    price: 12500,
+    currency: "ZAR",
+    timeframe: "3-4 weeks",
+    icon: "🛡️",
+    features: [
+      "A village to build and upgrade, with builders working against timers",
+      "Gold and elixir from mines and collectors, saved between visits",
+      "Barbarians, archers and giants trained in barracks",
+      "Raids on rival villages for loot and three stars",
+      "Your name, colours, buildings and prize",
+      "Touch and mouse controls for phones and PCs"
+    ],
+    techStack: ["React", "TypeScript", "Canvas", "Vite"],
+    keywords: ["clash", "clans", "clash of clans", "base builder", "base building", "village", "village builder", "builder", "raid", "troops", "army", "elixir", "town hall", "game"]
+  },
+  {
+    id: "city",
+    name: "Open World City Game",
+    kind: "app",
+    category: "Games",
+    description: "A top-down open-world city game in your brand, in the style of GTA: walk the streets, take and drive cars, run delivery missions against the clock and escape the police, plus a prize form for top players.",
+    price: 12500,
+    currency: "ZAR",
+    timeframe: "3-4 weeks",
+    icon: "🚗",
+    features: [
+      "A city of roads, blocks and parks seen from above",
+      "Walk, take any car and drive it",
+      "Traffic, pedestrians and police chases with a wanted level",
+      "Delivery missions against the clock that pay cash",
+      "A mini map and an arrow to the next job",
+      "Keyboard and on-screen controls for phones and PCs"
+    ],
+    techStack: ["React", "TypeScript", "Canvas", "Vite"],
+    keywords: ["gta", "grand theft auto", "open world", "open-world", "city", "driving", "cars", "car", "police", "chase", "heist", "crime", "streets", "missions", "game"]
+  },
+  {
     id: "event",
     name: "Event & Invitation",
     kind: "template",

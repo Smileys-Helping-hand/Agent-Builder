@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { api, type JarvisActivity, type JarvisOverview } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
+import { JarvisAbilities } from "./abilities";
 
 /**
  * Jarvis: whether he is reachable, whether he is actually watching this
@@ -333,6 +334,9 @@ export default function JarvisPage() {
                 </div>
               )}
             </div>
+
+            {/* ---------- everything he can do here ---------- */}
+            <JarvisAbilities scopes={data.inbound.scopes} />
 
             {/* ---------- the log ---------- */}
             <div className="section-title">What Jarvis did, and what he was told</div>

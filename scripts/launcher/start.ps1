@@ -131,7 +131,26 @@ if (-not $NoUpdate -and (Test-Path (Join-Path $repo ".git")) -and (Get-Command g
 # Every caller gets the builder's 16k window by default. Jarvis talks to Ollama
 # through its OpenAI-style endpoint, which cannot ask for a window; without
 # this the model would be reloaded each time he and a build take turns.
-if (-not $env:OLLAMA_CONTEXT_LENGTH) { $env:OLLAMA_CONTEXT_LENGTH = "16384" }
+#
+# The rest is how the server holds the model, from the builder's settings
+# (.env, set in the app): flash attention and an 8-bit KV cache halve what the
+# window costs, so more of a 14b fits on the card and the rest runs from RAM;
+# one model at a time, so Jarvis and a build never push each other off the GPU.
+# The builder starts Ollama with the same values (src/utils/Ollama.ts).
+function Get-DotEnv($name) {
+    $file = Join-Path $repo ".env"
+    if (-not (Test-Path $file)) { return $null }
+    $line = Select-String -Path $file -Pattern "^\s*$name\s*=(.*)$" | Select-Object -Last 1
+    if ($line) { return $line.Matches[0].Groups[1].Value.Trim().Trim('"') }
+    return $null
+}
+$window = Get-DotEnv "OLLAMA_NUM_CTX"
+$env:OLLAMA_CONTEXT_LENGTH = if ($window) { $window } else { "16384" }
+$env:OLLAMA_FLASH_ATTENTION = if ((Get-DotEnv "OLLAMA_FLASH_ATTENTION") -eq "false") { "0" } else { "1" }
+$cacheType = Get-DotEnv "OLLAMA_KV_CACHE_TYPE"
+$env:OLLAMA_KV_CACHE_TYPE = if ($cacheType) { $cacheType } else { "q8_0" }
+$maxLoaded = Get-DotEnv "OLLAMA_MAX_LOADED_MODELS"
+$env:OLLAMA_MAX_LOADED_MODELS = if ($maxLoaded) { $maxLoaded } else { "1" }
 if (Test-GameMode) {
     Write-Step "Game mode is on: leaving the model server off (switch it off in the app)"
 } elseif (Test-Endpoint "http://localhost:11434/api/tags") {
@@ -436,12 +455,13 @@ try {
         # the model server and the tunnel with it.
         try {
 
-            # The builder: gone, or up but not answering for a minute.
+            # The builder: gone, or up but not answering for two minutes (a busy PC
+            # slows it; restarting it then only adds a boot to the load).
             $apiAlive = $started.api -and (Get-Process -Id $started.api -ErrorAction SilentlyContinue)
             $apiAnswers = Test-Endpoint "http://127.0.0.1:4000/api/update/check" 5
             if ($apiAnswers) { $apiMisses = 0 } else { $apiMisses++ }
 
-            if (-not $apiAnswers -and (-not $apiAlive -or $apiMisses -ge 4)) {
+            if (-not $apiAnswers -and (-not $apiAlive -or $apiMisses -ge 8)) {
                 $wait = $backoff[[Math]::Min($apiFailures, $backoff.Count - 1)]
                 $why = if ($apiAlive) { "stopped answering" } else { "exited" }
                 Write-LauncherLog "Builder $why; restarting in ${wait}s (restart $($apiFailures + 1))"

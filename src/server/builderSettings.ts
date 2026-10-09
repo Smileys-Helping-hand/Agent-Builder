@@ -15,7 +15,8 @@ import type { Express, Request, Response } from "express";
 
 import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
 import { setEnvValues } from "../utils/EnvFile.js";
-import { checkOllama } from "../utils/Ollama.js";
+import { checkOllama, restartOllama } from "../utils/Ollama.js";
+import { BuildService } from "../orchestrator/BuildService.js";
 import { Logger } from "../utils/Logger.js";
 import { OrderPipeline } from "../orders/OrderPipeline.js";
 
@@ -23,7 +24,7 @@ type Kind = "model" | "bool" | "number" | "text" | "choice";
 
 interface Setting {
   name: string;
-  group: "Models" | "Orders" | "Projects" | "Site";
+  group: "Models" | "Builds" | "Orders" | "Projects" | "Site";
   label: string;
   help: string;
   kind: Kind;
@@ -33,6 +34,8 @@ interface Setting {
   max?: number;
   /** Read once at start, so a change needs the builder restarted. */
   restart?: boolean;
+  /** A setting of the model server itself: saving it restarts the model server (when nothing is building). */
+  server?: boolean;
   /** Checked before saving; returns a reason when the value is not usable. */
   check?: (value: string) => string | null;
 }
@@ -106,10 +109,57 @@ const SETTINGS: Setting[] = [
     name: "OLLAMA_NUM_CTX",
     group: "Models",
     label: "How much the model can read at once (tokens)",
-    help: "Build prompts run to about 10 000 tokens; anything past this limit is cut from the start, instructions first. Bigger needs more GPU memory.",
+    help: "Build prompts run to about 10 000 tokens; anything past this limit is cut from the start, instructions first. Bigger needs more GPU memory: a 14b on 8 GB writes 5.3 words a second at 16384 and 4.4 at 32768, and loads in 18 s instead of 103 s. Restarts the model server.",
     kind: "choice",
     choices: ["8192", "16384", "32768"],
-    fallback: "16384"
+    fallback: "16384",
+    server: true
+  },
+  {
+    name: "OLLAMA_NUM_GPU",
+    group: "Models",
+    label: "Layers on the graphics card",
+    help: "auto: as many as fit, the rest run from RAM (a 14b on 8 GB: 28 of 49 on the card). A number forces that many; more than fit makes Windows page the card's memory and a load can take ten minutes.",
+    kind: "choice",
+    choices: ["auto", "16", "20", "24", "28", "32", "36", "40", "49"],
+    fallback: "auto"
+  },
+  {
+    name: "OLLAMA_NUM_THREAD",
+    group: "Models",
+    label: "CPU threads for the part in RAM",
+    help: "auto: Ollama picks (the physical cores). More than the cores you have makes it slower, not faster.",
+    kind: "choice",
+    choices: ["auto", "4", "6", "8", "10", "12"],
+    fallback: "auto"
+  },
+  {
+    name: "OLLAMA_KV_CACHE_TYPE",
+    group: "Models",
+    label: "Memory for what the model has read",
+    help: "q8_0: half the memory of f16 for the same window, so more of the model fits on the card; quality is the same in practice. q4_0: a quarter, slightly worse. Restarts the model server.",
+    kind: "choice",
+    choices: ["q8_0", "f16", "q4_0"],
+    fallback: "q8_0",
+    server: true
+  },
+  {
+    name: "OLLAMA_FLASH_ATTENTION",
+    group: "Models",
+    label: "Flash attention",
+    help: "Faster reading and less memory for the window. Needed for the q8_0 / q4_0 memory above. Restarts the model server.",
+    kind: "bool",
+    fallback: "true",
+    server: true
+  },
+  {
+    name: "BUILD_HEAD_START",
+    group: "Builds",
+    label: "How a new build starts",
+    help: "prompt: written from your words, on the bare starter; our games and engines are shown to the model as examples, never copied in. engine: a brief close to one of our games starts with its tested rules (game.ts). template: a brief that matches one of our games starts as that whole game.",
+    kind: "choice",
+    choices: ["prompt", "engine", "template"],
+    fallback: "prompt"
   },
   {
     name: "ORDERS_MODE",
@@ -261,12 +311,26 @@ export const registerBuilderSettingsRoutes = (app: Express) => {
     // than at the next one, minutes away.
     if ("ORDERS_MODE" in values || "ORDERS_LAUNCH_MESSAGE" in values) void OrderPipeline.publish().catch(() => undefined);
     const needsRestart = Object.keys(values).filter((name) => BY_NAME.get(name)?.restart);
+    // The model server reads its own settings when it starts: restart it now,
+    // unless a build is using it, which would lose the pass it is on.
+    const serverChanged = Object.keys(values).filter((name) => BY_NAME.get(name)?.server);
+    let serverNote = "";
+    if (serverChanged.length) {
+      const building = BuildService.active().filter((build) => build.state === "running");
+      if (building.length) {
+        serverNote = ` The model server picks up ${serverChanged.map((name) => BY_NAME.get(name)!.label).join(", ")} when it next restarts (${building.length} build(s) running now; Control → Restart model server).`;
+      } else {
+        const up = (await checkOllama()).state !== "down";
+        serverNote = up ? ((await restartOllama()) ? " The model server restarted with it." : " The model server did not come back by itself; press Restart model server.") : "";
+      }
+    }
     res.json({
       success: true,
       changed: Object.keys(values),
-      message: needsRestart.length
-        ? `Saved. ${needsRestart.map((name) => BY_NAME.get(name)!.label).join(", ")} takes effect after the builder restarts.`
-        : "Saved, and in effect now."
+      message:
+        (needsRestart.length
+          ? `Saved. ${needsRestart.map((name) => BY_NAME.get(name)!.label).join(", ")} takes effect after the builder restarts.`
+          : "Saved, and in effect now.") + serverNote
     });
   });
 };

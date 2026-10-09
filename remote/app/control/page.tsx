@@ -6,6 +6,7 @@ import { useState } from "react";
 import { api, type Problem, type ServiceReport, type CleanupReport } from "@/lib/api";
 import { STAGE_LABEL } from "../build/parts";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
+import { ModelCard } from "./model";
 import { PowerTools } from "./power";
 import { UpdateCard } from "./update";
 
@@ -326,6 +327,9 @@ export default function Control() {
             </button>
           </div>
         </section>
+
+        {/* ---------- the coding model: GPU / RAM split ---------- */}
+        <ModelCard />
 
         {/* ---------- troubleshoot progress bar ---------- */}
         {troubleshootProgress !== null ? (
@@ -910,6 +914,7 @@ export default function Control() {
           <div className="quick">
             <Link href="/projects">{Icon.folder} Projects &amp; Code</Link>
             <Link href="/build">{Icon.sparkle} Build Studio</Link>
+            <Link href="/studio">{Icon.image} Media Studio</Link>
             <Link href="/research">{Icon.flask} Continuous Research</Link>
             <Link href="/feed">{Icon.list} Activity Feed</Link>
             <Link href="/orders">{Icon.list} Customer Orders</Link>

@@ -282,6 +282,7 @@ const editDistance = (a: string, b: string): number => {
 
 const applyEdits = (text: string, edits: Edit[]): string => {
   // From the end, so earlier offsets stay valid; overlapping edits are dropped.
+  // Edits at one spot are applied in the order given, so a later one lands before an earlier one.
   let out = text;
   let floor = Infinity;
   for (const edit of [...edits].sort((a, b) => b.start - a.start)) {
@@ -930,7 +931,10 @@ export const TypeFixer = {
           if (fix) {
             for (const change of fix.changes) {
               if (!ours(change.fileName)) continue;
-              for (const textChange of change.textChanges) {
+              // Last first: TypeScript lists inserts at one spot in reading order, and
+              // applied as given, its fix for `b => b.id === id` (": { id: number }"
+              // then ")" after b) wrote `(b): { id: number } =>`, a return type.
+              for (const textChange of [...change.textChanges].reverse()) {
                 add(path.resolve(change.fileName), { start: textChange.span.start, end: textChange.span.start + textChange.span.length, text: textChange.newText });
               }
             }
@@ -940,7 +944,9 @@ export const TypeFixer = {
 
           if (IMPLICIT_ANY.has(diagnostic.code) && diagnostic.code === 7006 && text[end] !== ":" && !/^\s*:/.test(text.slice(end, end + 3))) {
             // No type to infer from: say so plainly rather than leave the build failing.
-            add(path.resolve(fileName), { start: end, end, text: ": any" });
+            // A lone arrow parameter needs its brackets for a type: `b => …` → `(b: any) => …`.
+            const bare = text[start - 1] !== "(" && /^\s*=>/.test(text.slice(end, end + 6));
+            add(path.resolve(fileName), bare ? { start, end, text: `(${text.slice(start, end)}: any)` } : { start: end, end, text: ": any" });
             notes.push(`${rel}:${line}: gave parameter ${text.slice(start, end)} a type (any)`);
           }
         }

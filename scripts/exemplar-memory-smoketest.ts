@@ -71,11 +71,15 @@ for (const [brief, title] of [
   ["Build Kingdoms: a strategy game where you defend your castle", "Tower Defense Strategy Game"],
   ["Build Dungeon Quest: an RPG with a hero and monsters", "Fantasy RPG Adventure"],
   ["Build Hero's Journey: an adventure game with battles and levelling up", "Fantasy RPG Adventure"],
+  ["Build Clash Kingdom: a Clash of Clans clone for mobile", "Clan Village Strategy Game"],
+  ["Build Village Wars: a base building game where you train troops and raid other villages", "Clan Village Strategy Game"],
+  ["Build Street Kings: a mini GTA clone for PC", "Open World City Game"],
+  ["Build Getaway: an open world driving game with police chases", "Open World City Game"],
   ["Build Brick Bash: a brick breaker game", "Arcade Promo Game"]
 ] as const) {
   assert.equal(ExemplarMemory.relevant(brief)?.title, title, brief);
 }
-for (const genre of ["Space Shooter Game", "Tower Defense Strategy Game", "Fantasy RPG Adventure"]) {
+for (const genre of ["Space Shooter Game", "Tower Defense Strategy Game", "Fantasy RPG Adventure", "Clan Village Strategy Game", "Open World City Game"]) {
   const seed = ExemplarMemory.list().find((e) => e.title === genre)!;
   assert.deepEqual(Object.keys(ExemplarMemory.engineFiles(seed, path.resolve("templates/sites"))).sort(), ["src/game.ts", "src/play.tsx", "src/scores.ts"], `${genre} brings its engine, its board and its score table`);
   const note = ExemplarMemory.formatForPrompt(seed, ["src/engine/game.ts", "src/engine/play.tsx", "src/engine/scores.ts"]);
@@ -153,5 +157,16 @@ assert.match(adoptedNote, /The game screen MUST render it, e\.g\. <GameBoard set
 assert.ok(!/GameBoardProps from/.test(adoptedNote), "a props type is not a component");
 assert.ok(!/High scores, leaderboards/.test(adoptedNote), "no score note when the score table was not adopted");
 assert.ok(!adoptedNote.includes("FILE: src/game.ts"), "the engine is in the project: no need to repeat it in the prompt");
+
+// How sure a match is decides whether a new game starts as the whole catalogue game.
+const clash = ExemplarMemory.match(
+  "Build Clan Clash: a Clash of Clans clone for mobile.\nA Clash of Clans style game for my phone: build and upgrade a village, collect gold and elixir, train barbarians, archers and giants, and raid other villages for loot and stars."
+);
+assert.equal(clash?.exemplar.origin, "seed:clans");
+assert.equal(clash?.strong, true, "a Clash of Clans brief is a strong match for the clan village game");
+const city = ExemplarMemory.match("Build Mini City: a mini GTA clone for PC. Walk around a city, steal cars, drive, do missions, escape the police with a wanted level.");
+assert.equal(city?.exemplar.origin, "seed:city");
+assert.equal(city?.strong, true);
+assert.equal(ExemplarMemory.match("Quarterly tax filing for a shipping fleet with customs declarations"), null);
 
 console.log("exemplar memory: all checks passed");

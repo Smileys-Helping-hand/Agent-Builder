@@ -354,6 +354,18 @@ assert.match(fixedGame, /handleSave\(\)/, "a different name is NOT swapped in (h
 assert.ok(typeNotes.length >= 3, `notes: ${typeNotes.join(" | ")}`);
 assert.deepEqual(TypeFixer.run(typed).filter((note) => !/handleSave/.test(note)), [], "nothing left to fix but the real gap");
 
+// A lone arrow parameter given a type keeps it on the parameter: `(b): { id: number } =>` is a return type.
+const arrows = fs.mkdtempSync(path.join(os.tmpdir(), "ab-arrows-"));
+fs.mkdirSync(path.join(arrows, "src"));
+fs.writeFileSync(path.join(arrows, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2020", module: "ESNext", moduleResolution: "Bundler", noEmit: true, lib: ["ES2020"] }, include: ["src"] }));
+fs.writeFileSync(path.join(arrows, "src/find.ts"), "export function pick(list, id: number) {\n  return list.find(b => b.id === id);\n}\nexport const twice = (handler) => [1, 2].map(n => handler(n));\n");
+TypeFixer.run(arrows);
+const arrowFile = fs.readFileSync(path.join(arrows, "src/find.ts"), "utf8");
+assert.doesNotMatch(arrowFile, /\)\s*:\s*\{[^}]*\}\s*=>/, `no parameter type became a return type:\n${arrowFile}`);
+const ts = await import("typescript");
+const parsed = ts.default.transpileModule(arrowFile, { reportDiagnostics: true, compilerOptions: { target: ts.default.ScriptTarget.ES2020 } });
+assert.equal(parsed.diagnostics?.length ?? 0, 0, `still valid TypeScript:\n${arrowFile}`);
+
 // The live Pgame build's mistakes: engine mutators used as if they returned the
 // state, a type imported from a file that only uses it, and a second local copy
 // of an imported type.
@@ -430,6 +442,14 @@ assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/storage.ts"
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/progression.ts", purpose: "unlock levels and track high scores" }), false);
 assert.equal(AutonomousOrchestrator.duplicatesBoard({ path: "src/lib/gameLogic.ts", purpose: "handles game events and updates the game state" }), true, "a reducer around the board's own actions");
 assert.equal(AutonomousOrchestrator.duplicatesScores({ path: "src/lib/highScores.ts", purpose: "keeps the best heroes" }), true, "the engine's score table does this");
+const engineTypes = new Set(["GameState", "Building", "TroopKind"]);
+assert.deepEqual(
+  AutonomousOrchestrator.copiesEngineTypes(engineTypes, "", 'import { Building } from "../../engine/game";\nexport type GameState = { gold: number; buildings: Building[] };\n'),
+  ["GameState"],
+  "a second GameState beside the engine's is refused"
+);
+assert.deepEqual(AutonomousOrchestrator.copiesEngineTypes(engineTypes, "", 'import type { GameState } from "../engine/game";\ntype Props = { state: GameState };\n'), [], "using the engine's types is fine");
+assert.deepEqual(AutonomousOrchestrator.copiesEngineTypes(engineTypes, "export type GameState = {};\n", "export type GameState = { a: 1 };\n"), [], "a file that already had it is not judged again");
 assert.equal(AutonomousOrchestrator.duplicatesScores({ path: "src/lib/leaderboard.ts", purpose: "top ten" }), true);
 assert.equal(AutonomousOrchestrator.duplicatesScores({ path: "src/lib/hallOfFame.ts", purpose: "" }), true);
 assert.equal(AutonomousOrchestrator.duplicatesScores({ path: "src/components/HallOfHeroes.tsx", purpose: "shows the best scores" }), false, "a screen that shows the table stays");
@@ -1133,5 +1153,17 @@ calls = 0;
 await assert.rejects(ModelRouter.waitingOut(async () => { calls++; throw new Error("bad prompt"); }, 5_000, [10]), /bad prompt/);
 assert.equal(calls, 1, "a real error is not retried");
 await assert.rejects(ModelRouter.waitingOut(async () => { throw down; }, 50, [10]), /fetch failed/, "gives up after the limit");
+
+// Game art: one object per sprite, cut out with the mask flipped, scaled for phones.
+const { artWorkflow, artName, artPrompts } = await import("../src/media/ArtStudio.js");
+assert.equal(artName("Gold Mine!"), "gold-mine");
+const spriteFlow = artWorkflow({ name: "barracks", subject: "a stone barracks", kind: "sprite" }, "stylized", 7, "agentbuilder/x") as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+const byType = (type: string) => Object.entries(spriteFlow).find(([, node]) => node.class_type === type);
+assert.ok(byType("RemoveBackground") && byType("InvertMask") && byType("JoinImageWithAlpha"), "sprites are cut out");
+assert.deepEqual(byType("JoinImageWithAlpha")![1].inputs.alpha, [byType("InvertMask")![0], 0], "the alpha is the flipped mask");
+assert.equal(byType("ImageScale")![1].inputs.width, 256, "sprites are phone-sized");
+assert.match(artPrompts({ name: "b", subject: "a barracks", kind: "sprite" }, "").negative, /multiple objects/);
+const backgroundFlow = artWorkflow({ name: "sky", subject: "a sky", kind: "background" }, "", 1, "p") as Record<string, { class_type: string }>;
+assert.ok(!Object.values(backgroundFlow).some((node) => node.class_type === "RemoveBackground"), "backgrounds keep their background");
 
 console.log("builder guards: all checks passed");

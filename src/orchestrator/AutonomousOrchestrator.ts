@@ -15,6 +15,8 @@ import { QualityAnalyzer } from "./QualityAnalyzer.js";
 import { ImprovementEngine, type ImprovementPlan, type ImprovementSuggestion } from "./ImprovementEngine.js";
 import { HardwareScaler } from "../utils/HardwareScaler.js";
 import { APP_PLATFORMS, AppBuilder, type AppPlatform } from "../orders/AppBuilder.js";
+import { Packager } from "../orders/Packager.js";
+import { ArtStudio, artName, type ArtRequest } from "../media/ArtStudio.js";
 import { Workspace } from "./Workspace.js";
 import { Verifier, type CheckResult, type VerificationReport } from "./Verifier.js";
 import { Executor } from "./Executor.js";
@@ -119,7 +121,27 @@ export interface AutonomousConfig {
    * changes.
    */
   workingDir?: string;
+  /**
+   * How a new build on the starter begins. "prompt": written from the brief,
+   * with our closest app shown as an example only. "engine": a brief close to
+   * one of our games starts with its tested engine. "template": one that
+   * clearly matches a game starts as that whole game. Unset: BUILD_HEAD_START.
+   */
+  headStart?: HeadStart;
 }
+
+export type HeadStart = "prompt" | "engine" | "template";
+export const HEAD_STARTS: readonly HeadStart[] = ["prompt", "engine", "template"];
+
+/** The builder-wide choice, from Settings (BUILD_HEAD_START); the old GAME_HEAD_START=engine still means engine. */
+export const defaultHeadStart = (): HeadStart => {
+  const chosen = process.env.BUILD_HEAD_START?.trim() as HeadStart | undefined;
+  if (chosen && HEAD_STARTS.includes(chosen)) return chosen;
+  return process.env.GAME_HEAD_START === "engine" ? "engine" : "prompt";
+};
+
+/** A brief for a game: it gets pictures planned and drawn for it. */
+const GAME_BRIEF = /\b(games?|arcade|platformer|shooter|rpg|roguelike|puzzle|racing|runner|tower defen[cs]e|strategy|base builder|sprites?|bosse?s?|enem(y|ies)|levels?)\b/i;
 
 type ProfileSettings = {
   maxRepairAttempts: number;
@@ -200,8 +222,22 @@ export class AutonomousOrchestrator extends EventEmitter {
 
       // A template order starts with the customer's name already in.
       await this.prefillTailoring().catch((error: any) => Logger.warn("Could not pre-fill the template", { error: error?.message }));
-      // A new app close to one of our catalogue engines starts with that engine.
-      await this.adoptExemplarEngine().catch((error: any) => Logger.warn("Could not start from the example's engine", { error: error?.message }));
+      // How a new build begins is a choice (Settings → Builds, or per build).
+      // "prompt" (the default): the model writes it from the brief; our closest
+      // app is only shown to it as an example. "template": a game that clearly
+      // matches one of ours starts as that whole game. "engine" (and "template"
+      // when nothing matches whole): one close to a catalogue engine starts with it.
+      const headStart = this.config.headStart ?? defaultHeadStart();
+      const wholeGame =
+        headStart === "template" &&
+        (await this.startFromCatalogueGame().catch((error: any) => {
+          Logger.warn("Could not start from the catalogue game", { error: error?.message });
+          return false;
+        }));
+      if (wholeGame) await this.prefillTailoring().catch((error: any) => Logger.warn("Could not pre-fill the template", { error: error?.message }));
+      if (!wholeGame && headStart !== "prompt") await this.adoptExemplarEngine().catch((error: any) => Logger.warn("Could not start from the example's engine", { error: error?.message }));
+      // A game written from the brief gets its own list of pictures to draw.
+      await this.planArt().catch((error: any) => Logger.warn("Could not plan the game's pictures", { error: error?.message }));
       // A project carried on keeps the engine it started from, and gets back what a pass took out of it.
       await this.protectEngine().catch((error: any) => Logger.warn("Could not check the engine", { error: error?.message }));
 
@@ -262,6 +298,9 @@ export class AutonomousOrchestrator extends EventEmitter {
             threshold: this.config.qualityThreshold
           });
           this.rememberSuccess(iteration);
+
+          // Its pictures, before the phone and PC apps are made from it.
+          if (iteration.verification?.passed) await this.drawArt(iteration).catch((error: any) => Logger.warn("Could not draw the game's pictures", { error: error?.message }));
 
           // A score above threshold isn't the same as every applicable check
           // passing — e.g. a heavily-weighted install pass can clear a low
@@ -879,7 +918,8 @@ import to its last export: never a fragment or a single changed line. No other p
         ? `Lessons learned from earlier builds on this machine — apply them:\n${LessonMemory.formatForPrompt(lessons)}\n\n`
         : "") +
       this.researchPreamble(context.iteration) +
-      this.exemplarPreamble(context.iteration);
+      this.exemplarPreamble(context.iteration) +
+      this.artPreamble();
 
     // A new app is planned, then written one file at a time (see generatePlanned).
     if (this.config.workingDir && this.isStarter() && this.starterStillPlaceholder()) {
@@ -1260,6 +1300,28 @@ export default function ${name}({ onScore, onChange, onBack }: ${name}Props) {
   }
 
   /** A planned logic file that would redo what a playable board does: input, controls, the loop, drawing, physics. */
+  /** The type names the adopted engine exports (GameState, Building, ...). */
+  private engineTypeNames(): Set<string> {
+    const names = new Set<string>();
+    for (const file of this.adoptedEngine) {
+      if (!/\.tsx?$/.test(file)) continue;
+      try {
+        const text = fs.readFileSync(path.join(this.workspace.root, file), "utf8");
+        for (const m of text.matchAll(/^export\s+(?:declare\s+)?(?:interface|type|class|enum)\s+([A-Z]\w*)/gm)) names.add(m[1]);
+      } catch {
+        // Not written yet.
+      }
+    }
+    return names;
+  }
+
+  /** The engine's type names a new version of a file declares as its own (and the old one did not). */
+  static copiesEngineTypes(engineTypes: Set<string>, before: string, after: string): string[] {
+    const declared = (text: string) => new Set([...text.matchAll(/^\s*export\s+(?:declare\s+)?(?:interface|type|class|enum)\s+([A-Z]\w*)/gm)].map((m) => m[1]));
+    const had = declared(before);
+    return [...declared(after)].filter((name) => engineTypes.has(name) && !had.has(name));
+  }
+
   static duplicatesBoard(file: { path: string; purpose: string }): boolean {
     if (/\.test\./.test(file.path)) return false;
     // Screens for what the board already shows: an RPG build planned a
@@ -1481,6 +1543,56 @@ export default function ${name}({ onScore, onChange, onBack }: ${name}Props) {
     }
   }
 
+  /**
+   * A new game whose brief clearly matches one of our catalogue games starts
+   * as that whole game, working and tested, and the passes tailor and grow
+   * it. Given only the engine, a 7B model wrote its own village logic, saving
+   * and props around it, and three Clash of Clans runs never compiled
+   * (scores 35, 55, 20 after eight passes); the same game as a template order
+   * scores 100 from the first pass. A weak match (a shared opening word, the
+   * arcade fallback) or a catalogue app that is not a game keeps the engine-only start.
+   */
+  private async startFromCatalogueGame(): Promise<boolean> {
+    if (!this.config.workingDir || !this.isStarter() || !this.starterStillPlaceholder()) return false;
+    let found: { exemplar: Exemplar; strong: boolean } | null = null;
+    try {
+      found = ExemplarMemory.match(`${this.config.projectName}\n${this.config.description}`);
+    } catch {
+      return false;
+    }
+    const seedId = found?.strong ? /^seed:(.+)$/.exec(found.exemplar.origin)?.[1] : undefined;
+    if (!found || !seedId) return false;
+    const source = path.resolve(process.env.TEMPLATES_DIR ?? "templates/sites", seedId);
+    const isGame = ["src/game.ts", "src/play.tsx", "template.json"].every((file) => fs.existsSync(path.join(source, file)));
+    if (!isGame) return false;
+    // Loaded here: ProjectBuilds reaches this class through BuildService.
+    const { listProjectFiles } = await import("../ecosystem/ProjectBuilds.js");
+    const files = await listProjectFiles(source);
+    if (files.length === 0) return false;
+
+    // The starter's own screens go; its build setup is replaced by the game's.
+    for (const file of await listProjectFiles(this.workspace.root)) {
+      if (file === ".gitignore" || file.startsWith(".git/")) continue;
+      fs.rmSync(path.join(this.workspace.root, file), { force: true });
+    }
+    for (const file of files) {
+      const target = path.join(this.workspace.root, file);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.copyFileSync(path.join(source, file), target);
+    }
+    await this.workspace.commitCurrentState(`Head start: ${found.exemplar.title}, a tested game to tailor`);
+    this.exemplar = found.exemplar;
+    ExemplarMemory.markUsed(found.exemplar.id);
+    this.think(
+      1,
+      "decision",
+      `Started from our ${found.exemplar.title}`,
+      "The brief is close to a game we have built and tested, so the build starts as that game, playing from the first pass, and every pass makes it more this brief's: its names, wording and screens, then what the brief adds.",
+      files.filter((file) => file.startsWith("src/"))
+    );
+    return true;
+  }
+
   private async adoptExemplarEngine(): Promise<void> {
     if (!this.config.workingDir || !this.isStarter() || !this.starterStillPlaceholder()) return;
     if (this.exemplar === undefined) this.chooseExemplar(1);
@@ -1495,14 +1607,154 @@ export default function ${name}({ onScore, onChange, onBack }: ${name}Props) {
         .filter(([file]) => !fs.existsSync(path.join(this.workspace.root, file)))
     );
     if (Object.keys(fresh).length === 0) return;
+    // The pictures its board can draw come with it, for the art pass once the build passes.
+    const seedId = /^seed:(.+)$/.exec(this.exemplar.origin)?.[1];
+    const artList = seedId ? path.resolve(process.env.TEMPLATES_DIR ?? "templates/sites", seedId, "art.json") : null;
+    if (artList && fs.existsSync(artList) && !fs.existsSync(path.join(this.workspace.root, "art.json"))) fresh["art.json"] = fs.readFileSync(artList, "utf8");
     await this.workspace.writeFiles(fresh, `Head start: the engine from ${this.exemplar.title}`);
-    this.adoptedEngine = Object.keys(fresh);
+    this.adoptedEngine = Object.keys(fresh).filter((file) => file !== "art.json");
     this.think(
       1,
       "decision",
       `Started from a tested engine: ${this.adoptedEngine.join(", ")}`,
       `From our "${this.exemplar.title}". The app is built on it, so the rules (levels, scoring, winning and losing) work from the first pass.`,
       this.adoptedEngine
+    );
+  }
+
+  /**
+   * A new game written from the brief (no engine copied in) decides its
+   * pictures before the first line is written: the model lists them in one
+   * short answer, saved as art.json. The art pass draws them once the build
+   * passes, and every pass is told their names and how to load them
+   * (src/lib/art.ts, part of the starter), so the code draws each thing as a
+   * shape until its picture exists.
+   */
+  private async planArt(): Promise<void> {
+    if (!this.config.workingDir || process.env.ART === "off" || !this.isStarter() || !this.starterStillPlaceholder()) return;
+    const root = this.workspace.root;
+    if (fs.existsSync(path.join(root, "art.json")) || !fs.existsSync(path.join(root, "src", "lib", "art.ts"))) return;
+    const brief = this.config.description.split(/\n(?:What our research confirmed|This is going to a real customer)/i)[0].trim();
+    if (!GAME_BRIEF.test(`${this.config.projectName}\n${brief}`)) return;
+
+    const answer = await ModelRouter.generate(`You are art-directing a new game before it is written. The game, in the customer's words:
+${brief.slice(0, 1500)}
+
+List the pictures it needs: the player, each kind of enemy or unit, each kind of item or building, and one background.
+At most 10. For each: a short lower-case name used in code ("hero", "slime", "coin", "ground"), what it shows in under
+20 words, and its kind: "sprite" (a character or object, cut out), "icon" (a small symbol), or "background" (the
+playfield behind everything). Then one line of art style for all of them.
+
+Answer with JSON only: {"style": "...", "pictures": [{"name": "hero", "subject": "...", "kind": "sprite"}]}`);
+    const parsed = JSON.parse(/\{[\s\S]*\}/.exec(answer)?.[0] ?? "{}") as { style?: unknown; pictures?: unknown };
+    const seen = new Set<string>();
+    const pictures = (Array.isArray(parsed.pictures) ? parsed.pictures : [])
+      .map((p: any) => ({
+        name: typeof p?.name === "string" ? artName(p.name) : "",
+        subject: typeof p?.subject === "string" ? p.subject.trim().slice(0, 200) : "",
+        kind: ["sprite", "icon", "background"].includes(p?.kind) ? (p.kind as ArtRequest["kind"]) : "sprite"
+      }))
+      .filter((p) => p.name && p.subject.length > 3 && !seen.has(p.name) && seen.add(p.name))
+      .slice(0, 10);
+    if (pictures.length === 0) return;
+    const style = typeof parsed.style === "string" && parsed.style.trim().length > 5 ? parsed.style.trim().slice(0, 200) : "colourful 2D game art, clean shapes, soft lighting";
+    await this.workspace.writeFiles({ "art.json": `${JSON.stringify({ style, pictures }, null, 2)}\n` }, "Planned the game's pictures");
+    this.think(
+      1,
+      "decision",
+      `Planned ${pictures.length} pictures for the game`,
+      `${pictures.map((p) => p.name).join(", ")}. The code draws each as a shape until the image engine has drawn it, once the build passes. Style: ${style}.`,
+      ["art.json"]
+    );
+  }
+
+  /** Every pass of a game with planned pictures is told their names and how to load them. */
+  private artPreamble(): string {
+    if (!this.config.workingDir || this.adoptedEngine.length > 0) return "";
+    const root = this.workspace.root;
+    if (!fs.existsSync(path.join(root, "src", "lib", "art.ts"))) return "";
+    let names: string[] = [];
+    try {
+      names = ((JSON.parse(fs.readFileSync(path.join(root, "art.json"), "utf8")) as { pictures?: Array<{ name?: string; kind?: string }> }).pictures ?? [])
+        .map((p) => (p.name ? `${p.name}${p.kind === "background" ? " (background)" : ""}` : ""))
+        .filter(Boolean);
+    } catch {
+      return "";
+    }
+    if (names.length === 0) return "";
+    return `Pictures: this game gets drawn pictures named ${names.join(", ")} (the image engine draws them into public/assets once the build passes).
+Load them with usePictures() (or loadPictures()) from "./lib/art" — src/lib/art.ts is already written; import it, do not rewrite it.
+It returns { [name]: HTMLImageElement } for those drawn so far. Draw each thing with ctx.drawImage(pictures.name, …) when it
+is there and as a coloured shape when it is not, so the game works before and after the pictures exist.
+
+`;
+  }
+
+  /**
+   * The game's pictures, once it passes: the list its board can draw
+   * (art.json, from the engine's template) adapted to this brief by the model
+   * in one short answer, drawn by ArtStudio into public/assets, and the site
+   * rebuilt so the preview and the phone and PC apps carry them. Without the
+   * image engine running, or for an app with no art list, nothing happens and
+   * the board draws its shapes.
+   */
+  private async drawArt(iteration: BuildIteration): Promise<void> {
+    if (!this.config.workingDir || process.env.ART === "off") return;
+    const listPath = path.join(this.workspace.root, "art.json");
+    if (!fs.existsSync(listPath)) return;
+    let list: { style?: string; pictures?: ArtRequest[] };
+    try {
+      list = JSON.parse(fs.readFileSync(listPath, "utf8"));
+    } catch {
+      return;
+    }
+    const pictures = (list.pictures ?? []).filter((p) => p?.name && p?.subject && p?.kind);
+    if (pictures.length === 0) return;
+    if (!(await ArtStudio.available())) {
+      this.think(iteration.iteration, "decision", "No pictures this time", "The image engine (ComfyUI) is not running, so the game uses its built-in shapes. Start it and carry the build on to add the art.");
+      return;
+    }
+    // The model fits each picture to this game: a space colony's "town hall" is a command dome.
+    let style = list.style ?? "";
+    let subjects = pictures.map((p) => p.subject);
+    try {
+      const answer = await ModelRouter.generate(`You are art-directing a game. The game, in the customer's words:
+${this.config.description.split(/\nWhat our research confirmed/i)[0].slice(0, 1500)}
+
+The game needs these pictures. For each, write what it should show for THIS game, in under 20 words: keep what it is
+(a building stays a building, a troop stays a character), change its look to fit the game's theme. Then one line of art
+style for all of them.
+
+${pictures.map((p, i) => `${i + 1}. ${p.name}: ${p.subject}`).join("\n")}
+
+Answer with JSON only: {"style": "...", "pictures": {"1": "...", "2": "..."}}`);
+      const parsed = JSON.parse(/\{[\s\S]*\}/.exec(answer)?.[0] ?? "{}") as { style?: unknown; pictures?: Record<string, unknown> };
+      if (typeof parsed.style === "string" && parsed.style.trim().length > 5) style = parsed.style.trim().slice(0, 200);
+      subjects = pictures.map((p, i) => {
+        const next = parsed.pictures?.[String(i + 1)];
+        return typeof next === "string" && next.trim().length > 5 ? next.trim().slice(0, 200) : p.subject;
+      });
+    } catch {
+      // The list's own words will do.
+    }
+    const started = Date.now();
+    const results = await ArtStudio.drawAll(
+      this.workspace.root,
+      pictures.map((p, i) => ({ ...p, subject: subjects[i] })),
+      style,
+      (done, total, name) => this.emit("stage", { stage: `drawing ${name} (${done + 1}/${total})` })
+    );
+    const drawn = results.filter((r) => r.file).length;
+    if (drawn === 0) return;
+    // Rebuilt, so dist/ (the preview, the download, the apps) has the pictures.
+    await Packager.buildWebsite(this.workspace.root, this.buildId);
+    await this.workspace.commitCurrentState(`Drew ${drawn} picture${drawn === 1 ? "" : "s"} for the game`).catch(() => undefined);
+    this.think(
+      iteration.iteration,
+      "decision",
+      `Drew ${drawn} of ${pictures.length} pictures`,
+      `${results.map((r) => `${r.name}${r.file ? "" : ` (not drawn: ${r.error})`}`).join(", ")}, in ${Math.round((Date.now() - started) / 1000)} s. Style: ${style}.`,
+      results.filter((r) => r.file).map((r) => `public/${r.file}`)
     );
   }
 
@@ -2209,6 +2461,29 @@ Rules that keep this build passing its checks (install, typecheck, build, tests)
           delete files[file];
           fragments.push(`• ${file}: the game is already built (the tested board in src/engine/, shown by the builder's game screen), so a new copy of it is not added — change the screens around it instead.`);
         }
+      }
+    }
+    // Nor a second copy of the engine's types: a Clash build wrote its own
+    // GameState in src/lib/engine/game.ts beside the engine's, and five repairs
+    // went into errors saying one GameState is not the other. A file may use
+    // the engine's types, imported, but not declare its own under their names.
+    const engineTypes = this.engineTypeNames();
+    if (engineTypes.size > 0) {
+      for (const file of Object.keys(files)) {
+        if (this.adoptedEngine.includes(file) || !/\.tsx?$/.test(file) || /\.test\./.test(file)) continue;
+        let before = "";
+        try {
+          before = fs.readFileSync(path.join(this.workspace.root, file), "utf8");
+        } catch {
+          // A new file.
+        }
+        const copies = AutonomousOrchestrator.copiesEngineTypes(engineTypes, before, files[file]);
+        if (copies.length === 0) continue;
+        if (before) files[file] = before;
+        else delete files[file];
+        fragments.push(
+          `• ${file}: it declares its own ${copies.join(", ")}, which the engine already has, so it is not ${before ? "changed" : "added"} — import ${copies.length === 1 ? "it" : "them"} from the engine (src/engine/${path.basename(this.adoptedEngine.find((f) => /game\.ts$/.test(f)) ?? "game.ts", ".ts")}) instead.`
+        );
       }
     }
     if (fragments.length > 0) {
