@@ -15,10 +15,25 @@
  * once: the coding model is unloaded before drawing, and ComfyUI is asked to
  * free its memory after, so the next build step starts on a clear card.
  */
+import { spawn } from "child_process";
 import fs from "fs";
+import os from "os";
 import path from "path";
 
+import { GameMode } from "../utils/GameMode.js";
 import { Logger } from "../utils/Logger.js";
+
+/** Where the image engine's app is installed (Comfy Desktop runs ComfyUI on :8188), for starting it. */
+export const comfyBinary = (): string | null => {
+  const candidates = [
+    process.env.COMFY_DESKTOP_PATH,
+    "C:/Program Files/Comfy Desktop/Comfy Desktop.exe",
+    path.join(os.homedir(), "AppData", "Local", "Programs", "ComfyUI", "ComfyUI.exe")
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
+};
+
+let starting: Promise<boolean> | null = null;
 
 export type ArtKind = "sprite" | "background" | "icon" | "ui";
 
@@ -153,6 +168,47 @@ export const ArtStudio = {
     }
   },
 
+  /**
+   * The image engine answering, started if it is not: a picture asked for
+   * (by the app, a build's art pass, or Jarvis) should be drawn, not refused
+   * because nobody had opened Comfy Desktop. Not in game mode, which keeps the
+   * card free on purpose. Concurrent callers share one start; it loads its
+   * models in a minute or two.
+   */
+  async ensure(waitMs = Number(process.env.COMFY_START_WAIT_MS) || 600_000): Promise<boolean> {
+    if (await ArtStudio.available()) return true;
+    if (GameMode.isOn()) return false;
+    if (starting) return starting;
+    starting = (async () => {
+      const binary = comfyBinary();
+      if (!binary) {
+        Logger.warn("The image engine is not running and Comfy Desktop is not installed where expected; set COMFY_DESKTOP_PATH or COMFY_URL");
+        return false;
+      }
+      Logger.log("The image engine was not running; starting it for a picture", { binary });
+      try {
+        spawn(binary, [], { detached: true, stdio: "ignore", windowsHide: false }).unref();
+      } catch (error) {
+        Logger.error("Could not start the image engine", { error: error instanceof Error ? error.message : String(error) });
+        return false;
+      }
+      for (let waited = 0; waited < waitMs; waited += 3000) {
+        await sleep(3000);
+        if (await ArtStudio.available()) {
+          Logger.log("The image engine is up", { seconds: Math.round(waited / 1000) + 3 });
+          return true;
+        }
+      }
+      Logger.warn("The image engine did not answer after starting it", { waitedSeconds: Math.round(waitMs / 1000) });
+      return false;
+    })();
+    try {
+      return await starting;
+    } finally {
+      starting = null;
+    }
+  },
+
   /** Free the graphics card for drawing: the coding model goes (it reloads on its next call). */
   async clearCardForArt(): Promise<void> {
     const model = process.env.OLLAMA_MODEL ?? "qwen2.5-coder:7b";
@@ -273,8 +329,8 @@ export const ArtStudio = {
     const todo = requests.filter((request) => !manifest.assets[artName(request.name)] || !fs.existsSync(path.join(projectRoot, "public", manifest.assets[artName(request.name)].file)));
     const results: ArtResult[] = requests.filter((request) => !todo.includes(request)).map((request) => ({ name: artName(request.name), file: manifest.assets[artName(request.name)].file, error: null }));
     if (todo.length === 0) return results;
-    if (!(await ArtStudio.available())) {
-      return [...results, ...todo.map((request) => ({ name: artName(request.name), file: null, error: "the image engine (ComfyUI) is not running" }))];
+    if (!(await ArtStudio.ensure())) {
+      return [...results, ...todo.map((request) => ({ name: artName(request.name), file: null, error: "the image engine (ComfyUI) is not running and could not be started" }))];
     }
     await ArtStudio.clearCardForArt();
     try {

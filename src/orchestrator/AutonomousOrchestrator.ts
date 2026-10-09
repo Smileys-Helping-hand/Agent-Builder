@@ -1710,8 +1710,8 @@ is there and as a coloured shape when it is not, so the game works before and af
     }
     const pictures = (list.pictures ?? []).filter((p) => p?.name && p?.subject && p?.kind);
     if (pictures.length === 0) return;
-    if (!(await ArtStudio.available())) {
-      this.think(iteration.iteration, "decision", "No pictures this time", "The image engine (ComfyUI) is not running, so the game uses its built-in shapes. Start it and carry the build on to add the art.");
+    if (!(await ArtStudio.ensure())) {
+      this.think(iteration.iteration, "decision", "No pictures this time", "The image engine (ComfyUI) is not running and could not be started (or game mode is on), so the game uses its built-in shapes. Carry the build on later to add the art.");
       return;
     }
     // The model fits each picture to this game: a space colony's "town hall" is a command dome.
