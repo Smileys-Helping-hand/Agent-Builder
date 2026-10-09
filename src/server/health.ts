@@ -5,6 +5,7 @@ import { VectorMemory } from "../state/VectorMemory.js";
 import { QueueService } from "../queue/QueueService.js";
 import { PolicyEngine } from "../security/PolicyEngine.js";
 import { Logger } from "../utils/Logger.js";
+import { StallWatch } from "../utils/StallWatch.js";
 import { emitServerEvent } from "./eventBus.js";
 
 export type ComponentStatus = "ok" | "degraded" | "down";
@@ -38,7 +39,9 @@ export class HealthMonitor {
       details: {
         loadAvg: os.loadavg(),
         memoryUsage: process.memoryUsage(),
-        platform: `${os.type()} ${os.release()}`
+        platform: `${os.type()} ${os.release()}`,
+        // Times the whole builder was frozen (over 3 s) since it started.
+        freezes: StallWatch.status()
       }
     };
     Telemetry.setHealth("runtime", "ok");

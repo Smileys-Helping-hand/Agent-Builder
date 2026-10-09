@@ -325,12 +325,21 @@ Rules: no title heading; use ONLY the findings; keep citation numbers exactly as
 
   private schedule(id: string, delayMs: number): void {
     this.clearTimer(id);
-    ResearchStore.setNextCycleAt(id, new Date(Date.now() + delayMs).toISOString());
     const timer = setTimeout(() => {
       this.timers.delete(id);
-      void this.runCycle(id);
+      this.runCycle(id).catch((error) => {
+        Logger.warn("Research cycle failed; trying again in 5 minutes", { id, error: error instanceof Error ? error.message : String(error) });
+        if (!this.timers.has(id)) this.schedule(id, 5 * 60_000);
+      });
     }, delayMs);
     this.timers.set(id, timer);
+    // Only what the app shows as "next cycle at"; the timer above is what runs it.
+    // A busy database here once threw before the timer was set and the topic stopped.
+    try {
+      ResearchStore.setNextCycleAt(id, new Date(Date.now() + delayMs).toISOString());
+    } catch (error) {
+      Logger.warn("Could not record the next research cycle", { id, error: error instanceof Error ? error.message : String(error) });
+    }
   }
 
   private emit(topicId: string, event: string, detail: Record<string, unknown> = {}): void {
