@@ -21,6 +21,8 @@ import { bridgeCatalogue, callAsCaller, resolveBridgeAction } from "./jarvisActi
 
 /** The agent key Jarvis uses to reach into the builder. */
 const JARVIS_KEY_NAME = "jarvis";
+/** Every key that is Jarvis: his own, and his bridge's on this PC. */
+const JARVIS_AGENTS = [JARVIS_KEY_NAME, "jarvis-bridge"];
 /** Jarvis counts as monitoring if he has made a request within this long. */
 const MONITORING_WINDOW_MIN = 15;
 
@@ -56,12 +58,16 @@ export const registerJarvisRoutes = (app: Express) => {
    * whether he is actually watching, his access, and the log of what happened.
    */
   app.get("/api/jarvis/overview", authenticateAgent("read"), async (req: Request, res: Response) => {
-    const key = AgentKeyModel.list().find((entry) => entry.name === JARVIS_KEY_NAME && !entry.revokedAt) ?? null;
-    const lastSeen = [AgentActivity.lastSeen(JARVIS_KEY_NAME), key?.lastUsedAt ?? null]
+    // His bridge on this PC (jarvis-peer-bridge) has a key of its own: it is
+    // Jarvis too. Counting only "jarvis" showed him as not watching while the
+    // bridge was reading the builder every 30 seconds.
+    const keys = AgentKeyModel.list().filter((entry) => JARVIS_AGENTS.includes(entry.name) && !entry.revokedAt);
+    const key = keys.find((entry) => entry.name === JARVIS_KEY_NAME) ?? keys[0] ?? null;
+    const lastSeen = [...JARVIS_AGENTS.map((agent) => AgentActivity.lastSeen(agent)), ...keys.map((entry) => entry.lastUsedAt ?? null)]
       .filter((value): value is string => Boolean(value))
       .sort()
       .pop() ?? null;
-    const recent = AgentActivity.countSince(JARVIS_KEY_NAME, MONITORING_WINDOW_MIN);
+    const recent = JARVIS_AGENTS.reduce((sum, agent) => sum + AgentActivity.countSince(agent, MONITORING_WINDOW_MIN), 0);
     const limit = Math.min(Number(req.query.limit) || 100, 300);
 
     res.json({
@@ -86,7 +92,9 @@ export const registerJarvisRoutes = (app: Express) => {
         apiKeyHint: hint(process.env.JARVIS_API_KEY),
         ownerId: process.env.JARVIS_OWNER_ID ?? null
       },
-      activity: AgentActivity.list({ agent: JARVIS_KEY_NAME, limit })
+      activity: JARVIS_AGENTS.flatMap((agent) => AgentActivity.list({ agent, limit }))
+        .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
+        .slice(0, limit)
     });
   });
 

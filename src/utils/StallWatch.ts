@@ -19,6 +19,9 @@ let count = 0;
 
 export const StallWatch = {
   start(): void {
+    // From now: the time since this module loaded is starting up, not a freeze
+    // (counting it logged a 47.9 s "freeze" on every start).
+    last = Date.now();
     const timer = setInterval(() => {
       const now = Date.now();
       const late = now - last - TICK_MS;
