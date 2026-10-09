@@ -29,6 +29,7 @@ import { ResearchStore } from "../research/ResearchStore.js";
 import { SystemResourceService, type SystemMetrics } from "../utils/SystemResourceService.js";
 import { readPublicUrl } from "../utils/PublicUrl.js";
 import { ollamaOptions } from "../tools/ModelRouter.js";
+import { comfyBinary } from "../media/ArtStudio.js";
 
 const run = promisify(execFile);
 
@@ -57,14 +58,6 @@ export interface Problem {
 
 const startedAt = Date.now();
 
-const comfyBinary = (): string | null => {
-  const candidates = [
-    process.env.COMFY_DESKTOP_PATH,
-    "C:/Program Files/Comfy Desktop/Comfy Desktop.exe",
-    path.join(os.homedir(), "AppData", "Local", "Programs", "ComfyUI", "ComfyUI.exe")
-  ].filter((c): c is string => Boolean(c));
-  return candidates.find((c) => fs.existsSync(c)) ?? null;
-};
 
 /**
  * Comfy Desktop 1.1+ opens on its dashboard and starts no server until someone

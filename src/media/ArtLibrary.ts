@@ -85,6 +85,8 @@ const run = (job: ArtJob) => {
         if (!parent) throw new Error("the picture to edit is gone");
         source = await ArtStudio.upload(ArtLibrary.fileOf(parent));
       }
+      // Started if it is not running: whoever asked (the app, Jarvis) wants the picture.
+      if (!(await ArtStudio.ensure())) throw new Error("the image engine (ComfyUI) is not running and could not be started");
       // The coding model steps aside while the picture is drawn, and gets the card back after.
       await ArtStudio.clearCardForArt();
       let png: Buffer;

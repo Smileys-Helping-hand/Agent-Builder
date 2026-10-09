@@ -21,8 +21,15 @@ import { bridgeCatalogue, callAsCaller, resolveBridgeAction } from "./jarvisActi
 
 /** The agent key Jarvis uses to reach into the builder. */
 const JARVIS_KEY_NAME = "jarvis";
-/** Every key that is Jarvis: his own, and his bridge's on this PC. */
-const JARVIS_AGENTS = [JARVIS_KEY_NAME, "jarvis-bridge"];
+/**
+ * Every key that is Jarvis: "jarvis", and each copy's own (jarvis-bridge,
+ * jarvis-<machine>-<folder>, which Second Brain's connector mints so one copy
+ * rotating its key never revokes another's).
+ */
+const isJarvisKey = (name: string): boolean => name === JARVIS_KEY_NAME || name.startsWith(`${JARVIS_KEY_NAME}-`);
+const jarvisAgents = (): string[] => [
+  ...new Set([JARVIS_KEY_NAME, "jarvis-bridge", ...AgentKeyModel.list().map((entry) => entry.name).filter(isJarvisKey)])
+];
 /** Jarvis counts as monitoring if he has made a request within this long. */
 const MONITORING_WINDOW_MIN = 15;
 
@@ -61,13 +68,14 @@ export const registerJarvisRoutes = (app: Express) => {
     // His bridge on this PC (jarvis-peer-bridge) has a key of its own: it is
     // Jarvis too. Counting only "jarvis" showed him as not watching while the
     // bridge was reading the builder every 30 seconds.
-    const keys = AgentKeyModel.list().filter((entry) => JARVIS_AGENTS.includes(entry.name) && !entry.revokedAt);
+    const agents = jarvisAgents();
+    const keys = AgentKeyModel.list().filter((entry) => isJarvisKey(entry.name) && !entry.revokedAt);
     const key = keys.find((entry) => entry.name === JARVIS_KEY_NAME) ?? keys[0] ?? null;
-    const lastSeen = [...JARVIS_AGENTS.map((agent) => AgentActivity.lastSeen(agent)), ...keys.map((entry) => entry.lastUsedAt ?? null)]
+    const lastSeen = [...agents.map((agent) => AgentActivity.lastSeen(agent)), ...keys.map((entry) => entry.lastUsedAt ?? null)]
       .filter((value): value is string => Boolean(value))
       .sort()
       .pop() ?? null;
-    const recent = JARVIS_AGENTS.reduce((sum, agent) => sum + AgentActivity.countSince(agent, MONITORING_WINDOW_MIN), 0);
+    const recent = agents.reduce((sum, agent) => sum + AgentActivity.countSince(agent, MONITORING_WINDOW_MIN), 0);
     const limit = Math.min(Number(req.query.limit) || 100, 300);
 
     res.json({
@@ -92,7 +100,7 @@ export const registerJarvisRoutes = (app: Express) => {
         apiKeyHint: hint(process.env.JARVIS_API_KEY),
         ownerId: process.env.JARVIS_OWNER_ID ?? null
       },
-      activity: JARVIS_AGENTS.flatMap((agent) => AgentActivity.list({ agent, limit }))
+      activity: agents.flatMap((agent) => AgentActivity.list({ agent, limit }))
         .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
         .slice(0, limit)
     });
