@@ -42,6 +42,8 @@ const db = openSqlite(DB_PATH);
 // The key-minting CLI writes this file from a second process while the server
 // holds it open; WAL lets a reader and a writer coexist instead of blocking.
 db.pragma("journal_mode = WAL");
+// Commits flush only at checkpoints, so a busy disk does not freeze the server (see KnowledgeDb).
+db.pragma("synchronous = NORMAL");
 db.exec(`
   CREATE TABLE IF NOT EXISTS agent_keys (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

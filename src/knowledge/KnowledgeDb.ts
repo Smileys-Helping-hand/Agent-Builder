@@ -140,6 +140,12 @@ export const getKnowledgeDb = (): SqliteDatabase => {
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   const db = openSqlite(DB_PATH);
   db.pragma("journal_mode = WAL");
+  // Every write here runs on the event loop. With the default FULL, each commit
+  // waits for the disk to flush, and on a busy hard drive (a build's npm ci next
+  // door) that froze the whole builder for seconds per write, long enough for
+  // the launcher to restart it. In WAL, NORMAL flushes only at checkpoints and
+  // still cannot corrupt the file; a power cut can lose the last few writes.
+  db.pragma("synchronous = NORMAL");
   db.pragma("foreign_keys = ON");
   db.exec(SCHEMA);
   instance = db;
