@@ -66,6 +66,73 @@ const comfyBinary = (): string | null => {
   return candidates.find((c) => fs.existsSync(c)) ?? null;
 };
 
+/**
+ * Comfy Desktop 1.1+ opens on its dashboard and starts no server until someone
+ * clicks an installation, so launching the app gave Jarvis nothing to send an
+ * image to. This is the command the app itself runs for its local installation
+ * (its python, the shared model paths, the shared input and output folders),
+ * pinned to loopback on 8188. Null when there is no local installation.
+ */
+const comfyServerCommand = (): { python: string; args: string[]; cwd: string } | null => {
+  const desktopDir = path.join(process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"), "Comfy Desktop");
+  const readJson = <T>(file: string): T | null => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(desktopDir, file), "utf8")) as T;
+    } catch {
+      return null;
+    }
+  };
+  const installs = readJson<Array<{ installPath?: string; status?: string }>>("installations.json") ?? [];
+  const settings = readJson<{ inputDir?: string; outputDir?: string }>("settings.json") ?? {};
+  for (const install of installs) {
+    if (!install.installPath || install.status !== "installed") continue;
+    const python = path.join(install.installPath, "ComfyUI", ".venv", "Scripts", "python.exe");
+    if (!fs.existsSync(python)) continue;
+    const args = ["-s", path.join("ComfyUI", "main.py"), "--enable-manager", "--listen", "127.0.0.1", "--port", "8188"];
+    const modelPaths = path.join(desktopDir, "shared_model_paths.yaml");
+    if (fs.existsSync(modelPaths)) args.push("--extra-model-paths-config", modelPaths);
+    if (settings.inputDir) args.push("--input-directory", settings.inputDir);
+    if (settings.outputDir) args.push("--output-directory", settings.outputDir);
+    return { python, args, cwd: install.installPath };
+  }
+  return null;
+};
+
+/** Starts ComfyUI's server hidden; falls back to opening the app when there is no installation to run. */
+const startComfy = (): string | null => {
+  const server = comfyServerCommand();
+  if (server) {
+    spawn(server.python, server.args, { cwd: server.cwd, detached: true, stdio: "ignore", windowsHide: true }).unref();
+    return "ComfyUI server starting on port 8188 (a minute or two before it answers).";
+  }
+  const bin = comfyBinary();
+  if (!bin) return null;
+  spawn(bin, [], { detached: true, stdio: "ignore", windowsHide: false }).unref();
+  return "Comfy Desktop launched.";
+};
+
+/** Stops the app and any ComfyUI server, whichever started it. False when neither was running. */
+const stopComfy = async (): Promise<boolean> => {
+  let stopped = false;
+  try {
+    await run("taskkill", ["/F", "/IM", "Comfy Desktop.exe", "/T"], { timeout: 4000, windowsHide: true });
+    stopped = true;
+  } catch {}
+  try {
+    const { stdout } = await run(
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Where-Object { $_.CommandLine -like '*ComfyUI*main.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force; $_.ProcessId }"
+      ],
+      { timeout: 15_000, windowsHide: true }
+    );
+    if (stdout.trim()) stopped = true;
+  } catch {}
+  return stopped;
+};
+
 const checkComfy = async (): Promise<{ state: ServiceState; detail: string }> => {
   try {
     const res = await fetch("http://127.0.0.1:8188/system_stats", { signal: AbortSignal.timeout(1500) });
@@ -79,7 +146,8 @@ const checkComfy = async (): Promise<{ state: ServiceState; detail: string }> =>
       windowsHide: true
     });
     if (stdout.includes("Comfy Desktop.exe")) {
-      return { state: "up", detail: "Desktop application running" };
+      // The app open on its dashboard serves nothing; only the server makes images.
+      return { state: "degraded", detail: "Desktop app open, but no image server on port 8188" };
     }
   } catch {}
   return { state: "down", detail: "Stopped (saving ~1.5GB RAM & GPU VRAM)" };
@@ -482,18 +550,11 @@ export const registerServiceRoutes = (app: Express) => {
     } else if (svc === "comfy") {
       const isStart = action ? action === "start" : (await checkComfy()).state !== "up";
       if (isStart) {
-        const bin = comfyBinary();
-        if (!bin) return res.status(400).json({ error: "Comfy Desktop is not installed on this machine." });
-        const child = spawn(bin, [], { detached: true, stdio: "ignore", windowsHide: false });
-        child.unref();
-        outcome = "Comfy Desktop launched.";
+        const started = startComfy();
+        if (!started) return res.status(400).json({ error: "Comfy Desktop is not installed on this machine." });
+        outcome = started;
       } else {
-        try {
-          await run("taskkill", ["/F", "/IM", "Comfy Desktop.exe", "/T"], { timeout: 4000, windowsHide: true });
-          outcome = "Comfy Desktop stopped (resources reclaimed).";
-        } catch {
-          outcome = "Comfy Desktop was not running.";
-        }
+        outcome = (await stopComfy()) ? "Comfy Desktop stopped (resources reclaimed)." : "Comfy Desktop was not running.";
       }
     } else if (svc === "research") {
       const topics = ResearchStore.listTopics();
@@ -539,20 +600,16 @@ export const registerServiceRoutes = (app: Express) => {
     }
 
     if (fixId === "launch_comfy") {
-      const bin = comfyBinary();
-      if (!bin) return res.status(400).json({ error: "Comfy Desktop is not installed." });
-      const child = spawn(bin, [], { detached: true, stdio: "ignore", windowsHide: false });
-      child.unref();
-      return res.json({ ok: true, message: "Comfy Desktop launched on PC." });
+      const started = startComfy();
+      if (!started) return res.status(400).json({ error: "Comfy Desktop is not installed." });
+      return res.json({ ok: true, message: started });
     }
 
     if (fixId === "stop_comfy") {
-      try {
-        await run("taskkill", ["/F", "/IM", "Comfy Desktop.exe", "/T"], { timeout: 4000, windowsHide: true });
-        return res.json({ ok: true, message: "Comfy Desktop stopped; GPU VRAM and memory reclaimed." });
-      } catch {
-        return res.json({ ok: true, message: "Comfy Desktop was not running." });
-      }
+      return res.json({
+        ok: true,
+        message: (await stopComfy()) ? "Comfy Desktop stopped; GPU VRAM and memory reclaimed." : "Comfy Desktop was not running."
+      });
     }
 
     if (fixId === "clean_disk") {
@@ -612,16 +669,15 @@ export const registerServiceRoutes = (app: Express) => {
       actionExecuted = "stop_ollama";
       reply = "Ollama stopped to conserve GPU resources.";
     } else if (lower.includes("start comfy") || lower.includes("launch comfy")) {
-      const bin = comfyBinary();
-      if (bin) {
-        spawn(bin, [], { detached: true, stdio: "ignore" }).unref();
+      const started = startComfy();
+      if (started) {
         actionExecuted = "launch_comfy";
-        reply = "Comfy Desktop is launching on your PC.";
+        reply = started;
       } else {
         reply = "Comfy Desktop is not installed on this machine.";
       }
     } else if (lower.includes("stop comfy") || lower.includes("close comfy") || lower.includes("kill comfy")) {
-      await run("taskkill", ["/F", "/IM", "Comfy Desktop.exe", "/T"], { timeout: 4000, windowsHide: true }).catch(() => {});
+      await stopComfy();
       actionExecuted = "stop_comfy";
       reply = "Comfy Desktop closed. VRAM and memory reclaimed.";
     } else if (lower.includes("status") || lower.includes("health") || lower.includes("telemetry")) {
