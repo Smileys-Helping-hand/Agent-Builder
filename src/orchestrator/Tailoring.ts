@@ -125,12 +125,17 @@ export const stripInventedContact = (source: string, brief: string): { source: s
 
 const MEAT = /\b(meat|meats|beef|steak|sirloin|rump|chicken|lamb|mutton|pork|bacon|ham|sausage|boerewors|biltong|fish|prawns?|shrimp|calamari|squid|tuna|salmon|hake|seafood|oxtail|tripe|liver|duck|venison|anchov(y|ies)|gelatine?)\b/i;
 const ANIMAL = /\b(cheese|cheesecake|cream|creamy|butter|buttermilk|milk|yoghurt|yogurt|custard|egg|eggs|honey|mayo|mayonnaise|labneh|feta|halloumi|ghee|whey)\b/i;
+/** Wheat and what is made from it. */
+const GLUTEN = /\b(bread|breads|bun|buns|roll|rolls|roti|naan|pita|pitta|wrap|wraps|tortillas?|pastry|pastries|pie|pies|cake|cakes|sponge|biscuits?|cookies?|scones?|pasta|spaghetti|noodles?|lasagne|lasagna|couscous|bulgur|flour|wheat|barley|rye|semolina|batter|battered|crumbed|breaded|crumbs|dumplings?|pancakes?|waffles?|pizza|bunny chow|samoosas?|samosas?|vetkoek|koeksisters?|croutons?|crust|beer)\b/i;
+/** What a dish can be made with instead: rice noodles, almond flour, a gluten-free bun. */
+const GLUTEN_FREE_KIND = /\bgluten[- ]free\s+\w+|\b(rice|corn|maize|chickpea|almond|buckwheat|cassava|coconut|potato|sorghum)\s+(flour|noodles?|pasta|wraps?|bread|cakes?|crust|pancakes?|batter)\b|\b(cauliflower|polenta)\s+crust\b/gi;
 
 /**
  * Diet tags a dish's own description contradicts, taken off: a tailored menu
  * had "Bunny Chow — filled with various meats · Vegetarian" and a vegan
  * cheesecake. Someone choosing by these tags may have a reason to. Meat or
- * fish rules out vegetarian and vegan; dairy, egg or honey rules out vegan.
+ * fish rules out vegetarian and vegan; dairy, egg or honey rules out vegan;
+ * bread, pastry or pasta rules out gluten-free.
  * Returns the source and the dishes changed.
  */
 export const fixDietTags = (source: string): { source: string; fixed: string[] } => {
@@ -146,6 +151,9 @@ export const fixDietTags = (source: string): { source: string; fixed: string[] }
         // Coconut cream, almond milk and peanut butter are plants.
         const plantless = text.replace(/\b(coconut|oat|soy|soya|almond|cashew|rice|peanut|nut|vegan|plant[- ]based|cocoa|shea)\s+(cream|milk|butter|cheese|mayo|mayonnaise|yoghurt|yogurt)\b/gi, "");
         if (t === "vegan" && ANIMAL.test(plantless)) return false;
+        // Bread, pastry or pasta rules out gluten-free: a tailored menu had
+        // "steamed bread filled with a savory curry · Gluten-free".
+        if (t === "gluten-free" && GLUTEN.test(text.replace(GLUTEN_FREE_KIND, ""))) return false;
         return true;
       });
       if (keep.length === list.length) return whole;

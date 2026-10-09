@@ -109,6 +109,15 @@ assert.match(diet.source, /Bunny Chow[^\n]*diet: \["spicy"\]/);
 assert.match(diet.source, /Cheesecake[^\n]*diet: \["vegetarian"\]/);
 assert.match(diet.source, /Kale Salad[^\n]*diet: \["vegan", "vegetarian"\]/);
 assert.deepEqual(fixDietTags(fs.readFileSync(path.resolve("templates/sites/restaurant/src/content.ts"), "utf8")).fixed, [], "the template's own menu is right");
+// Bread rules out gluten-free; rice noodles and a gluten-free bun do not.
+const wheat = fixDietTags(`items: [
+  { name: "Curry Bunny Chow", description: "A hearty portion of steamed bread filled with a savory curry.", price: 120, diet: ["gluten-free", "spicy"] },
+  { name: "Pad Thai", description: "Rice noodles, peanuts and lime.", price: 110, diet: ["gluten-free"] },
+  { name: "Smash Burger", description: "Beef on a gluten-free bun.", price: 140, diet: ["gluten-free"] },
+  { name: "Pap & Chakalaka", description: "Soft pap and a slow-cooked relish.", price: 50, diet: ["vegan", "gluten-free"] }
+]`);
+assert.deepEqual(wheat.fixed, ["Curry Bunny Chow"]);
+assert.match(wheat.source, /Curry Bunny Chow[^\n]*diet: \["spicy"\]/);
 
 // Rewording line by line keeps every template's content parseable, whatever the new text holds.
 const { sampleWording, applyRewording } = await import("../src/orchestrator/Tailoring.js");
