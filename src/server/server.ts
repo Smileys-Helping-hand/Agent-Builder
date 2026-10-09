@@ -3,6 +3,9 @@
 // at import time. Without this, .env was only loaded later (as a side effect
 // of OpenAIClient) and JWT_SECRET from .env was silently ignored.
 import "dotenv/config";
+// Second: a failure in a background job is logged, not fatal (see CrashGuard).
+import "../utils/CrashGuard.js";
+import { StallWatch } from "../utils/StallWatch.js";
 import fs from "fs";
 import http from "http";
 import path from "path";
@@ -325,6 +328,7 @@ const host = process.env.HOST || "127.0.0.1";
 
 server.listen(port, host, () => {
   console.log(`Agent Builder API running on http://${host}:${port}`);
+  StallWatch.start();
 });
 
 // Running as the desktop app's sidecar: exit as soon as the app is gone. The app

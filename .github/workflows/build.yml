@@ -41,3 +41,12 @@ jobs:
       # push red for issues nothing here caused.
       - name: Dependency audit (advisory)
         run: npm audit --audit-level=high || true
+      # The builder runs on Node 22.13+ (node:sqlite is built in from there);
+      # the steps above build with 20. Another process holding the database
+      # must make the builder wait, and a stray failure in a background job
+      # must not end it: both once stopped a customer build mid-pass.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Smoke test (database lock, crash guard)
+        run: npm run test:sqlite-lock

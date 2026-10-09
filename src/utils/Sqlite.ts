@@ -105,6 +105,11 @@ const wrapStatement = (statement: NodeStatementSync): SqliteStatement => ({
 export const openSqlite = (filePath: string): SqliteDatabase => {
   const { DatabaseSync } = loadSqlite();
   const db = new DatabaseSync(filePath);
+  // Another process may be writing the same file (a script, a test, the CLI,
+  // a second copy of the builder). Without a timeout SQLite answers "database
+  // is locked" at once, and one such answer inside a timer once took the whole
+  // builder down mid customer build. Wait for the lock instead.
+  db.exec(`PRAGMA busy_timeout = ${Number(process.env.SQLITE_BUSY_TIMEOUT_MS) || 10_000}`);
   let depth = 0;
 
   return {
@@ -116,7 +121,10 @@ export const openSqlite = (filePath: string): SqliteDatabase => {
       <A extends unknown[], R>(fn: (...args: A) => R) =>
       (...args: A): R => {
         const savepoint = `sp_${depth}`;
-        db.exec(depth === 0 ? "BEGIN" : `SAVEPOINT ${savepoint}`);
+        // IMMEDIATE takes the write lock up front (waiting for it, per
+        // busy_timeout); a plain BEGIN that later upgrades to writing can fail
+        // with "locked" without waiting at all.
+        db.exec(depth === 0 ? "BEGIN IMMEDIATE" : `SAVEPOINT ${savepoint}`);
         depth += 1;
         try {
           const result = fn(...args);
