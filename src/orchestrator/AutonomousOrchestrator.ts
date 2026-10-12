@@ -17,6 +17,7 @@ import { HardwareScaler } from "../utils/HardwareScaler.js";
 import { APP_PLATFORMS, AppBuilder, type AppPlatform } from "../orders/AppBuilder.js";
 import { Packager } from "../orders/Packager.js";
 import { ArtStudio, artName, type ArtRequest } from "../media/ArtStudio.js";
+import { withContentPhotos } from "../media/SitePhotos.js";
 import { Workspace } from "./Workspace.js";
 import { Verifier, type CheckResult, type VerificationReport } from "./Verifier.js";
 import { Executor } from "./Executor.js";
@@ -1708,25 +1709,51 @@ is there and as a coloured shape when it is not, so the game works before and af
     } catch {
       return;
     }
-    const pictures = (list.pictures ?? []).filter((p) => p?.name && p?.subject && p?.kind);
-    if (pictures.length === 0) return;
+    const listed = (list.pictures ?? []).filter((p) => p?.name && p?.subject && p?.kind);
+    if (listed.length === 0) return;
+    // A website's photographs (our templates since the signature layer) or a game's sprites.
+    const photos = listed.every((p) => p.kind === "photo");
+    // A site's photos are of what its content now shows (the customer's dishes and products,
+    // not the template's), and a dish or product the content gives a new photo key gets one drawn.
+    let content: string | null = null;
+    try {
+      content = photos ? fs.readFileSync(path.join(this.workspace.root, "src", "content.ts"), "utf8") : null;
+    } catch {
+      content = null;
+    }
+    const pictures: Array<ArtRequest & { onSite?: string }> = photos ? withContentPhotos(listed, content).slice(0, 16) : listed;
     if (!(await ArtStudio.ensure())) {
-      this.think(iteration.iteration, "decision", "No pictures this time", "The image engine (ComfyUI) is not running and could not be started (or game mode is on), so the game uses its built-in shapes. Carry the build on later to add the art.");
+      this.think(
+        iteration.iteration,
+        "decision",
+        "No pictures this time",
+        photos
+          ? "The image engine (ComfyUI) is not running and could not be started (or game mode is on), so the site keeps the template's sample photographs. Carry the build on later to draw its own."
+          : "The image engine (ComfyUI) is not running and could not be started (or game mode is on), so the game uses its built-in shapes. Carry the build on later to add the art."
+      );
       return;
     }
     // The model fits each picture to this game: a space colony's "town hall" is a command dome.
     let style = list.style ?? "";
     let subjects = pictures.map((p) => p.subject);
     try {
-      const answer = await ModelRouter.generate(`You are art-directing a game. The game, in the customer's words:
+      const answer = await ModelRouter.generate((photos
+        ? `You are art-directing the photographs for a business's website. The business, in the customer's words:
+${this.config.description.split(/\nWhat our research confirmed/i)[0].slice(0, 1500)}
+
+The site has a photograph in each of these places. For each, write what it should show for THIS business, in under 30
+words: keep its role (a hero shot stays a hero shot, a product stays a product, a dish stays a dish), and make it this
+business's own: its products, its town, its customers. No people's faces close up, no text or logos. Then one line of
+photographic style for all of them.`
+        : `You are art-directing a game. The game, in the customer's words:
 ${this.config.description.split(/\nWhat our research confirmed/i)[0].slice(0, 1500)}
 
 The game needs these pictures. For each, write what it should show for THIS game, in under 20 words: keep what it is
 (a building stays a building, a troop stays a character), change its look to fit the game's theme. Then one line of art
-style for all of them.
+style for all of them.`) + `
 
-${pictures.map((p, i) => `${i + 1}. ${p.name}: ${p.subject}`).join("\n")}
-
+${pictures.map((p, i) => `${i + 1}. ${p.name}${p.onSite ? ` (on the site: ${p.onSite})` : ""}: ${p.subject}`).join("\n")}
+${photos ? "\nWhere a picture is on an item of the site, it must show that item exactly as the site names it now.\n" : ""}
 Answer with JSON only: {"style": "...", "pictures": {"1": "...", "2": "..."}}`);
       const parsed = JSON.parse(/\{[\s\S]*\}/.exec(answer)?.[0] ?? "{}") as { style?: unknown; pictures?: Record<string, unknown> };
       if (typeof parsed.style === "string" && parsed.style.trim().length > 5) style = parsed.style.trim().slice(0, 200);
@@ -1738,23 +1765,20 @@ Answer with JSON only: {"style": "...", "pictures": {"1": "...", "2": "..."}}`);
       // The list's own words will do.
     }
     const started = Date.now();
-    const results = await ArtStudio.drawAll(
-      this.workspace.root,
-      pictures.map((p, i) => ({ ...p, subject: subjects[i] })),
-      style,
-      (done, total, name) => this.emit("stage", { stage: `drawing ${name} (${done + 1}/${total})` })
-    );
+    const requests = pictures.map((p, i) => ({ ...p, subject: subjects[i] }));
+    const progress = (done: number, total: number, name: string) => this.emit("stage", { stage: `drawing ${name} (${done + 1}/${total})` });
+    const results = photos ? await ArtStudio.drawPhotos(this.workspace.root, requests, style, progress) : await ArtStudio.drawAll(this.workspace.root, requests, style, progress);
     const drawn = results.filter((r) => r.file).length;
     if (drawn === 0) return;
     // Rebuilt, so dist/ (the preview, the download, the apps) has the pictures.
     await Packager.buildWebsite(this.workspace.root, this.buildId);
-    await this.workspace.commitCurrentState(`Drew ${drawn} picture${drawn === 1 ? "" : "s"} for the game`).catch(() => undefined);
+    await this.workspace.commitCurrentState(`Drew ${drawn} ${photos ? "photograph" : "picture"}${drawn === 1 ? "" : "s"} for the ${photos ? "site" : "game"}`).catch(() => undefined);
     this.think(
       iteration.iteration,
       "decision",
       `Drew ${drawn} of ${pictures.length} pictures`,
       `${results.map((r) => `${r.name}${r.file ? "" : ` (not drawn: ${r.error})`}`).join(", ")}, in ${Math.round((Date.now() - started) / 1000)} s. Style: ${style}.`,
-      results.filter((r) => r.file).map((r) => `public/${r.file}`)
+      results.filter((r) => r.file).map((r) => (photos ? r.file! : `public/${r.file}`))
     );
   }
 

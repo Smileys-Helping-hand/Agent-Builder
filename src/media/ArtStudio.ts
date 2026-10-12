@@ -33,9 +33,64 @@ export const comfyBinary = (): string | null => {
   return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
 };
 
+/**
+ * Comfy Desktop 1.1+ opens on its dashboard and starts no server until someone
+ * clicks an installation, so launching the app gave Jarvis nothing to send an
+ * image to. This is the command the app itself runs for its local installation
+ * (its python, the shared model paths, the shared input and output folders),
+ * pinned to loopback on 8188. Null when there is no local installation.
+ */
+export const comfyServerCommand = (): { python: string; args: string[]; cwd: string } | null => {
+  const desktopDir = path.join(process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"), "Comfy Desktop");
+  const readJson = <T>(file: string): T | null => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(desktopDir, file), "utf8")) as T;
+    } catch {
+      return null;
+    }
+  };
+  const installs = readJson<Array<{ installPath?: string; status?: string }>>("installations.json") ?? [];
+  const settings = readJson<{ inputDir?: string; outputDir?: string }>("settings.json") ?? {};
+  for (const install of installs) {
+    if (!install.installPath || install.status !== "installed") continue;
+    const python = path.join(install.installPath, "ComfyUI", ".venv", "Scripts", "python.exe");
+    if (!fs.existsSync(python)) continue;
+    const args = ["-s", path.join("ComfyUI", "main.py"), "--enable-manager", "--listen", "127.0.0.1", "--port", "8188"];
+    const modelPaths = path.join(desktopDir, "shared_model_paths.yaml");
+    if (fs.existsSync(modelPaths)) args.push("--extra-model-paths-config", modelPaths);
+    if (settings.inputDir) args.push("--input-directory", settings.inputDir);
+    if (settings.outputDir) args.push("--output-directory", settings.outputDir);
+    return { python, args, cwd: install.installPath };
+  }
+  return null;
+};
+
+/** Starts ComfyUI's server hidden; falls back to opening the app when there is no installation to run. */
+export const startComfy = (): string | null => {
+  const server = comfyServerCommand();
+  if (server) {
+    // Its output goes to a log, not nowhere: started with no output at all it
+    // exited during start-up and nothing said why; with a file to write to it
+    // answers in about a minute and a half.
+    const logDir = path.resolve("data", "logs");
+    fs.mkdirSync(logDir, { recursive: true });
+    const log = fs.openSync(path.join(logDir, "comfy-server.log"), "a");
+    spawn(server.python, server.args, { cwd: server.cwd, detached: true, stdio: ["ignore", log, log], windowsHide: true }).unref();
+    fs.closeSync(log);
+    return "ComfyUI server starting on port 8188 (a minute or two before it answers).";
+  }
+  const bin = comfyBinary();
+  if (!bin) return null;
+  spawn(bin, [], { detached: true, stdio: "ignore", windowsHide: false }).unref();
+  return "Comfy Desktop launched.";
+};
+
 let starting: Promise<boolean> | null = null;
 
-export type ArtKind = "sprite" | "background" | "icon" | "ui";
+export type ArtKind = "sprite" | "background" | "icon" | "ui" | "photo";
+
+/** The shape of a photograph. */
+export type PhotoSize = "wide" | "square" | "tall";
 
 export interface ArtRequest {
   /** The file name without extension, also the key in the manifest: "hero", "goblin". */
@@ -45,6 +100,10 @@ export interface ArtRequest {
   kind: ArtKind;
   /** What to steer away from (an edit's overridden details: "a red roof"). */
   avoid?: string;
+  /** A photograph's shape (photos only). */
+  size?: PhotoSize;
+  /** Where a photograph goes in the project (photos only), e.g. "src/images/hero.webp". */
+  file?: string;
 }
 
 export interface ArtResult {
@@ -68,7 +127,8 @@ const SIZES: Record<ArtKind, { width: number; height: number; out: number; cutou
   sprite: { width: 1024, height: 1024, out: 256, cutout: true },
   icon: { width: 1024, height: 1024, out: 192, cutout: true },
   ui: { width: 1024, height: 1024, out: 256, cutout: true },
-  background: { width: 1344, height: 768, out: 1024, cutout: false }
+  background: { width: 1344, height: 768, out: 1024, cutout: false },
+  photo: { width: 1344, height: 768, out: 1344, cutout: false }
 };
 
 /** A name safe as a file and a manifest key. */
@@ -83,6 +143,12 @@ export const artName = (name: string): string =>
 export const artPrompts = (request: ArtRequest, style: string): { positive: string; negative: string } => {
   const look = style.trim() || "stylized mobile game art, vibrant colours";
   const avoid = request.avoid?.trim() ? `(${request.avoid.trim()}:1.3), ` : "";
+  if (request.kind === "photo") {
+    return {
+      positive: `${request.subject}. ${style.trim() || "professional editorial photography, natural light, shallow depth of field, true-to-life colour"}. No text, no logos, no watermark.`,
+      negative: `${avoid}text, watermark, logo, lowres, blurry, deformed, cartoon, illustration, oversaturated, extra fingers`
+    };
+  }
   if (request.kind === "background") {
     return {
       positive: `${request.subject}, wide game background, ${look}, no characters, no text, clean composition`,
@@ -157,6 +223,77 @@ export const artWorkflow = (request: ArtRequest, style: string, seed: number, pr
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Pixel sizes for a photograph's shape, as drawn. */
+export const PHOTO_SIZES: Record<PhotoSize, { width: number; height: number }> = {
+  wide: { width: 1344, height: 768 },
+  square: { width: 1024, height: 1024 },
+  tall: { width: 832, height: 1216 }
+};
+
+/**
+ * A photograph for a website, saved as WebP. With a Flux checkpoint it is
+ * drawn the way Flux schnell is meant to be (4 steps, no guidance, no
+ * negative prompt); with SDXL, the usual 22 steps and a negative prompt.
+ * Squares and talls come out at 900 wide, wides at full size: small enough
+ * to live inside a one-file site.
+ */
+export const photoWorkflow = (request: ArtRequest, style: string, seed: number, prefix: string, checkpoint: string): Record<string, unknown> => {
+  const size = PHOTO_SIZES[request.size ?? "wide"] ?? PHOTO_SIZES.wide;
+  const flux = /flux/i.test(checkpoint);
+  const { positive, negative } = artPrompts({ ...request, kind: "photo" }, style);
+  const outWidth = request.size === "wide" || !request.size ? size.width : 900;
+  const nodes: Record<string, { class_type: string; inputs: Record<string, unknown> }> = {
+    "1": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: checkpoint } },
+    "2": { class_type: "CLIPTextEncode", inputs: { clip: ["1", 1], text: positive } },
+    "3": { class_type: "CLIPTextEncode", inputs: { clip: ["1", 1], text: flux ? "" : negative } },
+    "4": { class_type: flux ? "EmptySD3LatentImage" : "EmptyLatentImage", inputs: { width: size.width, height: size.height, batch_size: 1 } },
+    "5": {
+      class_type: "KSampler",
+      inputs: {
+        model: ["1", 0],
+        positive: ["2", 0],
+        negative: ["3", 0],
+        latent_image: ["4", 0],
+        seed,
+        steps: flux ? 4 : 22,
+        cfg: flux ? 1 : 6.5,
+        sampler_name: flux ? "euler" : "dpmpp_2m",
+        scheduler: flux ? "simple" : "karras",
+        denoise: 1
+      }
+    },
+    "6": { class_type: "VAEDecode", inputs: { samples: ["5", 0], vae: ["1", 2] } }
+  };
+  let image: [string, number] = ["6", 0];
+  if (outWidth !== size.width) {
+    nodes["7"] = {
+      class_type: "ImageScale",
+      inputs: { image, upscale_method: "lanczos", width: outWidth, height: Math.round((size.height * outWidth) / size.width), crop: "disabled" }
+    };
+    image = ["7", 0];
+  }
+  nodes["8"] = { class_type: "SaveAnimatedWEBP", inputs: { images: image, filename_prefix: prefix, fps: 6, lossless: false, quality: 80, method: "default" } };
+  return nodes;
+};
+
+let photoCheckpointCache: string | null = null;
+
+/** The checkpoint photographs are drawn with: ART_PHOTO_CHECKPOINT, else a Flux one if installed, else the art checkpoint. */
+export const photoCheckpoint = async (): Promise<string> => {
+  if (process.env.ART_PHOTO_CHECKPOINT) return process.env.ART_PHOTO_CHECKPOINT;
+  if (photoCheckpointCache) return photoCheckpointCache;
+  try {
+    const info = (await (await fetch(`${COMFY()}/object_info/CheckpointLoaderSimple`, { signal: AbortSignal.timeout(20_000) })).json()) as {
+      CheckpointLoaderSimple?: { input?: { required?: { ckpt_name?: [string[]] } } };
+    };
+    const names = info.CheckpointLoaderSimple?.input?.required?.ckpt_name?.[0] ?? [];
+    photoCheckpointCache = names.find((name) => /flux/i.test(name) && /schnell/i.test(name)) ?? names.find((name) => /flux/i.test(name)) ?? CHECKPOINT();
+  } catch {
+    return CHECKPOINT();
+  }
+  return photoCheckpointCache;
+};
+
 export const ArtStudio = {
   /** Whether the image engine answers. */
   async available(): Promise<boolean> {
@@ -185,9 +322,11 @@ export const ArtStudio = {
         Logger.warn("The image engine is not running and Comfy Desktop is not installed where expected; set COMFY_DESKTOP_PATH or COMFY_URL");
         return false;
       }
-      Logger.log("The image engine was not running; starting it for a picture", { binary });
+      // Its server, not just the app: Comfy Desktop 1.1+ opens on its dashboard and
+      // starts no server, so a picture asked for while it was off waited ten minutes and failed.
       try {
-        spawn(binary, [], { detached: true, stdio: "ignore", windowsHide: false }).unref();
+        const how = startComfy();
+        Logger.log("The image engine was not running; starting it for a picture", { binary, how });
       } catch (error) {
         Logger.error("Could not start the image engine", { error: error instanceof Error ? error.message : String(error) });
         return false;
@@ -345,6 +484,59 @@ export const ArtStudio = {
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           Logger.warn("Could not draw a picture", { name: request.name, error: message });
+          results.push({ name: artName(request.name), file: null, error: message });
+        }
+      }
+    } finally {
+      await ArtStudio.clearCardForCode();
+    }
+    return results;
+  },
+
+  /**
+   * A website's photographs, drawn for this project and saved over the
+   * template's samples (src/images/<name>.webp, which the page imports and
+   * builds into itself). Each is drawn once per project — .art-drawn.json
+   * remembers which — so an upgrade only draws what is new.
+   */
+  async drawPhotos(projectRoot: string, requests: ArtRequest[], style: string, onProgress?: (done: number, total: number, name: string) => void): Promise<ArtResult[]> {
+    const markerPath = path.join(projectRoot, ".art-drawn.json");
+    let drawn: string[] = [];
+    try {
+      drawn = JSON.parse(fs.readFileSync(markerPath, "utf8")) as string[];
+    } catch {
+      // Nothing drawn for this project yet.
+    }
+    const fileOf = (request: ArtRequest) => request.file ?? `src/images/${artName(request.name)}.webp`;
+    const todo = requests.filter((request) => !drawn.includes(artName(request.name)));
+    const results: ArtResult[] = requests.filter((request) => !todo.includes(request)).map((request) => ({ name: artName(request.name), file: fileOf(request), error: null }));
+    if (todo.length === 0) return results;
+    if (!(await ArtStudio.ensure())) {
+      return [...results, ...todo.map((request) => ({ name: artName(request.name), file: null, error: "the image engine (ComfyUI) is not running and could not be started" }))];
+    }
+    const checkpoint = await photoCheckpoint();
+    await ArtStudio.clearCardForArt();
+    try {
+      for (const [index, request] of todo.entries()) {
+        onProgress?.(index, todo.length, request.name);
+        const target = path.resolve(projectRoot, fileOf(request));
+        // Only inside the project.
+        if (!target.startsWith(path.resolve(projectRoot) + path.sep)) {
+          results.push({ name: artName(request.name), file: null, error: "its file is outside the project" });
+          continue;
+        }
+        try {
+          const webp = await ArtStudio.render(
+            photoWorkflow(request, style, 1 + Math.floor(Math.random() * 1_000_000), `agentbuilder/${path.basename(projectRoot)}-${artName(request.name)}`, checkpoint)
+          );
+          fs.mkdirSync(path.dirname(target), { recursive: true });
+          fs.writeFileSync(target, webp);
+          drawn.push(artName(request.name));
+          fs.writeFileSync(markerPath, JSON.stringify(drawn, null, 2));
+          results.push({ name: artName(request.name), file: fileOf(request), error: null });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          Logger.warn("Could not draw a photograph", { name: request.name, error: message });
           results.push({ name: artName(request.name), file: null, error: message });
         }
       }
