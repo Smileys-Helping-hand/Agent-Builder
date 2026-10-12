@@ -5,7 +5,7 @@
  * from the closest of our site templates into a new one, carried on pass after
  * pass, and started again from scratch when an attempt stalls, until a build
  * scores 100 and meets the template contract (every word in src/content.ts
- * about an invented sample business, demo on, the kit kept). Then it
+ * about an invented sample business, the kit kept). Then it
  * graduates: its code is kept in data/academy/templates/<id> and it joins the
  * catalogue as a hidden draft for the owner to look at and publish with a price.
  *
@@ -165,7 +165,7 @@ export function practiceBrief(idea: AcademyIdea, starter = idea.starter ?? start
     "",
     "It must have:",
     ...idea.mustHave.map((item) => `- ${item}`),
-    "- Every word on the site in src/content.ts, describing an invented sample business (keep demo: true), so a customer's own details can replace it later",
+    "- Every word on the site in src/content.ts, describing an invented sample business, so a customer's own details can replace it later",
     "- The kit in src/lib (site.tsx, customize.ts, pro.tsx, hours.ts) kept as it is and used: Section, SmartForm, Header, Footer, DemoBanner, WhatsAppButton, brandStyle",
     `- Nothing left from ${was ? `${was}, the sample business` : "the template"} this started as (a ${starter} site): its name, wording, prices and features that do not fit replaced or removed`,
     "",
@@ -181,7 +181,8 @@ export function contractProblems(dir: string, idea: Pick<AcademyIdea, "name" | "
   const file = (rel: string) => path.join(dir, rel);
   const content = fs.existsSync(file("src/content.ts")) ? fs.readFileSync(file("src/content.ts"), "utf8") : "";
   if (!content) problems.push("there is no src/content.ts");
-  if (content && !/\bdemo\s*:\s*true\b/.test(content)) problems.push("src/content.ts does not keep demo: true");
+  // Practised like an order, the build turns the preview ribbon off; graduating turns it back on.
+  if (content && !/\bdemo\s*:/.test(content)) problems.push("src/content.ts has no demo flag for the preview ribbon");
   if (content && !/\bbusiness\s*:/.test(content)) problems.push("src/content.ts has no business");
   if (content && !/\bbrand\s*:/.test(content)) problems.push("src/content.ts has no brand colours");
   for (const kit of ["src/lib/site.tsx", "src/lib/customize.ts", "src/lib/pro.tsx"]) {
@@ -302,7 +303,12 @@ function graduate(id: string, record: BuildRecord): void {
     recursive: true,
     filter: (src) => !["node_modules", "dist", ".git"].includes(path.relative(record.outputDir, src).split(path.sep)[0])
   });
-  // A template now, no longer a starter: customer builds tailor it instead of rewriting it.
+  // A template shows the preview ribbon until a customer's build turns it off.
+  const contentFile = path.join(target, "src", "content.ts");
+  if (fs.existsSync(contentFile)) {
+    fs.writeFileSync(contentFile, fs.readFileSync(contentFile, "utf8").replace(/\bdemo(\s*):(\s*)false\b/, "demo$1:$2true"));
+  }
+  // Its own name now: customer builds tailor it instead of rewriting it.
   fs.writeFileSync(path.join(target, "template.json"), JSON.stringify({ name: idea.name, description: idea.brief.slice(0, 300), icon: idea.icon, academy: true }, null, 2));
   Catalog.create({
     id: catalogId,

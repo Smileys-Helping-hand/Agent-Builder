@@ -26,7 +26,7 @@ assert.equal(TemplateAcademy.status().counts.idea, 1);
 const brief = practiceBrief(dental);
 assert.match(brief, /Dental Practice/);
 assert.match(brief, /src\/content\.ts/);
-assert.match(brief, /demo: true/);
+assert.match(brief, /invented sample business/);
 assert.match(brief, /Book a check-up/);
 
 // It starts from the closest kind of site.
