@@ -44,6 +44,7 @@ const db = openSqlite(DB_PATH);
 db.pragma("journal_mode = WAL");
 // Commits flush only at checkpoints, so a busy disk does not freeze the server (see KnowledgeDb).
 db.pragma("synchronous = NORMAL");
+const lastTouched = new Map<number, number>();
 db.exec(`
   CREATE TABLE IF NOT EXISTS agent_keys (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,7 +96,14 @@ export const AgentKeyModel = {
     if (!secret || !secret.startsWith("ab_")) return null;
     const row = db.prepare("SELECT * FROM agent_keys WHERE key_hash = ?").get(hashKey(secret)) as AgentKeyRow | undefined;
     if (!row || row.revoked_at) return null;
-    db.prepare("UPDATE agent_keys SET last_used_at = ? WHERE id = ?").run(new Date().toISOString(), row.id);
+    // At most once a minute per key: Jarvis's bridge calls every few seconds,
+    // and a disk write on every request kept users.db's log growing for a
+    // "last used" nobody reads to the second.
+    const nowMs = Date.now();
+    if (nowMs - (lastTouched.get(row.id) ?? 0) >= 60_000) {
+      lastTouched.set(row.id, nowMs);
+      db.prepare("UPDATE agent_keys SET last_used_at = ? WHERE id = ?").run(new Date(nowMs).toISOString(), row.id);
+    }
     return mapKey(row);
   },
 

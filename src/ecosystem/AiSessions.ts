@@ -44,7 +44,16 @@ const TAIL_BYTES = 128 * 1024;
 const cache = new Map<string, { mtimeMs: number; session: AiSession }>();
 
 /** Cleared when the project registry changes, since matching depends on it. */
-export const clearSessionCache = (): void => cache.clear();
+export const clearSessionCache = (): void => {
+  cache.clear();
+  recentMemo = null;
+};
+
+// Listing them stats every transcript and re-reads the ones still being
+// written (this very conversation, say): over a second of blocking work, and
+// Jarvis asks every few minutes, often twice in a row. Half a minute stale is fine.
+const RECENT_TTL_MS = 30_000;
+let recentMemo: { at: number; limit: number; sessions: AiSession[] } | null = null;
 
 /** Read a slice of a file without pulling a 300 MB transcript into memory. */
 const readSlice = (file: string, bytes: number, fromEnd = false): string => {
@@ -346,8 +355,11 @@ const geminiSessions = (limit: number): AiSession[] => {
 export const AiSessions = {
   /** Most recent work from both assistants, newest first. */
   recent(limit = 30): AiSession[] {
+    if (recentMemo && Date.now() - recentMemo.at < RECENT_TTL_MS && recentMemo.limit >= limit) return recentMemo.sessions.slice(0, limit);
     const all = [...claudeSessions(limit), ...geminiSessions(limit)];
-    return all.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1)).slice(0, limit);
+    const sessions = all.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1)).slice(0, limit);
+    recentMemo = { at: Date.now(), limit, sessions };
+    return sessions;
   },
 
   /** What either assistant was doing in one project. */

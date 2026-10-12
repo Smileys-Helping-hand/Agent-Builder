@@ -9,7 +9,7 @@
  */
 import fs from "fs";
 import path from "path";
-import { openSqlite, type SqliteDatabase } from "../utils/Sqlite.js";
+import { checkpointInBackground, openSqlite, type SqliteDatabase } from "../utils/Sqlite.js";
 
 const DB_PATH = path.resolve(process.env.KNOWLEDGE_DB_PATH ?? "data/knowledge.db");
 
@@ -147,7 +147,12 @@ export const getKnowledgeDb = (): SqliteDatabase => {
   // still cannot corrupt the file; a power cut can lose the last few writes.
   db.pragma("synchronous = NORMAL");
   db.pragma("foreign_keys = ON");
+  // Keep the whole database (tens of MB) in memory once read. With SQLite's
+  // default 2 MB cache, reads went to the disk, and a research cycle's query
+  // once waited 7.7 s on a hard drive busy with a build.
+  db.pragma("cache_size = -65536");
   db.exec(SCHEMA);
+  checkpointInBackground(db, DB_PATH);
   instance = db;
   return db;
 };

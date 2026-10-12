@@ -102,6 +102,41 @@ const wrapStatement = (statement: NodeStatementSync): SqliteStatement => ({
   all: (...params) => statement.all(...params.map(toSqlValue))
 });
 
+/**
+ * Runs a WAL database's checkpoints on a worker thread instead of inside
+ * whichever commit crosses the threshold. A checkpoint copies the log into the
+ * database and flushes it to disk; with data/ on a slow hard drive that a
+ * build's npm and git work is also using, the flush could take seconds, and on
+ * the event loop it froze every request and build for that long. The worker
+ * has its own connection, so a slow flush only delays the worker. If it cannot
+ * start, the database keeps checkpointing itself as before.
+ */
+export const checkpointInBackground = (db: SqliteDatabase, filePath: string, everyMs = 60_000): void => {
+  db.pragma("wal_autocheckpoint = 0");
+  // Without auto-checkpoints the log file keeps its largest size; trim it back.
+  db.pragma(`journal_size_limit = ${16 * 1024 * 1024}`);
+  const source = `
+    const { parentPort, workerData } = require("node:worker_threads");
+    const emit = process.emitWarning;
+    process.emitWarning = () => {};
+    const { DatabaseSync } = require("node:sqlite");
+    process.emitWarning = emit;
+    const db = new DatabaseSync(workerData.filePath);
+    db.exec("PRAGMA busy_timeout = 5000");
+    const checkpoint = () => { try { db.exec("PRAGMA wal_checkpoint(PASSIVE)"); } catch {} };
+    setInterval(checkpoint, workerData.everyMs);
+    parentPort.on("message", () => { checkpoint(); db.close(); process.exit(0); });
+  `;
+  try {
+    const { Worker } = process.getBuiltinModule("node:worker_threads") as typeof import("node:worker_threads");
+    const worker = new Worker(source, { eval: true, workerData: { filePath, everyMs } });
+    worker.unref();
+    worker.on("error", () => db.pragma("wal_autocheckpoint = 1000"));
+  } catch {
+    db.pragma("wal_autocheckpoint = 1000");
+  }
+};
+
 export const openSqlite = (filePath: string): SqliteDatabase => {
   const { DatabaseSync } = loadSqlite();
   const db = new DatabaseSync(filePath);
