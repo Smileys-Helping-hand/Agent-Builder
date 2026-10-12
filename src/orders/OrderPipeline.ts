@@ -357,11 +357,16 @@ export const OrderPipeline = {
     });
     const at = new Date().toISOString();
     if (result.ok) {
+      // Say when it is back, so the log does not end on a failure that has passed.
+      if (publishFailures > 0) Logger.log("Check-in to the site is working again", { after: publishFailures, lastOk: lastPublishOk });
       lastPublishOk = at;
       publishFailures = 0;
     } else {
       publishFailures += 1;
-      Logger.warn("Check-in to the site failed", { detail: result.message, failuresInARow: publishFailures, lastOk: lastPublishOk });
+      // The first failure, then every 20th: one outage on 6 Oct wrote 324 lines.
+      if (publishFailures === 1 || publishFailures % 20 === 0) {
+        Logger.warn("Check-in to the site failed", { detail: result.message, failuresInARow: publishFailures, lastOk: lastPublishOk });
+      }
     }
     lastPublish = { at, ok: result.ok, message: result.message, count: items.length, lastOkAt: lastPublishOk, failures: publishFailures };
     return { ok: result.ok, message: result.message, count: items.length };
