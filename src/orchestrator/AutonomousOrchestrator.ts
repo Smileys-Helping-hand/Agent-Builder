@@ -1765,7 +1765,9 @@ Answer with JSON only: {"style": "...", "pictures": {"1": "...", "2": "..."}}`);
       // The list's own words will do.
     }
     const started = Date.now();
-    const requests = pictures.map((p, i) => ({ ...p, subject: subjects[i] }));
+    // A photo attached to an item of the site shows that item as the site names it: the
+    // content says so outright, and the model kept drawing malva pudding for a dish now called roti.
+    const requests = pictures.map((p, i) => ({ ...p, subject: p.onSite ? `${p.onSite}, as served or sold by this business` : subjects[i] }));
     const progress = (done: number, total: number, name: string) => this.emit("stage", { stage: `drawing ${name} (${done + 1}/${total})` });
     const results = photos ? await ArtStudio.drawPhotos(this.workspace.root, requests, style, progress) : await ArtStudio.drawAll(this.workspace.root, requests, style, progress);
     const drawn = results.filter((r) => r.file).length;
