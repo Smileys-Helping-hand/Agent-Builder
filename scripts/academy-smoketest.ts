@@ -47,6 +47,11 @@ fs.cpSync(landing, finished, { recursive: true, filter: (src) => !/node_modules|
 assert.deepEqual(contractProblems(finished, { name: "Solar Installer", category: "Solar", starter: "booking" }), ["its photographs were not redrawn for this kind of business (is ComfyUI set up?)"]);
 fs.writeFileSync(path.join(finished, ".art-drawn.json"), "[]");
 assert.deepEqual(contractProblems(finished, { name: "Solar Installer", category: "Solar", starter: "booking" }), [], "a finished template passes");
+
+// And has what the idea asked for.
+const asked = (mustHave: string[]) => contractProblems(finished, { name: "Solar Installer", category: "Solar", starter: "booking", mustHave });
+assert.deepEqual(asked(["Battery backup", "Free quote form"]), [], "what it has is found");
+assert.deepEqual(asked(["Medical aids accepted"]), ["the site does not have: Medical aids accepted"], "what it lacks is caught");
 const empty = fs.mkdtempSync(path.join(tmp, "empty-"));
 assert.ok(contractProblems(empty, { name: "Gym", category: "Gyms" }).length >= 4, "nothing there: many problems");
 

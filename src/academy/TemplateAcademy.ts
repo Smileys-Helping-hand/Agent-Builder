@@ -23,6 +23,7 @@ import fs from "fs";
 import path from "path";
 
 import { copyForBuild } from "../ecosystem/ProjectBuilds.js";
+import { contentTokens } from "../knowledge/KnowledgeDb.js";
 import { BuildService, buildEvents, type BuildRecord } from "../orchestrator/BuildService.js";
 import { Catalog } from "../orders/Catalog.js";
 import { OrderStore } from "../orders/OrderStore.js";
@@ -176,7 +177,10 @@ export function practiceBrief(idea: AcademyIdea, starter = idea.starter ?? start
 }
 
 /** What stops a passing build from being a template we can sell. Empty when it is one. */
-export function contractProblems(dir: string, idea: Pick<AcademyIdea, "name" | "category"> & { starter?: string | null }): string[] {
+export function contractProblems(
+  dir: string,
+  idea: Pick<AcademyIdea, "name" | "category"> & { starter?: string | null; mustHave?: string[] }
+): string[] {
   const problems: string[] = [];
   const file = (rel: string) => path.join(dir, rel);
   const content = fs.existsSync(file("src/content.ts")) ? fs.readFileSync(file("src/content.ts"), "utf8") : "";
@@ -203,6 +207,17 @@ export function contractProblems(dir: string, idea: Pick<AcademyIdea, "name" | "
   }
   const app = fs.existsSync(file("src/App.tsx")) ? fs.readFileSync(file("src/App.tsx"), "utf8") : "";
   if (!app.includes("DemoBanner")) problems.push("App.tsx does not show the template preview ribbon (DemoBanner)");
+  // What the idea must have. A score of 100 says the code is sound, not that
+  // the brief was met: the first dental practice to score 100 had no medical
+  // aids, dentists or emergency contact. Most of each item's words must be on
+  // the site (matched on their first five letters, so "prices" finds "price").
+  const site = `${content}\n${app}`.toLowerCase();
+  for (const item of idea.mustHave ?? []) {
+    const words = [...new Set(contentTokens(item))];
+    if (words.length === 0) continue;
+    const found = words.filter((word) => site.includes(word.slice(0, 5))).length;
+    if (found < Math.ceil((words.length * 2) / 3)) problems.push(`the site does not have: ${item}`);
+  }
   return problems;
 }
 
@@ -245,7 +260,12 @@ async function startAttempt(idea: AcademyIdea): Promise<BuildRecord | null> {
     const last = [...idea.attempts].reverse().find((attempt) => attempt.buildId);
     if (!last) return null;
     build = BuildService.continue(last.buildId, {
-      instruction: `Carry on until every check passes and the template is complete: score 100, every word in src/content.ts, the kit kept, nothing left from ${sampleBusiness(idea.starter ?? "landing") ?? "the template it started from"}.`,
+      instruction: [
+        `Carry on until every check passes and the template is complete: score 100, every word in src/content.ts, the kit kept, nothing left from ${sampleBusiness(idea.starter ?? "landing") ?? "the template it started from"}.`,
+        last.failing.length ? `Still missing after the last attempt: ${last.failing.join("; ")}.` : ""
+      ]
+        .filter(Boolean)
+        .join(" "),
       startedBy: `academy:${idea.id}`
     });
     update(idea.id, (entry) => {
