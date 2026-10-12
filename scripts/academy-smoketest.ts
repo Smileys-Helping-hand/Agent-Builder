@@ -13,7 +13,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ab-academy-"));
 process.env.ACADEMY_DIR = path.join(tmp, "academy");
 process.env.KNOWLEDGE_DB_PATH = path.join(tmp, "knowledge.db");
 
-const { TemplateAcademy, contractProblems, practiceBrief } = await import("../src/academy/TemplateAcademy.js");
+const { TemplateAcademy, contractProblems, practiceBrief, starterFor } = await import("../src/academy/TemplateAcademy.js");
 
 // Ideas: added once, refused twice, and refused when empty.
 const dental = TemplateAcademy.add({ name: "Dental Practice", category: "Dentists", brief: "A site for a dental practice: treatments, team, booking.", mustHave: ["Treatments with prices", "Book a check-up"], icon: "🦷" });
@@ -29,10 +29,19 @@ assert.match(brief, /src\/content\.ts/);
 assert.match(brief, /demo: true/);
 assert.match(brief, /Book a check-up/);
 
-// The contract: the solar landing template is not a dental template, but is a solar one.
+// It starts from the closest kind of site.
+assert.equal(starterFor(dental), "booking");
+assert.equal(starterFor({ name: "Coffee Roastery", category: "Cafés", brief: "Beans, brews and a café menu." }), "restaurant");
+assert.equal(starterFor({ name: "Wedding Planner", category: "Weddings", brief: "Packages and enquiries." }), "event");
+assert.equal(starterFor({ name: "Plumber", category: "Trades", brief: "Call-outs, services and a quote form." }), "landing");
+assert.match(practiceBrief(dental, "booking"), /Studio Nova Hair/, "the brief names what to leave behind");
+
+// The contract: what it started from must be gone.
 const landing = path.resolve("templates/sites/landing");
-assert.ok(contractProblems(landing, { name: "Dental Practice", category: "Dentists" }).some((p) => /solar/.test(p)), "the starting point is caught");
-assert.deepEqual(contractProblems(landing, { name: "Solar Installer", category: "Solar" }), [], "a finished template passes");
+const booking = path.resolve("templates/sites/booking");
+assert.ok(contractProblems(landing, { name: "Dental Practice", category: "Dentists" }).some((p) => /solar|Brightline/.test(p)), "the starting point is caught");
+assert.ok(contractProblems(booking, { name: "Dental Practice", category: "Dentists", starter: "booking" }).some((p) => /Studio Nova Hair/.test(p)), "any starter is caught");
+assert.deepEqual(contractProblems(landing, { name: "Solar Installer", category: "Solar", starter: "booking" }), [], "a finished template passes");
 const empty = fs.mkdtempSync(path.join(tmp, "empty-"));
 assert.ok(contractProblems(empty, { name: "Gym", category: "Gyms" }).length >= 4, "nothing there: many problems");
 

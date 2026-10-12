@@ -2,7 +2,7 @@
  * The Template Academy: Agent Builder teaching itself new website templates.
  *
  * An idea ("a dental practice site", "a law firm site") is practised: built
- * from our landing template's code into a new template, carried on pass after
+ * from the closest of our site templates into a new one, carried on pass after
  * pass, and started again from scratch when an attempt stalls, until a build
  * scores 100 and meets the template contract (every word in src/content.ts
  * about an invented sample business, demo on, the kit kept). Then it
@@ -59,6 +59,8 @@ export interface AcademyIdea {
   bestScore: number;
   /** The folder the next "continued" attempt carries on from. */
   workspace: string | null;
+  /** The site template its latest fresh attempt started from ("booking"). */
+  starter?: string | null;
   /** Where its code lives once it graduates. */
   sourcePath: string | null;
   createdAt: string;
@@ -74,7 +76,7 @@ interface AcademyState {
 
 const DIR = () => path.resolve(process.env.ACADEMY_DIR ?? "data/academy");
 const STATE = () => path.join(DIR(), "state.json");
-const BASE_TEMPLATE = () => path.resolve(process.env.TEMPLATES_DIR ?? "templates/sites", "landing");
+const TEMPLATES = () => path.resolve(process.env.TEMPLATES_DIR ?? "templates/sites");
 const enabled = () => process.env.ACADEMY !== "off";
 const dailyLimit = () => Math.max(0, Number(process.env.ACADEMY_DAILY_LIMIT) || 3);
 const maxAttempts = () => Math.max(1, Number(process.env.ACADEMY_MAX_ATTEMPTS) || 6);
@@ -118,8 +120,43 @@ const update = (id: string, change: (idea: AcademyIdea) => void): AcademyIdea | 
   return idea;
 };
 
+/**
+ * The closest kind of site to start a new template from. A dental practice
+ * from the hair salon's booking site needs its words and a few sections
+ * changed; started from the solar company's landing page it needed the whole
+ * page rebuilt, and the build model went round in type errors for hours.
+ * Name and category decide first, the brief only when they say nothing.
+ */
+const STARTERS: Array<{ id: string; words: RegExp }> = [
+  { id: "booking", words: /\b(book|appointment|clinic|dental|dentist|doctor|physio|therap|salon|spa\b|barber|beauty|nail|vet|tutor|lesson|yoga|pilates|gym|fitness|trainer|consult)/i },
+  { id: "restaurant", words: /\b(restaurant|caf[eé]|coffee|bakery|bistro|food|menu|takeaway|pizza|bar\b|pub\b|catering|braai)/i },
+  { id: "ecommerce", words: /\b(shop|store|boutique|retail|products?\b|merch|cart\b)/i },
+  { id: "event", words: /\b(event|wedding|conference|festival|concert|party|ticket|invitation)/i },
+  { id: "portfolio", words: /\b(portfolio|photograph|designer|artist|architect|creative|freelanc)/i },
+  { id: "saas", words: /\b(saas|software|platform|startup|subscription|dashboard)/i },
+  { id: "blog", words: /\b(blog|magazine|news|journal|writer|publication|podcast)/i }
+];
+
+export function starterFor(idea: Pick<AcademyIdea, "name" | "category" | "brief">): string {
+  const named = `${idea.name} ${idea.category}`;
+  const pick = STARTERS.find((starter) => starter.words.test(named)) ?? STARTERS.find((starter) => starter.words.test(idea.brief));
+  const id = pick?.id ?? "landing";
+  return fs.existsSync(path.join(TEMPLATES(), id, "src", "content.ts")) ? id : "landing";
+}
+
+/** The invented business a starter template is written for ("Studio Nova Hair"). */
+const sampleBusiness = (starter: string): string | null => {
+  try {
+    const content = fs.readFileSync(path.join(TEMPLATES(), starter, "src", "content.ts"), "utf8");
+    return content.match(/^\s+name:\s*"([^"]+)"/m)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+};
+
 /** The brief a practice build is given. */
-export function practiceBrief(idea: AcademyIdea): string {
+export function practiceBrief(idea: AcademyIdea, starter = idea.starter ?? starterFor(idea)): string {
+  const was = sampleBusiness(starter);
   return [
     `Build ${idea.name}: a reusable website template for ${idea.category} businesses, sold to many customers.`,
     "",
@@ -130,7 +167,7 @@ export function practiceBrief(idea: AcademyIdea): string {
     ...idea.mustHave.map((item) => `- ${item}`),
     "- Every word on the site in src/content.ts, describing an invented sample business (keep demo: true), so a customer's own details can replace it later",
     "- The kit in src/lib (site.tsx, customize.ts, pro.tsx, hours.ts) kept as it is and used: Section, SmartForm, Header, Footer, DemoBanner, WhatsAppButton, brandStyle",
-    "- Nothing left from the solar company this started as: its wording, prices, estimator and photographs all replaced or removed",
+    `- Nothing left from ${was ? `${was}, the sample business` : "the template"} this started as (a ${starter} site): its name, wording, prices and features that do not fit replaced or removed`,
     "",
     "Look and feel:",
     "- Premium: the signature components in src/lib/pro.tsx (Aurora, SplitHeadline, Tilt, CountUp, Marquee, ScrollProgress) and cards with the spotlight and lift classes",
@@ -139,7 +176,7 @@ export function practiceBrief(idea: AcademyIdea): string {
 }
 
 /** What stops a passing build from being a template we can sell. Empty when it is one. */
-export function contractProblems(dir: string, idea: Pick<AcademyIdea, "name" | "category">): string[] {
+export function contractProblems(dir: string, idea: Pick<AcademyIdea, "name" | "category"> & { starter?: string | null }): string[] {
   const problems: string[] = [];
   const file = (rel: string) => path.join(dir, rel);
   const content = fs.existsSync(file("src/content.ts")) ? fs.readFileSync(file("src/content.ts"), "utf8") : "";
@@ -150,8 +187,13 @@ export function contractProblems(dir: string, idea: Pick<AcademyIdea, "name" | "
   for (const kit of ["src/lib/site.tsx", "src/lib/customize.ts", "src/lib/pro.tsx"]) {
     if (!fs.existsSync(file(kit))) problems.push(`the kit file ${kit} is gone`);
   }
-  // The landing template it started from must be gone, unless this is a solar template.
-  if (!/solar|energy/i.test(`${idea.name} ${idea.category}`) && /Brightline|solar|load-shedding/i.test(content)) {
+  // The template it started from must be gone.
+  const starter = idea.starter ?? "landing";
+  const was = sampleBusiness(starter);
+  if (was && content.includes(was) && !idea.name.includes(was)) {
+    problems.push(`${was}, the sample business it started from, is still in src/content.ts`);
+  }
+  if (starter === "landing" && !/solar|energy/i.test(`${idea.name} ${idea.category}`) && /solar|load-shedding/i.test(content)) {
     problems.push("the solar company it started from is still in src/content.ts");
   }
   const app = fs.existsSync(file("src/App.tsx")) ? fs.readFileSync(file("src/App.tsx"), "utf8") : "";
@@ -171,19 +213,20 @@ async function startAttempt(idea: AcademyIdea): Promise<BuildRecord | null> {
   const fresh = !idea.workspace || !fs.existsSync(idea.workspace) || (!lastStopped && sinceFresh >= CONTINUES_PER_FRESH);
   let build: BuildRecord;
   if (fresh) {
-    const { workDir } = await copyForBuild(BASE_TEMPLATE(), `academy ${idea.name}`, "academy");
+    const starter = starterFor(idea);
+    const { workDir } = await copyForBuild(path.join(TEMPLATES(), starter), `academy ${idea.name}`, "academy");
     // A starter, not a customer's copy of a template: the model may rewrite the code.
     fs.writeFileSync(
       path.join(workDir, "template.json"),
       JSON.stringify({ name: idea.name, description: idea.brief.slice(0, 300), icon: idea.icon, starter: true, academy: true }, null, 2)
     );
-    // The solar photographs and their list go; the new template has none yet.
+    // The starter's photographs go; they show its business, not this one.
     fs.rmSync(path.join(workDir, "src", "images"), { recursive: true, force: true });
     fs.mkdirSync(path.join(workDir, "src", "images"), { recursive: true });
     fs.rmSync(path.join(workDir, "art.json"), { force: true });
     build = BuildService.start({
       projectName: idea.name,
-      description: practiceBrief(idea),
+      description: practiceBrief(idea, starter),
       targetPlatforms: ["web"],
       profile: "deep",
       qualityThreshold: GRADUATION_SCORE,
@@ -193,6 +236,7 @@ async function startAttempt(idea: AcademyIdea): Promise<BuildRecord | null> {
     });
     update(idea.id, (entry) => {
       entry.workspace = workDir;
+      entry.starter = starter;
       entry.status = "practising";
       entry.attempts.push({ buildId: build.buildId, kind: "fresh", startedAt: now(), finishedAt: null, score: null, failing: [], outcome: "running" });
     });
@@ -200,7 +244,7 @@ async function startAttempt(idea: AcademyIdea): Promise<BuildRecord | null> {
     const last = [...idea.attempts].reverse().find((attempt) => attempt.buildId);
     if (!last) return null;
     build = BuildService.continue(last.buildId, {
-      instruction: "Carry on until every check passes and the template is complete: score 100, every word in src/content.ts, the kit kept, nothing left from the solar template.",
+      instruction: `Carry on until every check passes and the template is complete: score 100, every word in src/content.ts, the kit kept, nothing left from ${sampleBusiness(idea.starter ?? "landing") ?? "the template it started from"}.`,
       startedBy: `academy:${idea.id}`
     });
     update(idea.id, (entry) => {
