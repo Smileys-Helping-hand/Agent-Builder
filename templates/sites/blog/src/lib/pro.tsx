@@ -96,15 +96,21 @@ export function Aurora({ colors, intensity = 0.55, className = "" }: { colors?: 
       draw(0);
       return;
     }
+    // About 20 frames a second: plenty for colour drifting this slowly, kinder
+    // to phone batteries, and it leaves the browser idle between frames (an
+    // unbroken frame loop held headless Chrome's clock, so captured covers
+    // showed headlines that never finished arriving).
+    let timer = 0;
     const loop = (time: number) => {
       if (running) draw(time);
-      frame = requestAnimationFrame(loop);
+      timer = window.setTimeout(() => (frame = requestAnimationFrame(loop)), 50);
     };
     frame = requestAnimationFrame(loop);
     const watcher = typeof IntersectionObserver === "undefined" ? null : new IntersectionObserver(([entry]) => (running = entry.isIntersecting));
     watcher?.observe(element);
     return () => {
       cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
       watcher?.disconnect();
     };
   }, [colors, intensity]);
@@ -208,12 +214,16 @@ export function CountUp({ value, ms = 1400 }: { value: string; ms?: number }) {
   const ref = useOnceVisible<HTMLSpanElement>(() => {
     const figure = parseFigure(value);
     if (!figure || prefersLessMotion() || typeof requestAnimationFrame === "undefined") return;
-    const start = performance.now();
+    // Timed from the first frame's own clock: against performance.now() the
+    // first frame can come out slightly earlier, and "R 17 420" flashed as "R -11".
+    let start: number | null = null;
     const step = (now: number) => {
-      const t = Math.min(1, (now - start) / ms);
+      if (start === null) start = now;
+      const t = Math.min(1, Math.max(0, (now - start) / ms));
       const eased = 1 - Math.pow(1 - t, 3);
       setShown(formatFigure(figure, figure.number * eased));
-      if (t < 1) requestAnimationFrame(step);
+      // ~30 frames a second, idle in between (an unbroken frame loop held headless Chrome's clock).
+      if (t < 1) window.setTimeout(() => requestAnimationFrame(step), 30);
       else setShown(value);
     };
     requestAnimationFrame(step);
