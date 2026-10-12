@@ -97,7 +97,7 @@ export const registerPowerToolRoutes = (app: Express) => {
       const response = await fetch(`${OLLAMA_URL}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, prompt: "", keep_alive: process.env.OLLAMA_KEEP_ALIVE ?? "30m", options: ollamaOptions() }),
+        body: JSON.stringify({ model, prompt: "", keep_alive: process.env.OLLAMA_KEEP_ALIVE ?? "30m", options: ollamaOptions(model) }),
         signal: AbortSignal.timeout(180_000)
       });
       if (!response.ok) return res.status(502).json({ error: `Ollama answered ${response.status}: ${(await response.text()).slice(0, 200)}` });
