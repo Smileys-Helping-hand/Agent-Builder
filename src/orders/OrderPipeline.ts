@@ -30,6 +30,7 @@ import { Catalog } from "./Catalog.js";
 import { OrderStore, type Order } from "./OrderStore.js";
 import { OrderReceipts } from "./OrderReceipts.js";
 import { SiteClient, type SiteOrder } from "./SiteClient.js";
+import { SiteEdits } from "./SiteEdits.js";
 import { readPublicUrl } from "../utils/PublicUrl.js";
 import { shareableBuildPreview } from "../server/previews.js";
 import { GameMode } from "../utils/GameMode.js";
@@ -813,6 +814,8 @@ export const OrderPipeline = {
     const intake = async () => {
       if (!SiteClient.isConfigured()) return;
       await this.intake();
+      // Customers' changes to their finished sites come with the same poll.
+      await SiteEdits.process().catch((error) => Logger.error("Site edits failed", { error: errorMessage(error) }));
     };
     run("check-in", checkIn, CHECK_IN_EVERY_MS);
     run("intake", intake, INTAKE_EVERY_MS);
