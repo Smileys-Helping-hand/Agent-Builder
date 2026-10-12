@@ -83,6 +83,9 @@ const BUILT_IN_ITEMS: TemplateDefinition[] = [
     timeframe: "1-2 weeks",
     icon: "🏠",
     features: [
+      "Bespoke photography drawn for your business — no stock photos",
+      "Premium motion: headline reveals, glass header, scroll effects (calm for visitors who prefer less motion)",
+      "Optional interactive estimator (e.g. a savings calculator) that turns visitors into quotes",
       "Mobile-first design in your colours",
       "Services, process and pricing sections",
       "Reviews and FAQ",
@@ -104,6 +107,9 @@ const BUILT_IN_ITEMS: TemplateDefinition[] = [
     timeframe: "3-6 weeks",
     icon: "🛒",
     features: [
+      "Bespoke photography drawn for your business — no stock photos",
+      "Premium motion: headline reveals, glass header, scroll effects (calm for visitors who prefer less motion)",
+      "Photographed products with hover zoom and sale tags",
       "Product catalogue with search and categories",
       "Product pages and sale prices",
       "Cart with stock limits and free-delivery threshold",
@@ -125,6 +131,9 @@ const BUILT_IN_ITEMS: TemplateDefinition[] = [
     timeframe: "2-4 weeks",
     icon: "🍽️",
     features: [
+      "Bespoke photography drawn for your business — no stock photos",
+      "Premium motion: headline reveals, glass header, scroll effects (calm for visitors who prefer less motion)",
+      "Live 'Open now' badge and signature dishes, photographed",
       "Menu with vegan, vegetarian, gluten-free and spicy filters",
       "QR-code menu per table",
       "Reservations with your days, times and group limits",
@@ -146,6 +155,9 @@ const BUILT_IN_ITEMS: TemplateDefinition[] = [
     timeframe: "6-12 weeks",
     icon: "📊",
     features: [
+      "Bespoke photography drawn for your business — no stock photos",
+      "Premium motion: headline reveals, glass header, scroll effects (calm for visitors who prefer less motion)",
+      "Interactive revenue chart and monthly/yearly pricing toggle",
       "Marketing site with pricing",
       "Sign-in with owner, admin, member and viewer roles",
       "Revenue, churn and growth metrics with chart",
@@ -169,6 +181,9 @@ const BUILT_IN_ITEMS: TemplateDefinition[] = [
     timeframe: "1-2 weeks",
     icon: "✨",
     features: [
+      "Bespoke photography drawn for your business — no stock photos",
+      "Premium motion: headline reveals, glass header, scroll effects (calm for visitors who prefer less motion)",
+      "Project covers that tilt and reveal each outcome",
       "Work gallery with filters",
       "A page for each project with its outcome",
       "About page with skills and career timeline",
@@ -189,6 +204,9 @@ const BUILT_IN_ITEMS: TemplateDefinition[] = [
     timeframe: "3-6 weeks",
     icon: "📅",
     features: [
+      "Bespoke photography drawn for your business — no stock photos",
+      "Premium motion: headline reveals, glass header, scroll effects (calm for visitors who prefer less motion)",
+      "Photographed services, booked in a minute",
       "Services with prices and durations",
       "Availability from your hours, breaks and bookings",
       "Day and time picker that never double-books",
@@ -212,6 +230,9 @@ const BUILT_IN_ITEMS: TemplateDefinition[] = [
     timeframe: "2-3 weeks",
     icon: "📝",
     features: [
+      "Bespoke photography drawn for your business — no stock photos",
+      "Premium motion: headline reveals, glass header, scroll effects (calm for visitors who prefer less motion)",
+      "Photographed covers for every article",
       "Posts written in simple Markdown",
       "Search and tags",
       "Reading times and related articles",
@@ -354,6 +375,9 @@ const BUILT_IN_ITEMS: TemplateDefinition[] = [
     timeframe: "3-5 days",
     icon: "💌",
     features: [
+      "Bespoke photography drawn for your business — no stock photos",
+      "Premium motion: headline reveals, glass header, scroll effects (calm for visitors who prefer less motion)",
+      "Full-screen photo invitation with a live countdown",
       "Live countdown to the day",
       "RSVP form with dietary needs",
       "Schedule, venue map and directions",

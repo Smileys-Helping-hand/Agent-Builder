@@ -1,6 +1,6 @@
 # Fantasy RPG Adventure
 
-A branded role-playing game: explore a dungeon map, fight turn-based battles, gain XP and levels, find potions and gold, and defeat the boss, with a prize form for players who win.
+A branded RPG adventure game: a hero explores dungeon floors on a quest, fights monsters in turn-based battles, gains XP and levels, finds potions and gold, and defeats the boss, with a prize form for players who win.
 
 ## Changing what it says
 

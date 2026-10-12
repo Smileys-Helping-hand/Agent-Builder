@@ -1,7 +1,9 @@
 import { useState } from "react";
 
 import { site } from "./content";
+import { Aurora, Photo, ScrollProgress, SplitHeadline, Tilt } from "./lib/pro";
 import { DemoBanner, Footer, Header, Section, SmartForm, WhatsAppButton, brandStyle, useHashRoute } from "./lib/site";
+import { photos } from "./photos";
 import { allTags, period, projectsTagged, timeline } from "./work";
 
 function Work() {
@@ -9,10 +11,11 @@ function Work() {
   const shown = projectsTagged(site.projects, tag);
   return (
     <>
-      <section className="hero portfolio-hero">
+      <section className="hero portfolio-hero hero-stage">
+        <Aurora intensity={0.45} />
         <div className="container">
           <p className="eyebrow">{site.hero.greeting}</p>
-          <h1>{site.hero.title}</h1>
+          <SplitHeadline text={site.hero.title} className="portfolio-title" accentWords={["remember", "keep"]} />
           <p className="lead muted">{site.business.description}</p>
           <p className="availability">
             <span className="pulse" aria-hidden="true" /> {site.hero.availability}
@@ -35,12 +38,19 @@ function Work() {
             </button>
           ))}
         </div>
-        <div className="grid grid-2">
+        <div className="grid grid-2 reveal stagger">
           {shown.map((project) => (
-            <a key={project.id} href={`#/work/${project.id}`} className="card project-card">
-              <div className="project-art" aria-hidden="true">
-                {project.emoji}
-              </div>
+            <a key={project.id} href={`#/work/${project.id}`} className="card project-card spotlight lift">
+              {photos[project.id] ? (
+                <Tilt className="project-cover" max={5}>
+                  <Photo src={photos[project.id]} alt={project.title} ratio="16 / 10" className="zoom" />
+                  <span className="project-outcome">{project.outcome}</span>
+                </Tilt>
+              ) : (
+                <div className="project-art" aria-hidden="true">
+                  {project.emoji}
+                </div>
+              )}
               <div className="chip-row">
                 {project.tags.map((name) => (
                   <span key={name} className="chip">
@@ -72,9 +82,13 @@ export default function App() {
   if (project) {
     page = (
       <Section eyebrow={`${project.client} · ${project.year}`} title={project.title} intro={project.summary}>
-        <div className="project-art project-art-large" aria-hidden="true">
-          {project.emoji}
-        </div>
+        {photos[project.id] ? (
+          <Photo src={photos[project.id]} alt={project.title} ratio="16 / 9" className="project-hero-photo" eager />
+        ) : (
+          <div className="project-art project-art-large" aria-hidden="true">
+            {project.emoji}
+          </div>
+        )}
         <div className="project-story">
           {project.story.map((paragraph) => (
             <p key={paragraph} className="lead">
@@ -98,6 +112,7 @@ export default function App() {
   } else if (section === "about") {
     page = (
       <Section eyebrow="About" title={business.name} intro={business.tagline}>
+        {photos.studio ? <Photo src={photos.studio} alt={`${business.name}'s studio`} ratio="21 / 9" className="about-photo" /> : null}
         <div className="grid grid-2">
           <div>
             {site.about.map((paragraph) => (
@@ -153,6 +168,7 @@ export default function App() {
 
   return (
     <div className="site" style={brandStyle(site.brand)}>
+      <ScrollProgress />
       <DemoBanner show={site.demo} label="Portfolio / Personal Site" />
       <Header business={business} nav={site.nav} cta={{ label: "Hire me", href: "#/contact" }} />
       <main>{page}</main>

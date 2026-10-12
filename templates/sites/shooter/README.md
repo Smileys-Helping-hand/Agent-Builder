@@ -1,6 +1,6 @@
 # Space Shooter Game
 
-A branded arcade shooter: waves of enemies, power-ups, lives and a high score, playable with touch or keys, with a prize form that turns players into leads.
+A branded arcade action shooter game: shoot waves of enemies and invaders, dodge their fire, grab power-ups, survive on three lives and chase a high score, playable with touch or keys, with a prize form that turns players into leads.
 
 ## Changing what it says
 

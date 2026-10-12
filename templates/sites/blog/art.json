@@ -1,0 +1,33 @@
+{
+  "style": "warm editorial still-life photography for a finance magazine, natural window light, calm muted tones, shallow depth of field",
+  "pictures": [
+    {
+      "name": "hero",
+      "subject": "a calm wooden desk with an open notebook, a calculator, a cup of rooibos tea and a small plant in morning light",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/hero.webp"
+    },
+    {
+      "name": "provisional-tax",
+      "subject": "neatly stacked paper invoices and a pen beside a desk calendar with a date circled, soft light",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/provisional-tax.webp"
+    },
+    {
+      "name": "pricing",
+      "subject": "a small craft business workbench with handmade goods, blank kraft price tags and twine",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/pricing.webp"
+    },
+    {
+      "name": "cash-flow",
+      "subject": "a small shop counter with a card machine, a ledger book and coins in a ceramic dish, warm light",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/cash-flow.webp"
+    }
+  ]
+}

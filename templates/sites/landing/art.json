@@ -1,0 +1,40 @@
+{
+  "style": "professional architectural and lifestyle photography, natural golden-hour light, crisp detail, shot on a full-frame camera, true-to-life colour",
+  "pictures": [
+    {
+      "name": "hero",
+      "subject": "a modern white Cape Town family home with sleek black solar panels on the roof at golden hour, Table Mountain softly in the distance, warm sky",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/hero.webp"
+    },
+    {
+      "name": "rooftop",
+      "subject": "close-up of rows of black monocrystalline solar panels on a roof, clean lines, blue sky reflected in the glass",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/rooftop.webp"
+    },
+    {
+      "name": "battery",
+      "subject": "a sleek white wall-mounted lithium home battery unit with a small status light in a tidy modern garage",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/battery.webp"
+    },
+    {
+      "name": "install",
+      "subject": "a solar installer in a hard hat and work gloves fixing a panel to roof rails, seen from behind, sunny day",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/install.webp"
+    },
+    {
+      "name": "living",
+      "subject": "a warm modern South African living room in the evening with soft lamps on while the rest of the street is dark during a power cut",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/living.webp"
+    }
+  ]
+}

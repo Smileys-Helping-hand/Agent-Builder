@@ -52,7 +52,7 @@ export const site = {
     primaryCta: { label: "Get a free quote", href: "#contact" },
     secondaryCta: { label: "See pricing", href: "#pricing" },
     art: "☀️",
-    /** A photo to show instead of the emoji panel: any https:// image address. Leave empty for the panel. */
+    /** A photo of your own for the hero: any https:// image address. Leave empty to use the drawn one in src/photos.ts. */
     image: ""
   },
 
@@ -111,6 +111,20 @@ export const site = {
     { q: "Can I add more panels later?", a: "Yes. We size inverters with room to grow so adding panels later is simple." },
     { q: "Do you offer finance?", a: "We work with two lenders offering 24–60 month terms. Ask us for a finance quote." }
   ],
+
+  /**
+   * "What could you save?": the monthly bill each plan suits and the share of
+   * it it saves. An estimate. Only for a business that saves its customers
+   * money on a monthly bill (solar, insulation, a cheaper provider); set
+   * `show` to false for any other.
+   */
+  estimator: {
+    show: true,
+    title: "What could you save?",
+    intro: "Slide to your average monthly electricity bill. We will confirm the real numbers in your free assessment.",
+    billUpTo: [1500, 4500],
+    savingShare: [0.15, 0.7, 0.85]
+  },
 
   contact: {
     title: "Get a free quote",

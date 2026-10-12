@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 
 import { site } from "./content";
+import { Photo, ScrollProgress, SplitHeadline } from "./lib/pro";
+import { photos } from "./photos";
 import { calendarFile, timeUntil } from "./countdown";
-import { DemoBanner, Footer, Header, HeroArt, Section, SmartForm, WhatsAppButton, brandStyle } from "./lib/site";
+import { DemoBanner, Footer, Header, Section, SmartForm, WhatsAppButton, brandStyle } from "./lib/site";
 
 /** Counts down to the start. Rendered as the date alone until the page's code runs. */
 function Countdown({ startsAt }: { startsAt: string }) {
@@ -53,15 +55,17 @@ export default function App() {
   const map = encodeURIComponent(venue.mapQuery);
   return (
     <div className="site event-site" style={brandStyle(site.brand)}>
+      <ScrollProgress />
       <DemoBanner show={site.demo} label="Event & Invitation" />
       <Header business={business} nav={site.nav} cta={{ label: "RSVP", href: "#rsvp" }} />
 
       <main>
-        <section className="hero event-hero">
-          <div className="container hero-grid">
+        <section className="hero-cover event-cover">
+          <Photo src={photos.hero} alt={venue.name} ratio="auto" eager />
+          <div className="container event-cover-inner">
             <div>
               <p className="eyebrow">{event.eyebrow}</p>
-              <h1>{event.title}</h1>
+              <SplitHeadline text={event.title} className="event-title" />
               <p className="lead">{business.tagline}</p>
               <p className="event-date">{event.dateText}</p>
               <p className="muted">{venue.name}</p>
@@ -70,14 +74,19 @@ export default function App() {
                 <a className="btn" href="#rsvp">
                   RSVP by {event.rsvpBy}
                 </a>
-                <button className="btn btn-ghost" onClick={addToCalendar}>
+                <button className="btn btn-ghost btn-on-photo" onClick={addToCalendar}>
                   Add to calendar
                 </button>
               </div>
             </div>
-            <HeroArt art={event.art} alt={event.title} />
           </div>
         </section>
+
+        <div className="container event-moments reveal stagger">
+          <Photo src={photos.terrace} alt="Drinks on the terrace" ratio="4 / 3" caption="Drinks on the terrace" className="zoom" />
+          <Photo src={photos.dinner} alt="Dinner in the barn" ratio="4 / 3" caption="Dinner in the barn" className="zoom" />
+          <Photo src={photos.estate} alt={venue.name} ratio="4 / 3" caption={venue.name} className="zoom" />
+        </div>
 
         <Section id="schedule" eyebrow="The day" title="How the day will go" tone="tinted">
           <ol className="timeline">

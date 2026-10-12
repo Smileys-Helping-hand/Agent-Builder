@@ -1,0 +1,40 @@
+{
+  "style": "professional brand design studio photography, soft daylight, clean surfaces, considered composition, subtle shadows",
+  "pictures": [
+    {
+      "name": "kasi-pay",
+      "subject": "brand identity mockup for a fintech brand: business cards, a bank card and a phone with a bright orange and black geometric logo, on concrete",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/kasi-pay.webp"
+    },
+    {
+      "name": "harvest",
+      "subject": "brand identity mockup for a farm-to-table restaurant: kraft paper menu, napkins and a wooden board with a green leaf logo",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/harvest.webp"
+    },
+    {
+      "name": "learnline",
+      "subject": "brand identity mockup for an education app: notebooks, stickers and a tablet with a friendly blue and yellow logo",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/learnline.webp"
+    },
+    {
+      "name": "ubuntu-coffee",
+      "subject": "coffee packaging design: matte kraft coffee bags with a bold geometric African-pattern label beside a cup of coffee",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/ubuntu-coffee.webp"
+    },
+    {
+      "name": "studio",
+      "subject": "a designer's tidy studio desk with sketches, colour swatches, a laptop and a cup of coffee, morning light",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/studio.webp"
+    }
+  ]
+}

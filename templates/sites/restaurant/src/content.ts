@@ -53,7 +53,7 @@ export const site = {
       title: "To start",
       dishes: [
         { name: "Charred bread & smoked butter", description: "Sourdough from the coals, whipped butter, sea salt.", price: 65, diet: ["vegetarian"] },
-        { name: "Calamari", description: "Flash-grilled, chilli, lemon and garlic oil.", price: 110, diet: ["gluten-free", "spicy"] },
+        { photo: "calamari", name: "Calamari", description: "Flash-grilled, chilli, lemon and garlic oil.", price: 110, diet: ["gluten-free", "spicy"] },
         { name: "Roast beetroot", description: "Labneh, dukkah, honey and thyme.", price: 95, diet: ["vegetarian", "gluten-free"] }
       ]
     },
@@ -61,10 +61,10 @@ export const site = {
       title: "From the fire",
       note: "All mains come with a side of your choice.",
       dishes: [
-        { name: "Line fish of the day", description: "Whatever came in this morning, with braaied lemon and caper butter.", price: 245, diet: ["gluten-free"], badge: "Chef's pick" },
-        { name: "Sirloin 300 g", description: "Dry-aged, with chimichurri.", price: 285, diet: ["gluten-free"] },
-        { name: "Peri-peri half chicken", description: "Marinated overnight, basted on the coals.", price: 195, diet: ["gluten-free", "spicy"] },
-        { name: "Coal-roasted cauliflower", description: "Whole head, tahini, pomegranate and herbs.", price: 165, diet: ["vegan", "vegetarian", "gluten-free"] }
+        { photo: "line-fish", name: "Line fish of the day", description: "Whatever came in this morning, with braaied lemon and caper butter.", price: 245, diet: ["gluten-free"], badge: "Chef's pick" },
+        { photo: "sirloin", name: "Sirloin 300 g", description: "Dry-aged, with chimichurri.", price: 285, diet: ["gluten-free"] },
+        { photo: "peri-peri", name: "Peri-peri half chicken", description: "Marinated overnight, basted on the coals.", price: 195, diet: ["gluten-free", "spicy"] },
+        { photo: "cauliflower", name: "Coal-roasted cauliflower", description: "Whole head, tahini, pomegranate and herbs.", price: 165, diet: ["vegan", "vegetarian", "gluten-free"] }
       ]
     },
     {
@@ -78,19 +78,20 @@ export const site = {
     {
       title: "Something sweet",
       dishes: [
-        { name: "Malva pudding", description: "With vanilla custard.", price: 85, diet: ["vegetarian"] },
+        { photo: "malva", name: "Malva pudding", description: "With vanilla custard.", price: 85, diet: ["vegetarian"] },
         { name: "Ember-baked peaches", description: "Coconut cream and toasted almonds.", price: 80, diet: ["vegan", "vegetarian", "gluten-free"] }
       ]
     }
   ] satisfies MenuSection[],
 
+  /** Pictures by their name in src/photos.ts; the emoji stands in if a photo is missing. */
   gallery: [
-    { emoji: "🔥", caption: "The grill at full tilt" },
-    { emoji: "🐟", caption: "Morning catch" },
-    { emoji: "🍷", caption: "Local wines" },
-    { emoji: "🌅", caption: "Harbour sunsets" },
-    { emoji: "🥩", caption: "Dry-aged cuts" },
-    { emoji: "🍑", caption: "Dessert from the embers" }
+    { photo: "hero", emoji: "🔥", caption: "The grill at full tilt" },
+    { photo: "room", emoji: "🍷", caption: "Candlelight by the harbour" },
+    { photo: "harbour", emoji: "🌅", caption: "Kalk Bay at dusk" },
+    { photo: "line-fish", emoji: "🐟", caption: "Morning catch" },
+    { photo: "sirloin", emoji: "🥩", caption: "Dry-aged cuts" },
+    { photo: "malva", emoji: "🍑", caption: "Something sweet" }
   ],
 
   reservations: {

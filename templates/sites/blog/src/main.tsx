@@ -4,8 +4,10 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import { site } from "./content";
 import { enableLiveCustomizing } from "./lib/customize";
+import { enableSignature } from "./lib/pro";
 import { businessSchema } from "./lib/site";
 import "./styles/base.css";
+import "./styles/pro.css";
 import "./styles/template.css";
 
 document.title = site.business.name;
@@ -39,6 +41,9 @@ if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches && "Intersect
   new MutationObserver(watch).observe(document.getElementById("root")!, { childList: true, subtree: true });
   watch();
 }
+
+// The page-wide finish: the header turns to glass on scroll, cards catch the light.
+enableSignature();
 
 const root = createRoot(document.getElementById("root")!);
 const draw = () =>

@@ -1,6 +1,6 @@
 # Tower Defense Strategy Game
 
-A branded strategy game: build and upgrade towers along a path to stop waves of enemies, manage gold and lives, with a prize form that turns players into leads.
+A branded tower defense strategy game: build and upgrade towers along a path to defend against waves of enemies, manage gold and lives, with a prize form that turns players into leads.
 
 ## Changing what it says
 

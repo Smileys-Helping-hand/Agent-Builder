@@ -9,6 +9,8 @@ export interface Dish {
   diet?: Diet[];
   /** Shown as a small highlight, e.g. "Chef's pick". */
   badge?: string;
+  /** A photograph of it, by its name in src/photos.ts ("line-fish"). Dishes with one are featured. */
+  photo?: string;
 }
 
 export interface MenuSection {

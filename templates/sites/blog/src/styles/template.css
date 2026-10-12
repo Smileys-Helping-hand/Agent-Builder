@@ -143,3 +143,44 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------------- signature layer ---------------- */
+
+.blog-cover {
+  min-height: min(70vh, 640px);
+}
+
+.blog-cover-inner {
+  padding-top: 110px;
+  padding-bottom: 100px;
+}
+
+.blog-title {
+  font-size: clamp(2.4rem, 5.6vw, 4.4rem);
+  line-height: 1.05;
+  max-width: 16ch;
+  margin: 12px 0 16px;
+  color: #fff;
+}
+
+.blog-cover .lead {
+  max-width: 52ch;
+}
+
+.post-card {
+  overflow: hidden;
+}
+
+.post-photo {
+  width: clamp(160px, 26vw, 260px);
+  align-self: start;
+}
+
+@media (max-width: 640px) {
+  .post-card {
+    grid-template-columns: 1fr;
+  }
+  .post-photo {
+    width: 100%;
+  }
+}

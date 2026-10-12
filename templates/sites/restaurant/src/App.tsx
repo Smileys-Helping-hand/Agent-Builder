@@ -1,7 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { site } from "./content";
+import { openStatus, type OpenStatus } from "./lib/hours";
+import { Photo, ScrollProgress, SplitHeadline, Tilt } from "./lib/pro";
 import { DemoBanner, Footer, Header, Section, SmartForm, WhatsAppButton, brandStyle, formatMoney, useHashRoute } from "./lib/site";
+import { photos } from "./photos";
 import { checkReservation, filterMenu, tableFromRoute, type Diet, type MenuSection } from "./menu";
 
 const DIETS: { id: Diet; label: string }[] = [
@@ -37,7 +40,9 @@ function Menu({ menu }: { menu: MenuSection[] }) {
             <h3>{section.title}</h3>
             {section.note ? <p className="muted menu-note">{section.note}</p> : null}
             {section.dishes.map((dish) => (
-              <div key={dish.name} className="dish">
+              <div key={dish.name} className={`dish ${dish.photo && photos[dish.photo] ? "dish-with-photo" : ""}`}>
+                {dish.photo && photos[dish.photo] ? <img className="dish-thumb" src={photos[dish.photo]} alt="" decoding="async" /> : null}
+                <div className="dish-body">
                 <div className="dish-head">
                   <strong>
                     {dish.name}
@@ -50,12 +55,31 @@ function Menu({ menu }: { menu: MenuSection[] }) {
                   {dish.description}
                   {dish.diet?.length ? <span className="dish-diet"> · {dish.diet.join(", ")}</span> : null}
                 </p>
+                </div>
               </div>
             ))}
           </div>
         ))}
       </div>
     </>
+  );
+}
+
+/** "Open now · until 22:00", from the opening hours; worked out in the browser so it is always today's. */
+function OpenBadge() {
+  const [status, setStatus] = useState<OpenStatus | null>(null);
+  useEffect(() => {
+    const update = () => setStatus(openStatus(site.business.hours, new Date()));
+    update();
+    const timer = window.setInterval(update, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  if (!status) return null;
+  return (
+    <p className={`open-badge ${status.open ? "is-open" : "is-closed"}`} role="status">
+      <span className="open-dot" aria-hidden="true" />
+      {status.label}
+    </p>
   );
 }
 
@@ -142,44 +166,83 @@ export default function App() {
     );
   }
 
+  // Dishes with a photograph, shown first as the house signatures (up to four).
+  const featured = (site.menu as MenuSection[]).flatMap((section) => section.dishes).filter((dish) => dish.photo && photos[dish.photo]).slice(0, 4);
   const mapUrl = business.address ? `https://maps.google.com/maps?q=${encodeURIComponent(business.address)}&output=embed` : null;
 
   return (
     <div className="site" style={brandStyle(site.brand)}>
       <DemoBanner show={site.demo} label="Restaurant / Hospitality" />
+      <ScrollProgress />
       <Header business={business} nav={site.nav} cta={{ label: "Book a table", href: "#book" }} />
 
       <main>
-        <section className="hero restaurant-hero">
-          <div className="container">
+        <section className="hero-cover restaurant-cover">
+          <Photo src={photos.hero} alt={`The grill at ${business.name}`} ratio="auto" eager />
+          <div className="container restaurant-cover-inner">
+            <OpenBadge />
             <p className="eyebrow">{hero.eyebrow}</p>
-            <h1>{hero.title}</h1>
-            <p className="lead muted">{hero.subtitle}</p>
+            <SplitHeadline text={hero.title} className="restaurant-title" />
+            <p className="lead">{hero.subtitle}</p>
             <div className="btn-row">
               <a className="btn" href="#book">
                 Book a table
               </a>
-              <a className="btn btn-ghost" href="#menu">
+              <a className="btn btn-ghost btn-on-photo" href="#menu">
                 See the menu
               </a>
             </div>
           </div>
         </section>
 
-        <Section id="menu" eyebrow="Menu" title="Tonight's menu" intro="Filter for what you can eat — the menu changes with the catch.">
+        {featured.length > 0 ? (
+          <Section id="signature" eyebrow="From the fire" title="What the coals are for">
+            <div className="signature-strip reveal stagger">
+              {featured.map((dish) => (
+                <Tilt key={dish.name} className="signature-dish">
+                  <Photo
+                    src={photos[dish.photo!]}
+                    alt={dish.name}
+                    ratio="4 / 5"
+                    className="zoom"
+                    caption={
+                      <>
+                        <strong>{dish.name}</strong>
+                        <span>{formatMoney(dish.price)}</span>
+                      </>
+                    }
+                  />
+                </Tilt>
+              ))}
+            </div>
+          </Section>
+        ) : null}
+
+        <Section id="menu" eyebrow="Menu" title="Tonight's menu" intro="Filter for what you can eat — the menu changes with the catch." tone="tinted">
           <Menu menu={site.menu} />
         </Section>
 
-        <Section id="gallery" eyebrow="Gallery" title="A look inside" tone="tinted">
-          <div className="grid grid-3">
-            {site.gallery.map((item) => (
-              <figure key={item.caption} className="gallery-item">
-                <div className="gallery-art" aria-hidden="true">
-                  {item.emoji}
-                </div>
-                <figcaption className="muted">{item.caption}</figcaption>
-              </figure>
-            ))}
+        <Section id="gallery" eyebrow="Gallery" title="A look inside">
+          <div className="gallery-mosaic reveal stagger">
+            {site.gallery.map((item, i) =>
+              item.photo && photos[item.photo] ? (
+                <Photo
+                  key={item.caption}
+                  src={photos[item.photo]}
+                  alt={item.caption}
+                  ratio={i === 0 ? "16 / 10" : "1 / 1"}
+                  className={`zoom ${i === 0 ? "mosaic-wide" : ""}`}
+                  caption={item.caption}
+                />
+              ) : (
+                <figure key={item.caption} className="gallery-item">
+                  <div className="gallery-art" aria-hidden="true">
+                    {item.emoji}
+                  </div>
+                  <figcaption className="muted">{item.caption}</figcaption>
+                </figure>
+              )
+            )}
           </div>
         </Section>
 
@@ -188,6 +251,9 @@ export default function App() {
         </Section>
 
         <Section id="visit" eyebrow="Visit" title="Find us" tone="tinted">
+          <div className="visit-status">
+            <OpenBadge />
+          </div>
           <div className="grid grid-2">
             <div>
               <p className="lead">{business.address}</p>
