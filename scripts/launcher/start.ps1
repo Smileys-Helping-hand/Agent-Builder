@@ -41,6 +41,14 @@ function Write-LauncherLog($text) {
     $lines = Get-Content $launcherLog -ErrorAction SilentlyContinue
     if ($lines.Count -gt 500) { $lines | Select-Object -Last 500 | Set-Content $launcherLog -Encoding ascii -ErrorAction SilentlyContinue }
 }
+# Each start appends to its log; past 5 MB keep one previous file instead of growing for ever.
+function Limit-Log($path) {
+    $item = Get-Item $path -ErrorAction SilentlyContinue
+    if ($item -and $item.Length -gt 5MB) { Move-Item $path "$path.old" -Force -ErrorAction SilentlyContinue }
+}
+
+# First, so a start that goes wrong later still shows it happened.
+Write-LauncherLog "Launcher starting"
 
 # Game mode (set from the app): the graphics card is the gamer's, so the model
 # server stays off until it is switched off again. See src/utils/GameMode.ts.
@@ -97,8 +105,21 @@ if (-not $NoUpdate -and (Test-Path (Join-Path $repo ".git")) -and (Get-Command g
     $pulled = $false
     try {
         $env:GIT_TERMINAL_PROMPT = "0"
-        $output = (& git pull --ff-only --quiet 2>&1 | Out-String)
-        $pulled = ($LASTEXITCODE -eq 0)
+        $env:GCM_INTERACTIVE = "never"
+        # At logon the network may not be up yet, and a credential window can
+        # wait for ever: give the update a minute, then start as it is. (After
+        # one reboot the launcher never got past here, and the builder stayed down.)
+        $gitLog = Join-Path $dataDir "git-update.log"
+        $git = Start-Process git -ArgumentList "pull", "--ff-only", "--quiet" -NoNewWindow -PassThru `
+            -RedirectStandardOutput "$gitLog.out" -RedirectStandardError $gitLog
+        $null = $git.Handle  # without this, Windows PowerShell never reports the exit code
+        if ($git.WaitForExit(60000)) {
+            $pulled = ($git.ExitCode -eq 0)
+            $output = (Get-Content $gitLog -Raw -ErrorAction SilentlyContinue)
+        } else {
+            & taskkill.exe /T /F /PID $git.Id 2>&1 | Out-Null
+            $output = "git pull did not finish within a minute (no network yet?)"
+        }
     } catch {
         $output = $_.Exception.Message
     }
@@ -205,6 +226,7 @@ $bindHost = if ($tailscaleIp) { "0.0.0.0" } else { "127.0.0.1" }
 
 # Appends rather than overwrites, so a restart does not erase the reason for it.
 function Start-Api {
+    Limit-Log $apiLog
     Add-Content -Path $apiLog -Value ("`n==== started {0} ====" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss")) -Encoding ascii -ErrorAction SilentlyContinue
     $process = Start-Process -FilePath "cmd.exe" `
         -ArgumentList "/c set HOST=$bindHost&& npx tsx src/server/server.ts >> `"$apiLog`" 2>&1" `
@@ -263,6 +285,7 @@ $jarvisUrl = "http://127.0.0.1:3005/api/jarvis/status"
 $hasJarvis = Test-Path (Join-Path $jarvisDir ".next\BUILD_ID")
 
 function Start-Jarvis {
+    Limit-Log $jarvisLog
     Add-Content -Path $jarvisLog -Value ("`n==== started {0} ====" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss")) -Encoding ascii -ErrorAction SilentlyContinue
     $process = Start-Process -FilePath "cmd.exe" `
         -ArgumentList "/c npx next start -p 3005 -H 127.0.0.1 >> `"$jarvisLog`" 2>&1" `
@@ -315,6 +338,7 @@ function Get-JarvisBridge {
 
 function Start-JarvisBridge {
     Get-JarvisBridge | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Limit-Log $bridgeLog
     Add-Content -Path $bridgeLog -Value ("`n==== started {0} ====" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss")) -Encoding ascii -ErrorAction SilentlyContinue
     $process = Start-Process -FilePath "cmd.exe" `
         -ArgumentList "/c node `"$bridgeScript`" >> `"$bridgeLog`" 2>&1" `
