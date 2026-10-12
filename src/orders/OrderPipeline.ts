@@ -31,6 +31,7 @@ import { OrderStore, type Order } from "./OrderStore.js";
 import { OrderReceipts } from "./OrderReceipts.js";
 import { SiteClient, type SiteOrder } from "./SiteClient.js";
 import { SiteEdits } from "./SiteEdits.js";
+import { TemplateAcademy } from "../academy/TemplateAcademy.js";
 import { readPublicUrl } from "../utils/PublicUrl.js";
 import { shareableBuildPreview } from "../server/previews.js";
 import { GameMode } from "../utils/GameMode.js";
@@ -526,6 +527,8 @@ export const OrderPipeline = {
       .slice()
       .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
       .slice(0, room);
+    // A customer waiting beats the academy practising: its builds step aside (their work is kept).
+    if (queue.length > 0) TemplateAcademy.yieldToOrders();
 
     const started: string[] = [];
     for (const order of queue) {

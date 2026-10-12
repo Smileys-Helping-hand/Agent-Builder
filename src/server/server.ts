@@ -52,6 +52,8 @@ import { ConfigVault } from "../utils/ConfigVault.js";
 import { syncDynamicEnv } from "../utils/EnvLoader.js";
 import { registerAutonomousRoutes } from "./autonomous.js";
 import { registerArtRoutes } from "./art.js";
+import { registerAcademyRoutes } from "./academy.js";
+import { TemplateAcademy } from "../academy/TemplateAcademy.js";
 import { registerResearchRoutes } from "./research.js";
 import { registerEcosystemRoutes } from "./ecosystem.js";
 import { registerServiceRoutes } from "./services.js";
@@ -248,6 +250,9 @@ registerLicenseRoutes(app);
 registerAdminRoutes(app);
 registerAutonomousRoutes(app);
 registerArtRoutes(app);
+registerAcademyRoutes(app);
+// Practises new templates when the PC is idle (ACADEMY=off to stop).
+TemplateAcademy.start();
 registerResearchRoutes(app);
 registerEcosystemRoutes(app);
 registerServiceRoutes(app);

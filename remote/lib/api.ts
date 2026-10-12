@@ -636,6 +636,42 @@ export interface ArtJob {
   finishedAt: string | null;
 }
 
+export interface AcademyAttempt {
+  buildId: string;
+  kind: "fresh" | "continued";
+  startedAt: string;
+  finishedAt: string | null;
+  score: number | null;
+  failing: string[];
+  outcome: "running" | "passed" | "short" | "failed" | "stopped";
+}
+
+export interface AcademyIdea {
+  id: string;
+  name: string;
+  category: string;
+  brief: string;
+  mustHave: string[];
+  icon: string;
+  status: "idea" | "practising" | "graduated" | "published" | "parked";
+  from: "owner" | "academy";
+  attempts: AcademyAttempt[];
+  bestScore: number;
+  sourcePath: string | null;
+  updatedAt: string;
+  note: string | null;
+}
+
+export interface AcademyStatus {
+  enabled: boolean;
+  dailyLimit: number;
+  practisedToday: number;
+  maxAttempts: number;
+  running: Array<{ buildId: string; idea: string }>;
+  counts: Record<string, number>;
+  ideas: AcademyIdea[];
+}
+
 export interface ArtStatus {
   engine: "ready" | "offline";
   mediagen: { configured: boolean; reachable: boolean; workerOnline: boolean | null; url: string | null; error?: string };
@@ -1251,6 +1287,13 @@ export const api = {
   },
 
   // --- Studio (pictures) ---
+  academy: () => request<AcademyStatus>("/api/academy"),
+  academyAdd: (input: { name: string; category?: string; brief: string; mustHave?: string[]; icon?: string }) =>
+    request<{ idea: AcademyIdea }>("/api/academy/ideas", { method: "POST", body: JSON.stringify(input) }),
+  academyPropose: (count = 3) => request<{ ideas: AcademyIdea[] }>("/api/academy/propose", { method: "POST", body: JSON.stringify({ count }) }, 180000),
+  academyPractise: (id: string) => request<{ buildId: string; message: string }>(`/api/academy/${encodeURIComponent(id)}/practise`, { method: "POST" }, 120000),
+  academyPublish: (id: string, price?: number) => request<{ idea: AcademyIdea }>(`/api/academy/${encodeURIComponent(id)}/publish`, { method: "POST", body: JSON.stringify({ price }) }),
+  academyRemove: (id: string) => request<{ ok: boolean }>(`/api/academy/${encodeURIComponent(id)}`, { method: "DELETE" }),
   artStatus: () => request<ArtStatus>("/api/art/status"),
   artDraw: (input: { subject: string; name?: string; kind?: ArtKind; style?: string; seed?: number; count?: number }) =>
     request<{ jobs: ArtJob[] }>("/api/art/draw", { method: "POST", body: JSON.stringify(input) }),
