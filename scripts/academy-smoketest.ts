@@ -41,7 +41,12 @@ const landing = path.resolve("templates/sites/landing");
 const booking = path.resolve("templates/sites/booking");
 assert.ok(contractProblems(landing, { name: "Dental Practice", category: "Dentists" }).some((p) => /solar|Brightline/.test(p)), "the starting point is caught");
 assert.ok(contractProblems(booking, { name: "Dental Practice", category: "Dentists", starter: "booking" }).some((p) => /Studio Nova Hair/.test(p)), "any starter is caught");
-assert.deepEqual(contractProblems(landing, { name: "Solar Installer", category: "Solar", starter: "booking" }), [], "a finished template passes");
+// A finished template passes once its photographs were drawn for it.
+const finished = path.join(tmp, "finished");
+fs.cpSync(landing, finished, { recursive: true, filter: (src) => !/node_modules|[\\/]dist$/.test(src) });
+assert.deepEqual(contractProblems(finished, { name: "Solar Installer", category: "Solar", starter: "booking" }), ["its photographs were not redrawn for this kind of business (is ComfyUI set up?)"]);
+fs.writeFileSync(path.join(finished, ".art-drawn.json"), "[]");
+assert.deepEqual(contractProblems(finished, { name: "Solar Installer", category: "Solar", starter: "booking" }), [], "a finished template passes");
 const empty = fs.mkdtempSync(path.join(tmp, "empty-"));
 assert.ok(contractProblems(empty, { name: "Gym", category: "Gyms" }).length >= 4, "nothing there: many problems");
 

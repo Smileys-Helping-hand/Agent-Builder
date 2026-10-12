@@ -196,6 +196,10 @@ export function contractProblems(dir: string, idea: Pick<AcademyIdea, "name" | "
   if (starter === "landing" && !/solar|energy/i.test(`${idea.name} ${idea.category}`) && /solar|load-shedding/i.test(content)) {
     problems.push("the solar company it started from is still in src/content.ts");
   }
+  // Its photographs must show this business, not the starter's.
+  if (fs.existsSync(file("art.json")) && !fs.existsSync(file(".art-drawn.json"))) {
+    problems.push("its photographs were not redrawn for this kind of business (is ComfyUI set up?)");
+  }
   const app = fs.existsSync(file("src/App.tsx")) ? fs.readFileSync(file("src/App.tsx"), "utf8") : "";
   if (!app.includes("DemoBanner")) problems.push("App.tsx does not show the template preview ribbon (DemoBanner)");
   return problems;
@@ -215,15 +219,11 @@ async function startAttempt(idea: AcademyIdea): Promise<BuildRecord | null> {
   if (fresh) {
     const starter = starterFor(idea);
     const { workDir } = await copyForBuild(path.join(TEMPLATES(), starter), `academy ${idea.name}`, "academy");
-    // A starter, not a customer's copy of a template: the model may rewrite the code.
-    fs.writeFileSync(
-      path.join(workDir, "template.json"),
-      JSON.stringify({ name: idea.name, description: idea.brief.slice(0, 300), icon: idea.icon, starter: true, academy: true }, null, 2)
-    );
-    // The starter's photographs go; they show its business, not this one.
-    fs.rmSync(path.join(workDir, "src", "images"), { recursive: true, force: true });
-    fs.mkdirSync(path.join(workDir, "src", "images"), { recursive: true });
-    fs.rmSync(path.join(workDir, "art.json"), { force: true });
+    // Built exactly like a customer order on that template: its template.json
+    // stays, so the kit is locked and the model tailors the page instead of
+    // rewriting it, and the art pass redraws the photographs for the new kind
+    // of business. (Marked as a starter, the 7B model threw the page away and
+    // went round in type errors.) It is renamed when it graduates.
     build = BuildService.start({
       projectName: idea.name,
       description: practiceBrief(idea, starter),
