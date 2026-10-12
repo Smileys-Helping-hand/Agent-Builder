@@ -41,10 +41,15 @@ import { Catalog } from "../orders/Catalog.js";
 import { EcosystemStore } from "../ecosystem/EcosystemStore.js";
 import { listProjectFiles } from "../ecosystem/ProjectBuilds.js";
 import { Logger } from "../utils/Logger.js";
+import { packageTool } from "../utils/packageTool.js";
 import { authenticateAgent } from "./agentAuth.js";
 import { EDITOR_SCRIPT } from "./previewEditor.js";
 
 const run = promisify(execFile);
+const runTool = (tool: "npm" | "npx", args: string[], options: Parameters<typeof run>[2]) => {
+  const command = packageTool(tool, args);
+  return run(command.file, command.args, options);
+};
 const SECRET_PATH = path.resolve("./data/preview-secret");
 
 /** Kept on disk so preview links survive a restart of the builder. */
@@ -184,14 +189,13 @@ const buildErrors = new Map<string, string>();
 const buildTemplate = (id: string, folder: string): void => {
   if (building.has(id)) return;
   buildErrors.delete(id);
-  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
   const options = { cwd: folder, timeout: 10 * 60_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true, shell: process.platform === "win32" };
   const job = (async () => {
     Logger.log("Building a template preview", { id });
     if (!fs.existsSync(path.join(folder, "node_modules"))) {
-      await run(npm, ["install", "--no-audit", "--no-fund"], options);
+      await runTool("npm", ["install", "--no-audit", "--no-fund"], options);
     }
-    await run(npm, ["run", "build"], { ...options, env: { ...process.env, BASE_PATH: "./" } });
+    await runTool("npm", ["run", "build"], { ...options, env: { ...process.env, BASE_PATH: "./" } });
     Logger.log("Template preview ready", { id });
   })()
     .catch((error: unknown) => {
@@ -248,8 +252,6 @@ const buildProjectPreview = (id: string, projectPath: string): void => {
   const job: ProjectPreviewJob = { state: "running", startedAt: new Date().toISOString(), step: "Copying the project", error: null };
   projectJobs.set(id, job);
   const target = previewCopy(id);
-  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-  const npx = process.platform === "win32" ? "npx.cmd" : "npx";
   const options = { cwd: target, timeout: 15 * 60_000, maxBuffer: 32 * 1024 * 1024, windowsHide: true, shell: process.platform === "win32" };
   void (async () => {
     // Keep node_modules from last time (the slow part); everything else is fresh.
@@ -281,15 +283,15 @@ const buildProjectPreview = (id: string, projectPath: string): void => {
     if (Object.keys(deps).length) {
       job.step = "Installing its packages (the first time takes a few minutes)";
       const ci = fs.existsSync(path.join(target, "package-lock.json")) && !fs.existsSync(path.join(target, "node_modules"));
-      await run(npm, ci ? ["ci", "--no-audit", "--no-fund"] : ["install", "--no-audit", "--no-fund"], options);
+      await runTool("npm", ci ? ["ci", "--no-audit", "--no-fund"] : ["install", "--no-audit", "--no-fund"], options);
     }
     job.step = "Building the site";
     const env = { ...process.env, BASE_PATH: "./", PUBLIC_URL: ".", NODE_ENV: "production" };
     if (deps.vite && !/next build|react-scripts/.test(pkg.scripts?.build ?? "")) {
       // Built to be served from any folder, not only the root of a domain.
-      await run(npx, ["vite", "build", "--base", "./"], { ...options, env });
+      await runTool("npx", ["vite", "build", "--base", "./"], { ...options, env });
     } else if (pkg.scripts?.build) {
-      await run(npm, ["run", "build"], { ...options, env });
+      await runTool("npm", ["run", "build"], { ...options, env });
     } else {
       throw new Error("It has no build script, and it is not a Vite project.");
     }

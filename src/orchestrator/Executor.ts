@@ -6,6 +6,7 @@
  * workspace it was generated into, and reports back what happened.
  */
 import { spawn } from "child_process";
+import { commandLine } from "../utils/packageTool.js";
 
 export type ExecutionResult = {
   command: string;
@@ -49,10 +50,13 @@ export class Executor {
     const startedAt = Date.now();
 
     return new Promise((resolve) => {
-      const child = spawn(command, args, {
+      // Through the shell, as one quoted line: Node 24 deprecates arguments
+      // passed beside shell: true (DEP0190), since it joins them unescaped.
+      const shell = needsWindowsShell(command);
+      const child = spawn(shell ? commandLine(command, args) : command, shell ? [] : args, {
         cwd: options.cwd,
         env: options.env ?? process.env,
-        shell: needsWindowsShell(command),
+        shell,
         windowsHide: true
       });
 

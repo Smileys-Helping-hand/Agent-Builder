@@ -21,6 +21,7 @@ import { promisify } from "util";
 
 import { Logger } from "../utils/Logger.js";
 import { accentOf, iconPng } from "./AppIcons.js";
+import { packageTool } from "../utils/packageTool.js";
 
 const run = promisify(execFile);
 
@@ -58,8 +59,10 @@ const copySource = (from: string, to: string): void => {
   }
 };
 
-const npm = (args: string[], cwd: string, timeout: number) =>
-  run(process.platform === "win32" ? "npm.cmd" : "npm", args, { cwd, windowsHide: true, timeout, shell: process.platform === "win32" });
+const npm = (args: string[], cwd: string, timeout: number) => {
+  const tool = packageTool("npm", args);
+  return run(tool.file, tool.args, { cwd, windowsHide: true, timeout, shell: process.platform === "win32" });
+};
 
 const safeName = (title: string): string => title.replace(/[^a-zA-Z0-9 _-]/g, "").trim().replace(/\s+/g, "-").slice(0, 60) || "website";
 
@@ -95,7 +98,8 @@ export const Packager = {
         // dropped, not checked), so the download still opens.
         const vite = pkg.dependencies?.vite ?? pkg.devDependencies?.vite;
         if (!vite) throw error;
-        await run(process.platform === "win32" ? "npx.cmd" : "npx", ["vite", "build", "--base", "./"], {
+        const viteBuild = packageTool("npx", ["vite", "build", "--base", "./"]);
+        await run(viteBuild.file, viteBuild.args, {
           cwd: sourceDir,
           windowsHide: true,
           timeout: 600_000,
