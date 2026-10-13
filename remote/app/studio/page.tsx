@@ -273,9 +273,11 @@ export default function Studio() {
 
   return (
     <>
-      <Header title="Media Studio" sub="Pictures for your apps and games, made on your PC" state={engine === "ready" ? "up" : engine === "offline" ? "warn" : undefined} />
+      <Header title="Media Studio" sub="Pictures for your apps and games, made on your PC" state={engine === "ready" ? "up" : engine === "missing" || engine === "game-mode" ? "warn" : undefined} />
       <div className="wrap">
-        {engine === "offline" ? <Banner kind="info">The image engine (ComfyUI) is not running on the PC. Start it, and drawing works here.</Banner> : null}
+        {engine === "starts" || engine === "offline" ? <Banner kind="info">The image engine (ComfyUI) is not running yet: Draw starts it, so the first picture takes a minute or two longer.</Banner> : null}
+        {engine === "game-mode" ? <Banner kind="info">Game mode is on, so the graphics card is kept free and nothing is drawn. Turn game mode off to draw.</Banner> : null}
+        {engine === "missing" ? <Banner kind="error">The image engine (Comfy Desktop) is not installed where the builder looks. Install it, or set COMFY_DESKTOP_PATH in .env on the PC.</Banner> : null}
 
         <section className="card">
           <h2>Create</h2>
@@ -339,7 +341,7 @@ export default function Studio() {
           </label>
           <p className="muted small">{KINDS.find((k) => k.id === kind)?.hint}</p>
           <div className="btn-row">
-            <button className="btn primary" disabled={busy || engine === "offline"} onClick={draw}>
+            <button className="btn primary" disabled={busy || engine === "missing" || engine === "game-mode"} onClick={draw}>
               {busy ? <Busy label="Starting…" /> : <>{Icon.sparkle} Draw</>}
             </button>
           </div>
