@@ -255,7 +255,7 @@ export class Verifier {
     // the packages (and so the types) are installed. Same rule as above: only
     // on what we generated.
     if (hasTsconfig && (options.autofix ?? options.scaffoldTests !== false)) {
-      const typeFixes = TypeFixer.run(root);
+      const typeFixes = await TypeFixer.runOffThread(root);
       if (typeFixes.length) Logger.log("Fixed type errors without the model", { fixes: typeFixes });
       this.typeFixes.set(root, typeFixes);
     } else {

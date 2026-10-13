@@ -19,6 +19,8 @@
 import fs from "fs";
 import path from "path";
 import { createRequire } from "module";
+import { fileURLToPath } from "url";
+import { Worker, isMainThread, parentPort, workerData } from "worker_threads";
 
 type TsModule = typeof import("typescript");
 
@@ -966,5 +968,51 @@ export const TypeFixer = {
     for (const file of changed) fs.writeFileSync(file, texts.get(file) ?? "", "utf8");
     service.dispose();
     return Array.from(new Set(notes)).slice(0, 40);
+  },
+
+  /** run(), on a worker thread. */
+  runOffThread(folder: string): Promise<string[]> {
+    return offThread("run", folder, () => TypeFixer.run(folder), []);
+  },
+
+  /** errorCount(), on a worker thread. */
+  errorCountOffThread(folder: string): Promise<number | null> {
+    return offThread("count", folder, () => TypeFixer.errorCount(folder), null);
   }
 };
+
+/**
+ * TypeScript reads every type definition a project uses (hundreds of files)
+ * synchronously. On the builder's event loop that froze every request and
+ * build for the whole check: 117 s once, while the hard drive was busy. A
+ * worker thread runs this same file instead. Bundled into one file (the
+ * packaged app) this module is not its own file, so it runs inline as before;
+ * so it does when the worker cannot start.
+ */
+const SELF = fileURLToPath(import.meta.url);
+type Op = "run" | "count";
+
+function offThread<T>(op: Op, folder: string, inline: () => T, fallback: T): Promise<T> {
+  if (!/TypeFixer\.(ts|js)$/.test(SELF)) return Promise.resolve(inline());
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: T) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    try {
+      const worker = new Worker(SELF, { workerData: { typeFixer: op, folder } });
+      worker.once("message", (value: T) => finish(value));
+      worker.once("error", () => finish(inline()));
+      worker.once("exit", () => finish(fallback));
+    } catch {
+      finish(inline());
+    }
+  });
+}
+
+if (!isMainThread && workerData?.typeFixer) {
+  const { typeFixer, folder } = workerData as { typeFixer: Op; folder: string };
+  parentPort?.postMessage(typeFixer === "run" ? TypeFixer.run(folder) : TypeFixer.errorCount(folder));
+}

@@ -405,7 +405,7 @@ export class AutonomousOrchestrator extends EventEmitter {
       const inherited =
         iterationNum === 1
           ? AutonomousOrchestrator.inheritedBlocker(this.config.description) ??
-            (this.config.workingDir && this.isStarter() && !this.starterStillPlaceholder() && (TypeFixer.errorCount(this.workspace.root) ?? 0) > 0 ? "typecheck" : undefined)
+            (this.config.workingDir && this.isStarter() && !this.starterStillPlaceholder() && ((await TypeFixer.errorCountOffThread(this.workspace.root)) ?? 0) > 0 ? "typecheck" : undefined)
           : undefined;
       const lastBlocker = this.iterations[this.iterations.length - 1]?.verification?.blockingCheck?.name ?? inherited;
       const fixFirst =
