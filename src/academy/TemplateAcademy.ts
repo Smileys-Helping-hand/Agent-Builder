@@ -167,6 +167,7 @@ export function practiceBrief(idea: AcademyIdea, starter = idea.starter ?? start
     "It must have:",
     ...idea.mustHave.map((item) => `- ${item}`),
     "- Every word on the site in src/content.ts, describing an invented sample business, so a customer's own details can replace it later",
+    "- Every item above visible on the page: in the section it belongs to, or as a feature, an FAQ answer or a line in the team list when no section fits",
     "- The kit in src/lib (site.tsx, customize.ts, pro.tsx, hours.ts) kept as it is and used: Section, SmartForm, Header, Footer, DemoBanner, WhatsAppButton, brandStyle",
     `- Nothing left from ${was ? `${was}, the sample business` : "the template"} this started as (a ${starter} site): its name, wording, prices and features that do not fit replaced or removed`,
     "",
@@ -209,14 +210,16 @@ export function contractProblems(
   if (!app.includes("DemoBanner")) problems.push("App.tsx does not show the template preview ribbon (DemoBanner)");
   // What the idea must have. A score of 100 says the code is sound, not that
   // the brief was met: the first dental practice to score 100 had no medical
-  // aids, dentists or emergency contact. Most of each item's words must be on
-  // the site (matched on their first five letters, so "prices" finds "price").
+  // aids, dentists or emergency contact. Half of each item's words must be on
+  // the site (matched on their first five letters, so "prices" finds "price");
+  // two thirds failed "The dentists, with their qualifications" on a page that
+  // listed its dentists as "Dr. Jane Smith, DDS".
   const site = `${content}\n${app}`.toLowerCase();
   for (const item of idea.mustHave ?? []) {
     const words = [...new Set(contentTokens(item))];
     if (words.length === 0) continue;
     const found = words.filter((word) => site.includes(word.slice(0, 5))).length;
-    if (found < Math.ceil((words.length * 2) / 3)) problems.push(`the site does not have: ${item}`);
+    if (found < Math.ceil(words.length / 2)) problems.push(`the site does not have: ${item}`);
   }
   return problems;
 }
@@ -262,7 +265,7 @@ async function startAttempt(idea: AcademyIdea): Promise<BuildRecord | null> {
     build = BuildService.continue(last.buildId, {
       instruction: [
         `Carry on until every check passes and the template is complete: score 100, every word in src/content.ts, the kit kept, nothing left from ${sampleBusiness(idea.starter ?? "landing") ?? "the template it started from"}.`,
-        last.failing.length ? `Still missing after the last attempt: ${last.failing.join("; ")}.` : ""
+        last.failing.length ? `Still missing after the last attempt: ${last.failing.join("; ")}. Add each one to src/content.ts, in the section it belongs to or, if none fits, as a feature, an FAQ answer or a line in the team list, and show it on the page.` : ""
       ]
         .filter(Boolean)
         .join(" "),
