@@ -1,0 +1,68 @@
+{
+  "style": "editorial food and restaurant photography, moody warm low light, glowing embers, rich deep tones, shallow depth of field, shot on 35mm",
+  "pictures": [
+    {
+      "name": "hero",
+      "subject": "an open wood-fire grill in a coastal restaurant kitchen with flames and glowing coals, fish and steaks searing on the grid, smoke rising",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/hero.webp"
+    },
+    {
+      "name": "line-fish",
+      "subject": "a grilled whole line fish with charred lemon and caper butter on a dark plate",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/line-fish.webp"
+    },
+    {
+      "name": "sirloin",
+      "subject": "a sliced dry-aged sirloin steak, pink inside, with bright green chimichurri on a wooden board",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/sirloin.webp"
+    },
+    {
+      "name": "peri-peri",
+      "subject": "a flame-grilled peri-peri half chicken with charred skin and chilli, on an enamel plate",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/peri-peri.webp"
+    },
+    {
+      "name": "cauliflower",
+      "subject": "a whole coal-roasted cauliflower with tahini, pomegranate seeds and fresh herbs",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/cauliflower.webp"
+    },
+    {
+      "name": "calamari",
+      "subject": "flash-grilled calamari tubes with chilli, garlic oil and lemon in a cast iron pan",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/calamari.webp"
+    },
+    {
+      "name": "malva",
+      "subject": "a warm malva pudding with a jug of vanilla custard being poured over it",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/malva.webp"
+    },
+    {
+      "name": "room",
+      "subject": "an intimate seaside restaurant dining room at dusk with candlelit wooden tables and the harbour lights through large windows",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/room.webp"
+    },
+    {
+      "name": "harbour",
+      "subject": "colourful fishing boats in Kalk Bay harbour at dusk, calm water, mountains behind",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/harbour.webp"
+    }
+  ]
+}

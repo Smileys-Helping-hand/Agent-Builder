@@ -257,10 +257,51 @@ const writeNow = (): void => {
   }
 };
 
+let saving = false;
+let saveAgain = false;
+
+/**
+ * The same write, off the event loop. The history runs to a few megabytes and
+ * data/ can sit on a slow hard drive: written synchronously during a build,
+ * every save could freeze the whole builder for seconds while the disk was
+ * busy with the build's own npm and git work.
+ */
+const writeInBackground = async (): Promise<void> => {
+  writeTimer = null;
+  if (saving) {
+    saveAgain = true;
+    return;
+  }
+  saving = true;
+  try {
+    do {
+      saveAgain = false;
+      await fs.promises.mkdir(path.dirname(STORE_PATH), { recursive: true });
+      const temp = `${STORE_PATH}.${process.pid}.tmp`;
+      await fs.promises.writeFile(temp, JSON.stringify(Array.from(history.values()), null, 1));
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          await fs.promises.rename(temp, STORE_PATH);
+          break;
+        } catch (error) {
+          // Windows refuses a rename onto a file a scanner holds open for a moment.
+          const code = (error as NodeJS.ErrnoException).code;
+          if ((code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") || attempt >= 5) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 20 * 2 ** attempt));
+        }
+      }
+    } while (saveAgain);
+  } catch (error) {
+    Logger.warn("Could not save build history", { error: errorMessage(error) });
+  } finally {
+    saving = false;
+  }
+};
+
 /** Coalesce the burst of updates a pass produces into one write. */
 const persist = (): void => {
   if (writeTimer) return;
-  writeTimer = setTimeout(writeNow, 400);
+  writeTimer = setTimeout(() => void writeInBackground(), 400);
   writeTimer.unref?.();
 };
 
@@ -297,6 +338,14 @@ const normalise = (raw: Partial<BuildRecord> & { buildId: string }): BuildRecord
 
 const load = (): void => {
   let records: Array<Partial<BuildRecord> & { buildId: string }> = [];
+  // Temp files from a process stopped mid-save.
+  try {
+    for (const name of fs.readdirSync(path.dirname(STORE_PATH))) {
+      if (name.startsWith(`${path.basename(STORE_PATH)}.`) && name.endsWith(".tmp")) fs.rmSync(path.join(path.dirname(STORE_PATH), name), { force: true });
+    }
+  } catch {
+    // No data folder yet.
+  }
   try {
     if (fs.existsSync(STORE_PATH)) records = JSON.parse(fs.readFileSync(STORE_PATH, "utf8"));
   } catch (error) {

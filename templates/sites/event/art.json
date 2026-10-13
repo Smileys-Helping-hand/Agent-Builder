@@ -1,0 +1,33 @@
+{
+  "style": "fine-art wedding photography, soft golden-hour light, romantic airy palette, film look, shallow depth of field",
+  "pictures": [
+    {
+      "name": "hero",
+      "subject": "an outdoor wedding ceremony setup in an olive grove at golden hour, rows of wooden chairs and an arch of white flowers",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/hero.webp"
+    },
+    {
+      "name": "dinner",
+      "subject": "a long wedding feast table in a rustic barn with candles, linen, greenery garlands and string lights",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/dinner.webp"
+    },
+    {
+      "name": "terrace",
+      "subject": "champagne glasses and canap\u00c3\u00a9s on a stone terrace overlooking vineyards at sunset",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/terrace.webp"
+    },
+    {
+      "name": "estate",
+      "subject": "a white Cape Dutch farmhouse estate among vineyards and olive trees, mountains behind, late afternoon light",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/estate.webp"
+    }
+  ]
+}

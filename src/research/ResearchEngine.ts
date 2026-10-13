@@ -50,6 +50,8 @@ type Extraction = {
   relevant?: boolean;
   findings?: Array<{ claim?: unknown; confidence?: unknown }>;
   contradictions?: Array<{ knownFinding?: unknown; sourceSays?: unknown }>;
+  /** Known findings this source also states: a second source, so they count as corroborated. */
+  confirms?: Array<{ knownFinding?: unknown; sourceSays?: unknown }>;
   followUpQuestions?: unknown[];
 };
 
@@ -371,6 +373,17 @@ Rules: no title heading; use ONLY the findings; keep citation numbers exactly as
       if (questions.length === 0 || topic.consecutiveEmptyCycles >= 2) {
         const added = await this.broaden(topic, cycle);
         outcome.newQuestions += added;
+        // A stalled topic also checks what it already believes: its strongest
+        // single-source findings, searched for directly, so a second source can
+        // confirm (or contest) them instead of the topic only ever widening.
+        if (topic.consecutiveEmptyCycles >= 2) {
+          const unconfirmed = ResearchStore.listFindings(id, 40, "strongest")
+            .filter((finding) => finding.status === "open" && finding.supportCount < 2)
+            .slice(0, 2);
+          for (const finding of unconfirmed) {
+            if (ResearchStore.addPriorityQuestion(id, `Independent evidence on: ${truncate(finding.claim, 200)}`, cycle)) outcome.newQuestions += 1;
+          }
+        }
         if (questions.length === 0 && added === 0) ResearchStore.reopenExploredQuestions(id, QUESTIONS_PER_CYCLE * 2);
         questions = ResearchStore.nextQuestions(id, QUESTIONS_PER_CYCLE);
       }
@@ -535,7 +548,7 @@ Research topic: ${topic.title}
 Main question: ${topic.question}
 Current sub-question: ${question.text}
 
-Findings already known (do not repeat them; flag any this source contradicts):
+Findings already known (do not repeat them as new findings; list any this source confirms or contradicts):
 ${knownClaims.map((claim) => `- ${claim}`).join("\n") || "- none yet"}
 
 Source: ${source.title} (${source.url})
@@ -550,12 +563,14 @@ Rules:
 - confidence: 0.9 for an established fact stated plainly, 0.6 for a claim made without evidence, 0.3 for speculation.
 - followUpQuestions: 1-3 specific questions this source raises but does not answer.
 - contradictions: only when the source clearly conflicts with a known finding; quote that finding exactly.
+- confirms: known findings this source independently states or clearly supports; quote the known finding exactly and
+  give the source's own words for it in sourceSays. This is how a finding becomes trusted, so look for them.
 
 - thinking: 1-2 plain sentences, in the first person, on what this source adds to the topic and how far you trust it.
 
 Reply with ONLY this JSON:
-{"thinking": "...", "relevant": true, "findings": [{"claim": "...", "confidence": 0.8}], "contradictions": [{"knownFinding": "...", "sourceSays": "..."}], "followUpQuestions": ["..."]}
-If the source is not relevant to the topic, reply {"thinking": "...", "relevant": false, "findings": [], "contradictions": [], "followUpQuestions": []}`
+{"thinking": "...", "relevant": true, "findings": [{"claim": "...", "confidence": 0.8}], "confirms": [{"knownFinding": "...", "sourceSays": "..."}], "contradictions": [{"knownFinding": "...", "sourceSays": "..."}], "followUpQuestions": ["..."]}
+If the source is not relevant to the topic, reply {"thinking": "...", "relevant": false, "findings": [], "confirms": [], "contradictions": [], "followUpQuestions": []}`
     );
 
     if (!extraction) {
@@ -584,6 +599,25 @@ If the source is not relevant to the topic, reply {"thinking": "...", "relevant"
         outcome.newFindings += 1;
         knownClaims.push(claim);
       }
+    }
+
+    // A second source saying what is already known is what makes it trusted —
+    // and only trusted findings reach the builds. The prompt used to say "do
+    // not repeat known findings", so a confirming source said nothing and
+    // topics ran 700 cycles with 17 corroborated findings out of 400. The
+    // source's own words must be in the page, as for any finding.
+    let confirmed = 0;
+    for (const confirmation of (extraction.confirms ?? []).slice(0, MAX_FINDINGS_PER_SOURCE)) {
+      const known = typeof confirmation.knownFinding === "string" ? confirmation.knownFinding : "";
+      const says = typeof confirmation.sourceSays === "string" ? confirmation.sourceSays.replace(/\s+/g, " ").trim() : "";
+      if (!known || says.length < 20 || groundingScore(says, document.text) < MIN_GROUNDING) continue;
+      const existing = ResearchStore.findFindingByText(topic.id, known, 0.6);
+      if (!existing || existing.sourceId === source.id || existing.status === "contested") continue;
+      ResearchStore.addOrReinforceFinding(topic.id, { claim: existing.claim, sourceId: source.id, confidence: existing.confidence }, cycle);
+      confirmed += 1;
+    }
+    if (confirmed > 0) {
+      ResearchStore.logActivity(topic.id, cycle, "finding", `"${truncate(source.title, 60)}" confirms ${confirmed} known finding(s)`);
     }
 
     for (const contradiction of extraction.contradictions ?? []) {

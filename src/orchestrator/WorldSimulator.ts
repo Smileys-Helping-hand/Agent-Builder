@@ -67,6 +67,11 @@ export type SimulationSocialState = {
 
 const DEFAULT_INTERVAL_MS = Number(process.env.STORYWORLD_TICK_MS ?? 60_000);
 const AUTO_START = String(process.env.STORYWORLD_SIMULATION_ENABLED ?? "true").toLowerCase() === "true";
+// Each tick asks the model for several generations. Ticking every minute for a
+// world nobody had open kept the GPU busy all night beside real builds, so
+// automatic ticks run only while its state was read lately (the StoryWorld
+// page or a game client polling it). 0 ticks regardless.
+const IDLE_MS = Number(process.env.STORYWORLD_IDLE_MS ?? 10 * 60_000);
 const FACTION_DYNAMICS_ENABLED = String(process.env.FACTION_DYNAMICS ?? "true").toLowerCase() !== "false";
 
 export class WorldSimulator {
@@ -87,6 +92,7 @@ export class WorldSimulator {
   private running = false;
   private speedMultiplier = 1;
   private lastTick: string | null = null;
+  private watchedAt = 0;
 
   static getInstance() {
     if (!this.instance) {
@@ -136,6 +142,7 @@ export class WorldSimulator {
   }
 
   getState(): SimulationState {
+    this.watchedAt = Date.now();
     const factions = this.lore.listFactions();
     this.social.syncFactions(
       factions.map((faction) => ({
@@ -183,7 +190,8 @@ export class WorldSimulator {
     if (!this.running) return;
     const delay = Math.max(5_000, Math.round(this.intervalMs / this.speedMultiplier));
     this.timer = setTimeout(() => {
-      void this.runTick("auto").catch((error) => {
+      const watched = IDLE_MS <= 0 || Date.now() - this.watchedAt < IDLE_MS;
+      void (watched ? this.runTick("auto") : Promise.resolve()).catch((error) => {
         Logger.warn("World simulation tick failed", error);
       }).finally(() => {
         this.scheduleNextTick();

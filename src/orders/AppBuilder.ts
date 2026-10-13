@@ -27,6 +27,7 @@ import { promisify } from "util";
 import { Logger } from "../utils/Logger.js";
 import { accentOf, iconPng } from "./AppIcons.js";
 import { Packager } from "./Packager.js";
+import { packageTool } from "../utils/packageTool.js";
 
 const run = promisify(execFile);
 const isWindows = process.platform === "win32";
@@ -66,9 +67,14 @@ export const appNames = (title: string): { display: string; slug: string; id: st
   return { display, slug: /^[a-z]/.test(slug) ? slug : `app-${slug}`, id: `za.co.arpcloud.${segment}` };
 };
 
-const npm = (args: string[], cwd: string, timeout = 900_000) => run(isWindows ? "npm.cmd" : "npm", args, { cwd, windowsHide: true, timeout, shell: isWindows, maxBuffer: 32 * 1024 * 1024 });
-const npx = (args: string[], cwd: string, env: NodeJS.ProcessEnv = {}, timeout = 1_800_000) =>
-  run(isWindows ? "npx.cmd" : "npx", args, { cwd, windowsHide: true, timeout, shell: isWindows, env: { ...process.env, ...env }, maxBuffer: 32 * 1024 * 1024 });
+const npm = (args: string[], cwd: string, timeout = 900_000) => {
+  const tool = packageTool("npm", args);
+  return run(tool.file, tool.args, { cwd, windowsHide: true, timeout, shell: isWindows, maxBuffer: 32 * 1024 * 1024 });
+};
+const npx = (args: string[], cwd: string, env: NodeJS.ProcessEnv = {}, timeout = 1_800_000) => {
+  const tool = packageTool("npx", args);
+  return run(tool.file, tool.args, { cwd, windowsHide: true, timeout, shell: isWindows, env: { ...process.env, ...env }, maxBuffer: 32 * 1024 * 1024 });
+};
 
 const replaceIn = (file: string, edits: Array<[RegExp, string]>) => {
   let text = fs.readFileSync(file, "utf8");

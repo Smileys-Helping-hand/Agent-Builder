@@ -1,23 +1,6 @@
 # Open World City Game
 
-A branded top-down open-world city game in the style of GTA: walk the streets,
-take and drive cars, run delivery missions against the clock, and escape the
-police when your wanted level rises, with a prize form that turns players into
-leads.
-
-## The game
-
-- **`src/game.ts`** is the whole game with no drawing: the city map, walking,
-  driving and crashes, traffic and pedestrians, the wanted level and police
-  chases, missions and cash. Change `DEFAULT_SETTINGS` (or `site.game` in
-  `src/content.ts`) for a bigger city, more traffic or tougher police. Its
-  tests are in `src/game.test.ts`.
-- **`src/play.tsx`** draws it with a camera that follows the player, a mini
-  map and an arrow to the next job, and handles keys and touch.
-- **Pictures:** put PNGs in `public/assets/` and list them in
-  `public/assets/manifest.json` (`{"assets": {"car": {"file": "assets/car.png"}}}`).
-  Names: `car`, `police`, `player` (the player's car) and `person`. Anything
-  without a picture is drawn as a shape.
+A branded top-down open-world city game in the style of GTA: walk the streets, take and drive cars, run delivery missions against the clock and escape the police when your wanted level rises, with a prize form that turns players into leads.
 
 ## Changing what it says
 

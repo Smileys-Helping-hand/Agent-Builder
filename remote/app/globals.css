@@ -1535,3 +1535,28 @@ body::before {
 button.chip { cursor: pointer; font-family: inherit; }
 .chip.on { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 a.mark { text-decoration: none; color: inherit; }
+
+/* ---------------- template academy ---------------- */
+.academy-card { margin-bottom: 12px; }
+.academy-head { display: flex; align-items: center; gap: 12px; }
+.academy-icon { width: 42px; height: 42px; flex: none; display: grid; place-items: center; font-size: 22px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); }
+.academy-score { height: 7px; border-radius: 99px; background: rgba(255, 255, 255, 0.08); overflow: hidden; margin-top: 12px; }
+.academy-score span { display: block; height: 100%; background: linear-gradient(90deg, #7fd8ff, var(--accent-deep)); transition: width 0.6s ease; }
+.academy-price { width: 110px !important; padding: 8px 10px !important; font-size: 14px !important; }
+.academy-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.academy-stats > div { display: grid; gap: 2px; }
+.academy-stats strong { font-size: 1.15rem; }
+@media (max-width: 420px) { .academy-stats { grid-template-columns: 1fr 1fr; } .academy-head .chip { display: none; } }
+
+/* Jarvis's library */
+.library-card { margin-bottom: 12px; }
+.library-head { display: flex; align-items: center; gap: 12px; }
+.library-icon { width: 42px; height: 42px; flex: none; display: grid; place-items: center; border-radius: 12px; background: rgba(255, 255, 255, 0.06); }
+.library-icon svg { width: 20px; height: 20px; }
+.library-title { margin: 0; font-size: 1rem; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.library-request { margin: 10px 0 0; padding: 8px 12px; border-left: 3px solid rgba(255, 255, 255, 0.18); color: var(--muted, #9aa3b2); font-size: 0.9rem; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; white-space: pre-wrap; overflow-wrap: anywhere; }
+.library-pictures { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; margin-top: 10px; }
+.library-pictures img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 10px; background: rgba(255, 255, 255, 0.05); display: block; }
+.library-media { width: 100%; max-height: 320px; object-fit: contain; border-radius: 12px; margin-top: 10px; background: #000; display: block; }
+@media (max-width: 420px) { .library-head .chip { display: none; } }
+.library-link { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; color: inherit; text-decoration: none; }

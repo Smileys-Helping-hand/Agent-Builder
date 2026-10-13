@@ -97,3 +97,135 @@
 .reservation {
   max-width: 760px;
 }
+
+/* ---------------- signature layer ---------------- */
+
+.restaurant-cover-inner {
+  padding-top: 120px;
+  padding-bottom: 110px;
+}
+
+.restaurant-title {
+  font-size: clamp(2.5rem, 6vw, 4.8rem);
+  line-height: 1.04;
+  max-width: 16ch;
+  margin: 12px 0 18px;
+  color: #fff;
+}
+
+.restaurant-cover .lead {
+  max-width: 52ch;
+}
+
+.btn-on-photo {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.5);
+  background: rgba(0, 0, 0, 0.18);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+/* Open now / closed, live from the opening hours. */
+.open-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 6px 14px 6px 10px;
+  border-radius: 999px;
+  font-size: 0.88rem;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  letter-spacing: 0.01em;
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.open-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #9ca3af;
+}
+
+.is-open .open-dot {
+  background: #22c55e;
+  box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.6);
+  animation: open-pulse 2s ease-out infinite;
+}
+
+@keyframes open-pulse {
+  to {
+    box-shadow: 0 0 0 10px rgba(34, 197, 94, 0);
+  }
+}
+
+.visit-status .open-badge {
+  background: var(--surface);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--text) 14%, transparent);
+}
+
+/* The house signatures: tall photographs, name and price across the bottom. */
+.signature-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.signature-dish .photo figcaption {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 40px 16px 16px;
+  font-size: 1rem;
+}
+
+/* Menu dishes with a photograph show it small, beside the name. */
+.dish-with-photo {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.dish-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 10px;
+  box-shadow: 0 8px 20px -10px rgba(0, 0, 0, 0.6);
+}
+
+/* Gallery: a wide lead picture and a grid of squares. */
+.gallery-mosaic {
+  display: grid;
+  /* Three across: the wide lead picture (two by two) and five squares fill three rows exactly. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.gallery-mosaic .mosaic-wide {
+  grid-column: span 2;
+  grid-row: span 2;
+  aspect-ratio: auto !important;
+}
+
+@media (max-width: 900px) {
+  .signature-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .gallery-mosaic {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .restaurant-cover-inner {
+    padding-top: 80px;
+    padding-bottom: 90px;
+  }
+}

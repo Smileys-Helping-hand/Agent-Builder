@@ -23,6 +23,7 @@ import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
 import { launcherRunning } from "./powerTools.js";
 import { BuildService } from "../orchestrator/BuildService.js";
 import { Logger } from "../utils/Logger.js";
+import { packageTool } from "../utils/packageTool.js";
 
 const exec = promisify(execFile);
 const ROOT = process.cwd();
@@ -32,8 +33,10 @@ const isWindows = process.platform === "win32";
 const git = async (args: string[], timeout = 60_000): Promise<string> =>
   (await exec("git", args, { cwd: ROOT, timeout, windowsHide: true, maxBuffer: 8 * 1024 * 1024 })).stdout.trim();
 
-const npm = (args: string[], cwd: string) =>
-  exec(isWindows ? "npm.cmd" : "npm", args, { cwd, timeout: 15 * 60_000, windowsHide: true, shell: isWindows, maxBuffer: 32 * 1024 * 1024 });
+const npm = (args: string[], cwd: string) => {
+  const tool = packageTool("npm", args);
+  return exec(tool.file, tool.args, { cwd, timeout: 15 * 60_000, windowsHide: true, shell: isWindows, maxBuffer: 32 * 1024 * 1024 });
+};
 
 export interface VersionInfo {
   available: boolean;

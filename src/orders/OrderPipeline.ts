@@ -30,6 +30,8 @@ import { Catalog } from "./Catalog.js";
 import { OrderStore, type Order } from "./OrderStore.js";
 import { OrderReceipts } from "./OrderReceipts.js";
 import { SiteClient, type SiteOrder } from "./SiteClient.js";
+import { SiteEdits } from "./SiteEdits.js";
+import { TemplateAcademy } from "../academy/TemplateAcademy.js";
 import { readPublicUrl } from "../utils/PublicUrl.js";
 import { shareableBuildPreview } from "../server/previews.js";
 import { GameMode } from "../utils/GameMode.js";
@@ -355,11 +357,16 @@ export const OrderPipeline = {
     });
     const at = new Date().toISOString();
     if (result.ok) {
+      // Say when it is back, so the log does not end on a failure that has passed.
+      if (publishFailures > 0) Logger.log("Check-in to the site is working again", { after: publishFailures, lastOk: lastPublishOk });
       lastPublishOk = at;
       publishFailures = 0;
     } else {
       publishFailures += 1;
-      Logger.warn("Check-in to the site failed", { detail: result.message, failuresInARow: publishFailures, lastOk: lastPublishOk });
+      // The first failure, then every 20th: one outage on 6 Oct wrote 324 lines.
+      if (publishFailures === 1 || publishFailures % 20 === 0) {
+        Logger.warn("Check-in to the site failed", { detail: result.message, failuresInARow: publishFailures, lastOk: lastPublishOk });
+      }
     }
     lastPublish = { at, ok: result.ok, message: result.message, count: items.length, lastOkAt: lastPublishOk, failures: publishFailures };
     return { ok: result.ok, message: result.message, count: items.length };
@@ -525,6 +532,8 @@ export const OrderPipeline = {
       .slice()
       .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
       .slice(0, room);
+    // A customer waiting beats the academy practising: its builds step aside (their work is kept).
+    if (queue.length > 0) TemplateAcademy.yieldToOrders();
 
     const started: string[] = [];
     for (const order of queue) {
@@ -813,6 +822,8 @@ export const OrderPipeline = {
     const intake = async () => {
       if (!SiteClient.isConfigured()) return;
       await this.intake();
+      // Customers' changes to their finished sites come with the same poll.
+      await SiteEdits.process().catch((error) => Logger.error("Site edits failed", { error: errorMessage(error) }));
     };
     run("check-in", checkIn, CHECK_IN_EVERY_MS);
     run("intake", intake, INTAKE_EVERY_MS);

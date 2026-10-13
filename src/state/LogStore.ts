@@ -70,6 +70,14 @@ export class LogStore {
       }
     }
     this.initialized = true;
+    // A process stopped mid-write leaves its temp file behind (nine had piled up).
+    const base = path.basename(LOG_PATH);
+    const names = await fs.promises.readdir(path.dirname(LOG_PATH)).catch(() => [] as string[]);
+    for (const name of names) {
+      if (name.startsWith(`${base}.`) && name.endsWith(".tmp") && name !== `${base}.${process.pid}.tmp`) {
+        await fs.promises.rm(path.join(path.dirname(LOG_PATH), name), { force: true }).catch(() => undefined);
+      }
+    }
   }
 
   static append(entry: LogEntry): Promise<void> {

@@ -1,1 +1,213 @@
 /* Styles for this template only. */
+
+/* ---------------- hero ---------------- */
+
+.hero-cover-inner {
+  padding-top: 120px;
+  padding-bottom: 150px;
+  max-width: 1160px;
+}
+
+.hero-title {
+  font-size: clamp(2.6rem, 6.4vw, 5.2rem);
+  line-height: 1.02;
+  max-width: 13ch;
+  margin: 10px 0 18px;
+  color: #fff;
+}
+
+.hero-cover .lead {
+  max-width: 54ch;
+  font-size: 1.15rem;
+}
+
+.btn-on-photo {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.08);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.btn-on-photo:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* The statistics sit across the bottom edge of the hero photo. */
+.stat-overlap {
+  position: relative;
+  z-index: 2;
+  margin-top: -64px;
+}
+
+.stat-overlap span {
+  font-size: 0.92rem;
+}
+
+/* ---------------- savings estimator ---------------- */
+
+.estimator-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 32px;
+  align-items: center;
+}
+
+.estimator {
+  border-radius: calc(var(--radius) + 8px);
+  padding: 30px;
+  display: grid;
+  gap: 24px;
+  box-shadow: 0 40px 80px -50px rgba(0, 0, 0, 0.45);
+}
+
+.estimator-input {
+  display: grid;
+  gap: 8px;
+}
+
+.estimator-bill {
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.estimator input[type="range"] {
+  width: 100%;
+  accent-color: var(--primary);
+  height: 28px;
+}
+
+.estimator-result {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.estimator-result > div {
+  display: grid;
+  gap: 4px;
+  padding: 16px;
+  border-radius: var(--radius);
+  background: var(--bg);
+  border: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.estimator-result strong {
+  font-size: 1.35rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.estimator-result .muted {
+  font-size: 0.85rem;
+}
+
+.estimator-photo .photo {
+  box-shadow: 0 40px 80px -40px rgba(0, 0, 0, 0.55);
+}
+
+/* ---------------- process timeline ---------------- */
+
+.timeline {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 28px;
+  position: relative;
+}
+
+.timeline::before {
+  content: "";
+  position: absolute;
+  top: 22px;
+  left: 6%;
+  right: 6%;
+  height: 2px;
+  background: linear-gradient(90deg, var(--primary), var(--accent));
+  opacity: 0.45;
+}
+
+.timeline-step {
+  position: relative;
+}
+
+.timeline-step .step-number {
+  position: relative;
+  z-index: 1;
+  box-shadow: 0 0 0 6px var(--bg);
+}
+
+/* ---------------- pricing ---------------- */
+
+.plan {
+  display: flex;
+  flex-direction: column;
+}
+
+.plan .btn {
+  margin-top: auto !important;
+}
+
+.plan-featured {
+  position: relative;
+  transform: translateY(-8px);
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--surface), var(--surface)) padding-box,
+    linear-gradient(140deg, var(--primary), var(--accent)) border-box;
+  box-shadow: 0 30px 70px -36px color-mix(in srgb, var(--primary) 80%, transparent);
+}
+
+/* ---------------- reviews ---------------- */
+
+.quote-card {
+  width: min(380px, 80vw);
+  margin: 0;
+  flex: none;
+}
+
+/* ---------------- contact ---------------- */
+
+.contact-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 32px;
+  align-items: start;
+}
+
+/* ---------------- small screens ---------------- */
+
+@media (max-width: 900px) {
+  .estimator-grid,
+  .contact-split {
+    grid-template-columns: 1fr;
+  }
+  .estimator-photo,
+  .contact-photo {
+    display: none;
+  }
+  .timeline {
+    grid-template-columns: 1fr 1fr;
+  }
+  .timeline::before {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .estimator-result {
+    grid-template-columns: 1fr;
+  }
+  .timeline {
+    grid-template-columns: 1fr;
+  }
+  .hero-cover-inner {
+    padding-top: 80px;
+    padding-bottom: 120px;
+  }
+  .plan-featured {
+    transform: none;
+  }
+}

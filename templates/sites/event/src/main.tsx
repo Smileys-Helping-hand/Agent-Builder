@@ -3,9 +3,11 @@ import { createRoot } from "react-dom/client";
 
 import App from "./App";
 import { site } from "./content";
-import { enableLiveCustomizing } from "./lib/customize";
+import { enableLiveCustomizing, layoutCss, listSections } from "./lib/customize";
+import { enableSignature } from "./lib/pro";
 import { businessSchema } from "./lib/site";
 import "./styles/base.css";
+import "./styles/pro.css";
 import "./styles/template.css";
 
 document.title = site.business.name;
@@ -40,6 +42,9 @@ if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches && "Intersect
   watch();
 }
 
+// The page-wide finish: the header turns to glass on scroll, cards catch the light.
+enableSignature();
+
 const root = createRoot(document.getElementById("root")!);
 const draw = () =>
   root.render(
@@ -48,6 +53,21 @@ const draw = () =>
     </StrictMode>
   );
 draw();
+
+// The section order and hidden sections the owner chose in their dashboard
+// (content.ts `layout`), applied once the page has drawn its sections.
+const saved = (site as { layout?: { order?: string[]; hidden?: string[] } }).layout;
+if (saved && (saved.order?.length || saved.hidden?.length)) {
+  const layout = document.createElement("style");
+  layout.id = "arp-saved-layout";
+  document.head.appendChild(layout);
+  const applyLayout = () => {
+    layout.textContent = layoutCss(saved.order ?? [], saved.hidden ?? [], listSections().map((section) => section.id));
+  };
+  requestAnimationFrame(applyLayout);
+  // Pages change without a reload (#/ routes), and the home page's sections come back with it.
+  window.addEventListener("hashchange", () => requestAnimationFrame(applyLayout));
+}
 
 // Shown inside the shop's "Customise" panel, the site restyles itself as the
 // customer picks colours, words and sections (see lib/customize.ts). The page

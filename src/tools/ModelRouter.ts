@@ -38,13 +38,27 @@ const positiveInt = (value: string | undefined, fallback: number): number => {
 };
 
 /**
+ * The window a model is loaded with. The build model gets OLLAMA_NUM_CTX; any
+ * other (the 14b that reviews stuck repairs) gets OLLAMA_REVIEW_NUM_CTX, 16384
+ * unless set: its prompt is a few thousand tokens, and loading a 14b split
+ * across an 8 GB card and RAM took 103 s at the build model's 32768 and 18 s
+ * at 16384 — paid on every swap.
+ */
+const contextFor = (model?: string): number => {
+  const main = positiveInt(process.env.OLLAMA_NUM_CTX, 16384);
+  const buildModel = process.env.OLLAMA_MODEL ?? process.env.MODEL ?? "qwen2.5-coder:7b";
+  if (!model || model === buildModel) return main;
+  return Math.min(main, positiveInt(process.env.OLLAMA_REVIEW_NUM_CTX, 16384));
+};
+
+/**
  * Settings sent with every Ollama call. Anything that loads the model (the
  * warm-up button too) must send the same window, or Ollama reloads it.
  */
-export const ollamaOptions = () => ({
+export const ollamaOptions = (model?: string) => ({
   // Ollama's default window is 4096 tokens, and it silently drops the start
   // of a longer prompt: the instructions. Build prompts run to ~10k tokens.
-  num_ctx: positiveInt(process.env.OLLAMA_NUM_CTX, 16384),
+  num_ctx: contextFor(model),
   // A ceiling on the answer, so a model that loses its way cannot hold the
   // GPU (and every build queued behind it) for ten minutes.
   num_predict: positiveInt(process.env.OLLAMA_NUM_PREDICT, 8192),
@@ -77,7 +91,7 @@ const generateWithOllama = async (prompt: string, model?: string): Promise<strin
       prompt,
       stream: true,
       keep_alive: keepAlive,
-      options: ollamaOptions()
+      options: ollamaOptions(targetModel)
     })
   });
 

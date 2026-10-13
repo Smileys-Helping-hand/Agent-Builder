@@ -29,7 +29,7 @@ import { ResearchStore } from "../research/ResearchStore.js";
 import { SystemResourceService, type SystemMetrics } from "../utils/SystemResourceService.js";
 import { readPublicUrl } from "../utils/PublicUrl.js";
 import { ollamaOptions } from "../tools/ModelRouter.js";
-import { comfyBinary } from "../media/ArtStudio.js";
+import { comfyBinary, startComfy } from "../media/ArtStudio.js";
 
 const run = promisify(execFile);
 
@@ -59,50 +59,6 @@ export interface Problem {
 const startedAt = Date.now();
 
 
-/**
- * Comfy Desktop 1.1+ opens on its dashboard and starts no server until someone
- * clicks an installation, so launching the app gave Jarvis nothing to send an
- * image to. This is the command the app itself runs for its local installation
- * (its python, the shared model paths, the shared input and output folders),
- * pinned to loopback on 8188. Null when there is no local installation.
- */
-const comfyServerCommand = (): { python: string; args: string[]; cwd: string } | null => {
-  const desktopDir = path.join(process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"), "Comfy Desktop");
-  const readJson = <T>(file: string): T | null => {
-    try {
-      return JSON.parse(fs.readFileSync(path.join(desktopDir, file), "utf8")) as T;
-    } catch {
-      return null;
-    }
-  };
-  const installs = readJson<Array<{ installPath?: string; status?: string }>>("installations.json") ?? [];
-  const settings = readJson<{ inputDir?: string; outputDir?: string }>("settings.json") ?? {};
-  for (const install of installs) {
-    if (!install.installPath || install.status !== "installed") continue;
-    const python = path.join(install.installPath, "ComfyUI", ".venv", "Scripts", "python.exe");
-    if (!fs.existsSync(python)) continue;
-    const args = ["-s", path.join("ComfyUI", "main.py"), "--enable-manager", "--listen", "127.0.0.1", "--port", "8188"];
-    const modelPaths = path.join(desktopDir, "shared_model_paths.yaml");
-    if (fs.existsSync(modelPaths)) args.push("--extra-model-paths-config", modelPaths);
-    if (settings.inputDir) args.push("--input-directory", settings.inputDir);
-    if (settings.outputDir) args.push("--output-directory", settings.outputDir);
-    return { python, args, cwd: install.installPath };
-  }
-  return null;
-};
-
-/** Starts ComfyUI's server hidden; falls back to opening the app when there is no installation to run. */
-const startComfy = (): string | null => {
-  const server = comfyServerCommand();
-  if (server) {
-    spawn(server.python, server.args, { cwd: server.cwd, detached: true, stdio: "ignore", windowsHide: true }).unref();
-    return "ComfyUI server starting on port 8188 (a minute or two before it answers).";
-  }
-  const bin = comfyBinary();
-  if (!bin) return null;
-  spawn(bin, [], { detached: true, stdio: "ignore", windowsHide: false }).unref();
-  return "Comfy Desktop launched.";
-};
 
 /** Stops the app and any ComfyUI server, whichever started it. False when neither was running. */
 const stopComfy = async (): Promise<boolean> => {

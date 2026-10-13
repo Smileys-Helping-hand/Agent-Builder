@@ -24,3 +24,59 @@
 @media (max-width: 640px) {
   .timeline li { grid-template-columns: 1fr; gap: 4px; }
 }
+
+/* ---------------- signature layer ---------------- */
+
+.event-cover {
+  min-height: min(92vh, 860px);
+  align-items: center;
+}
+
+.event-cover-inner {
+  padding-top: 110px;
+  padding-bottom: 110px;
+}
+
+.event-title {
+  font-size: clamp(3rem, 8vw, 6.4rem);
+  line-height: 1;
+  margin: 10px 0 14px;
+  color: #fff;
+}
+
+.event-cover .event-date {
+  color: #fff;
+}
+
+.event-cover .countdown,
+.event-cover [class*="countdown"] {
+  color: #fff;
+}
+
+.event-moments {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: -60px;
+  position: relative;
+  z-index: 2;
+}
+
+.event-moments .photo {
+  box-shadow: 0 30px 60px -36px rgba(0, 0, 0, 0.55);
+}
+
+@media (max-width: 720px) {
+  .event-moments {
+    grid-template-columns: 1fr;
+    margin-top: 24px;
+  }
+}
+
+.btn-on-photo {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.1);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}

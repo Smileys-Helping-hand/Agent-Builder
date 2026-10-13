@@ -1,0 +1,75 @@
+{
+  "style": "premium product photography for a natural skincare brand, soft diffused daylight, linen and stone surfaces, muted earthy palette, shallow depth of field",
+  "pictures": [
+    {
+      "name": "hero",
+      "subject": "a flat lay of handmade soap bars, amber glass oil bottles and a soy candle among fresh fynbos and protea flowers on natural linen",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/hero.webp"
+    },
+    {
+      "name": "buchu-soap",
+      "subject": "a handmade cold-process soap bar with honey swirls and buchu leaves, on a stone slab",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/buchu-soap.webp"
+    },
+    {
+      "name": "rooibos-soap",
+      "subject": "a rustic exfoliating soap bar speckled with ground rooibos tea, beside loose rooibos tea leaves",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/rooibos-soap.webp"
+    },
+    {
+      "name": "marula-oil",
+      "subject": "a small amber glass face oil bottle with a dropper, golden oil drop, marula fruit beside it",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/marula-oil.webp"
+    },
+    {
+      "name": "body-oil",
+      "subject": "an elegant clear glass body oil bottle with sprigs of wild fynbos inside the golden oil",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/body-oil.webp"
+    },
+    {
+      "name": "candle-large",
+      "subject": "a hand-poured soy candle burning in a matte ceramic jar beside a pink king protea flower",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/candle-large.webp"
+    },
+    {
+      "name": "candle-travel",
+      "subject": "a small brushed tin travel candle with its lid off, burning, on a wooden table",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/candle-travel.webp"
+    },
+    {
+      "name": "gift-trio",
+      "subject": "an open kraft gift box holding a soap bar, a body oil bottle and a tin candle with dried flowers and twine",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/gift-trio.webp"
+    },
+    {
+      "name": "gift-spa",
+      "subject": "a luxurious open gift box with a face oil, two soap bars and a ceramic candle, tissue paper and dried protea",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/gift-spa.webp"
+    },
+    {
+      "name": "farm",
+      "subject": "a field of blooming fynbos and protea on a hillside farm in the Western Cape at sunrise, mountains behind",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/farm.webp"
+    }
+  ]
+}

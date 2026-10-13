@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "A branded tower defense strategy game: build and upgrade towers along a path to defend against waves of enemies, manage gold and lives, with a prize form that turns players into leads.",
+  "description": "A branded village strategy game in the style of Clash of Clans: grow and upgrade a village against timers, mine gold and elixir, train barbarians, archers and giants, and raid rival clans for loot and stars, with a prize form that turns players into leads.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

@@ -1,0 +1,33 @@
+{
+  "style": "bright editorial salon photography, soft natural light, airy pastel interiors, clean and fresh",
+  "pictures": [
+    {
+      "name": "hero",
+      "subject": "a bright modern hair salon interior with round mirrors, blush velvet chairs, plants and warm wooden shelves, sunlight",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/hero.webp"
+    },
+    {
+      "name": "cut",
+      "subject": "a hairstylist's hands cutting wet hair with scissors and a comb, close-up, soft light",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/cut.webp"
+    },
+    {
+      "name": "colour",
+      "subject": "hair colour bowls and brushes with tinted cream on a salon trolley, foils neatly folded",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/colour.webp"
+    },
+    {
+      "name": "treatment",
+      "subject": "luxury hair care bottles and a jar of treatment mask on a marble counter with eucalyptus",
+      "kind": "photo",
+      "size": "square",
+      "file": "src/images/treatment.webp"
+    }
+  ]
+}

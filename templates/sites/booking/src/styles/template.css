@@ -80,3 +80,52 @@
 .policies {
   margin-top: 28px;
 }
+
+/* ---------------- signature layer ---------------- */
+
+.booking-cover-inner {
+  padding-top: 120px;
+  padding-bottom: 110px;
+}
+
+.booking-title {
+  font-size: clamp(2.5rem, 6vw, 4.6rem);
+  line-height: 1.04;
+  max-width: 14ch;
+  margin: 12px 0 18px;
+  color: #fff;
+}
+
+.booking-cover .lead {
+  max-width: 50ch;
+}
+
+.service-card {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.service-card .photo {
+  border-radius: 0;
+}
+
+.service-card .photo-card-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.service-card .btn {
+  margin-top: auto;
+  align-self: flex-start;
+}
+
+.btn-on-photo {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.1);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}

@@ -2,18 +2,24 @@ import { useState } from "react";
 
 import { site } from "./content";
 import { can, changeRole, linePath, metrics, paginate, queryCustomers, type Customer, type Member, type Role, type SortKey } from "./data";
+import { Aurora, CountUp, Photo, ScrollProgress, SplitHeadline, Tilt } from "./lib/pro";
 import { DemoBanner, Footer, Header, Section, SmartForm, brandStyle, formatMoney, usePersistentState, useHashRoute } from "./lib/site";
+import { photos } from "./photos";
 
 const PER_PAGE = 6;
 
 function Landing() {
+  const [yearly, setYearly] = useState(false);
+  const values = site.history.map((point) => point.mrr);
+  const growth = values.length >= 2 ? Math.round(((values[values.length - 1] - values[values.length - 2]) / values[values.length - 2]) * 1000) / 10 : 0;
   return (
     <>
-      <section className="hero">
+      <section className="hero hero-stage saas-stage">
+        <Aurora />
         <div className="container hero-grid">
           <div>
             <p className="eyebrow">{site.hero.eyebrow}</p>
-            <h1>{site.hero.title}</h1>
+            <SplitHeadline text={site.hero.title} className="saas-title" accentWords={["numbers", "spreadsheet."]} />
             <p className="lead muted">{site.hero.subtitle}</p>
             <div className="btn-row">
               <a className="btn" href="#/login">
@@ -23,14 +29,28 @@ function Landing() {
                 See pricing
               </a>
             </div>
+            <ul className="saas-proof">
+              <li>
+                <strong>
+                  <CountUp value={`${growth}%`} />
+                </strong>{" "}
+                growth last month
+              </li>
+              <li>
+                <strong>14 days</strong> free, no card
+              </li>
+            </ul>
           </div>
-          <MiniChart />
+          <Tilt className="saas-dash">
+            {photos.hero ? <img className="saas-dash-backdrop" src={photos.hero} alt="" aria-hidden="true" /> : null}
+            <MiniChart />
+          </Tilt>
         </div>
       </section>
       <Section id="features" eyebrow="Features" title="Everything you need to run the numbers">
-        <div className="grid grid-4">
+        <div className="grid grid-4 reveal stagger">
           {site.features.map((feature) => (
-            <article key={feature.title} className="card">
+            <article key={feature.title} className="card spotlight lift">
               <div className="card-icon" aria-hidden="true">
                 {feature.icon}
               </div>
@@ -40,20 +60,44 @@ function Landing() {
           ))}
         </div>
       </Section>
+      {photos.team ? (
+        <section className="team-band">
+          <Photo src={photos.team} alt={`The ${site.business.name} team`} ratio="auto" />
+          <div className="container team-band-inner reveal">
+            <div className="glass team-card">
+              <p className="eyebrow">Built here</p>
+              <h2>Made for South African businesses, by people who run one.</h2>
+              <p className="muted">Rand pricing, local payment providers and support in your time zone — not an afterthought.</p>
+            </div>
+          </div>
+        </section>
+      ) : null}
       <Section id="pricing" eyebrow="Pricing" title="Simple monthly plans" intro="Prices in rand, excluding VAT. Cancel any time." tone="tinted">
-        <div className="grid grid-3">
+        <div className="billing-toggle" role="group" aria-label="Billing period">
+          <button className={yearly ? "" : "on"} aria-pressed={!yearly} onClick={() => setYearly(false)}>
+            Monthly
+          </button>
+          <button className={yearly ? "on" : ""} aria-pressed={yearly} onClick={() => setYearly(true)}>
+            Yearly <span className="save-chip">2 months free</span>
+          </button>
+        </div>
+        <div className="grid grid-3 reveal stagger">
           {site.plans.map((plan) => (
-            <article key={plan.name} className={`card ${plan.featured ? "card-featured" : ""}`}>
+            <article key={plan.name} className={`card spotlight plan ${plan.featured ? "card-featured plan-featured" : ""}`}>
               <h3>{plan.name}</h3>
               <p className="price">
-                {formatMoney(plan.price)}
+                {formatMoney(yearly ? Math.round((plan.price * 10) / 12) : plan.price)}
                 <span className="muted per-month"> /month</span>
               </p>
+              <p className="muted billed">{yearly ? `${formatMoney(plan.price * 10)} billed yearly` : "Billed monthly"}</p>
               <ul className="tick-list">
                 {plan.features.map((feature) => (
                   <li key={feature}>{feature}</li>
                 ))}
               </ul>
+              <a className={`btn ${plan.featured ? "" : "btn-ghost"}`} href="#/login">
+                Start with {plan.name}
+              </a>
             </article>
           ))}
         </div>
@@ -76,14 +120,42 @@ function Landing() {
   );
 }
 
+/** The hero's dashboard: the revenue line draws itself; point at a month to read it. */
 function MiniChart() {
   const values = site.history.map((point) => point.mrr);
+  const [hover, setHover] = useState<number | null>(null);
+  const width = 320;
+  const height = 120;
+  const padding = 8;
+  const max = Math.max(...values, 1);
+  const min = Math.min(...values, 0);
+  const span = max - min || 1;
+  const step = values.length > 1 ? (width - padding * 2) / (values.length - 1) : 0;
+  const point = (i: number) => ({ x: padding + i * step, y: height - padding - ((values[i] - min) / span) * (height - padding * 2) });
+  const line = linePath(values, width, height);
+  const area = line ? `${line} L${(padding + (values.length - 1) * step).toFixed(1)},${height} L${padding},${height} Z` : "";
+  const shown = hover ?? values.length - 1;
+  const move = (event: React.PointerEvent<SVGSVGElement>) => {
+    const box = event.currentTarget.getBoundingClientRect();
+    const x = ((event.clientX - box.left) / box.width) * width;
+    setHover(Math.max(0, Math.min(values.length - 1, Math.round((x - padding) / (step || 1)))));
+  };
   return (
-    <div className="card chart-card" aria-label="Revenue over the last months">
-      <p className="muted chart-label">Monthly recurring revenue</p>
-      <p className="price">{formatMoney(values[values.length - 1] ?? 0)}</p>
-      <svg viewBox="0 0 320 120" className="chart" role="img" aria-label="MRR trend">
-        <path d={linePath(values, 320, 120)} fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+    <div className="card chart-card glass" aria-label="Revenue over the last months">
+      <p className="muted chart-label">
+        Monthly recurring revenue · {site.history[shown]?.month}
+      </p>
+      <p className="price">{hover === null ? <CountUp value={formatMoney(values[shown] ?? 0)} /> : formatMoney(values[shown] ?? 0)}</p>
+      <svg viewBox={`0 0 ${width} ${height}`} className="chart chart-live" role="img" aria-label="MRR trend" onPointerMove={move} onPointerLeave={() => setHover(null)}>
+        <defs>
+          <linearGradient id="mrr-fill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="currentColor" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={area} fill="url(#mrr-fill)" className="chart-area" />
+        <path d={line} fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" pathLength={1} className="chart-line" />
+        {values.length > 0 ? <circle cx={point(shown).x} cy={point(shown).y} r="5" className="chart-dot" /> : null}
       </svg>
     </div>
   );
@@ -415,6 +487,7 @@ export default function App() {
 
   return (
     <div className="site" style={brandStyle(site.brand)}>
+      <ScrollProgress />
       <DemoBanner show={site.demo} label="SaaS Dashboard" />
       <Header business={site.business} nav={site.nav} cta={{ label: user ? "Open dashboard" : "Sign in", href: user ? "#/app/overview" : "#/login" }} />
       <main>{area === "login" || area === "app" ? <Login onSignIn={signIn} /> : <Landing />}</main>

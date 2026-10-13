@@ -1,8 +1,13 @@
 import { useMemo, useState } from "react";
 
 import { site } from "./content";
-import { DemoBanner, HeroArt, Footer, Header, Section, SmartForm, WhatsAppButton, brandStyle, formatMoney, usePersistentState } from "./lib/site";
+import { Photo, ScrollProgress, SplitHeadline } from "./lib/pro";
+import { photos } from "./photos";
+import { DemoBanner, Footer, Header, Section, SmartForm, WhatsAppButton, brandStyle, formatMoney, usePersistentState } from "./lib/site";
 import { availableSlots, describeDate, openDays, type Booking } from "./slots";
+
+/** A photograph for the first services, in order; the rest show without one. */
+const servicePhotos = [photos.cut, photos.cut, photos.colour, photos.colour, photos.treatment];
 
 export default function App() {
   const { business, hero } = site;
@@ -27,33 +32,34 @@ export default function App() {
 
   return (
     <div className="site" style={brandStyle(site.brand)}>
+      <ScrollProgress />
       <DemoBanner show={site.demo} label="Booking & Scheduling" />
       <Header business={business} nav={site.nav} cta={{ label: "Book now", href: "#book" }} />
 
       <main>
-        <section className="hero">
-          <div className="container hero-grid">
-            <div>
-              <p className="eyebrow">{hero.eyebrow}</p>
-              <h1>{hero.title}</h1>
-              <p className="lead muted">{hero.subtitle}</p>
-              <div className="btn-row">
-                <a className="btn" href="#book">
-                  Book an appointment
-                </a>
-                <a className="btn btn-ghost" href="#services">
-                  See prices
-                </a>
-              </div>
+        <section className="hero-cover booking-cover">
+          <Photo src={hero.image || photos.hero} alt={business.name} ratio="auto" eager />
+          <div className="container booking-cover-inner">
+            <p className="eyebrow">{hero.eyebrow}</p>
+            <SplitHeadline text={hero.title} className="booking-title" />
+            <p className="lead">{hero.subtitle}</p>
+            <div className="btn-row">
+              <a className="btn" href="#book">
+                Book an appointment
+              </a>
+              <a className="btn btn-ghost btn-on-photo" href="#services">
+                See prices
+              </a>
             </div>
-            <HeroArt art={hero.art} image={hero.image} alt={business.name} />
           </div>
         </section>
 
         <Section id="services" eyebrow="Services" title="What we do, and what it costs">
-          <div className="grid grid-3">
-            {site.services.map((entry) => (
-              <article key={entry.id} className="card">
+          <div className="grid grid-3 reveal stagger">
+            {site.services.map((entry, i) => (
+              <article key={entry.id} className={`card spotlight lift ${servicePhotos[i] ? "photo-card service-card" : ""}`}>
+                {servicePhotos[i] ? <Photo src={servicePhotos[i]} alt={entry.name} ratio="16 / 10" className="zoom" /> : null}
+                <div className={servicePhotos[i] ? "photo-card-body" : undefined}>
                 <h3>{entry.name}</h3>
                 <p className="muted">{entry.description}</p>
                 <p className="service-meta">
@@ -70,6 +76,7 @@ export default function App() {
                 >
                   Book this
                 </a>
+                </div>
               </article>
             ))}
           </div>

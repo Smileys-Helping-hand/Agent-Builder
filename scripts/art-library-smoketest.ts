@@ -105,5 +105,43 @@ assert.equal(posted.mediaType, "video_short");
 assert.match(String(posted.referenceImage), /^data:image\/png;base64,/, "the picture travels inline");
 mock.close();
 
+// Website photographs: Flux the way it is meant to run, SDXL with its negative prompt; WebP out, at a one-file size.
+const { photoWorkflow } = await import("../src/media/ArtStudio.js");
+type Node = { class_type: string; inputs: Record<string, unknown> };
+const fluxFlow = Object.values(photoWorkflow({ name: "hero", subject: "a bakery counter", kind: "photo", size: "square" }, "warm light", 5, "p", "flux1-schnell-fp8.safetensors")) as Node[];
+const sampler = fluxFlow.find((node) => node.class_type === "KSampler")!;
+assert.equal(sampler.inputs.steps, 4);
+assert.equal(sampler.inputs.cfg, 1);
+assert.ok(fluxFlow.some((node) => node.class_type === "EmptySD3LatentImage"));
+assert.equal(fluxFlow.find((node) => node.class_type === "ImageScale")?.inputs.width, 900, "squares are kept small");
+assert.equal(fluxFlow.find((node) => node.class_type === "SaveAnimatedWEBP")?.inputs.lossless, false);
+const sdxlFlow = Object.values(photoWorkflow({ name: "hero", subject: "a bakery counter", kind: "photo", size: "wide" }, "", 5, "p", "sd_xl_base_1.0.safetensors")) as Node[];
+assert.equal(sdxlFlow.find((node) => node.class_type === "KSampler")?.inputs.steps, 22);
+assert.ok(!sdxlFlow.some((node) => node.class_type === "ImageScale"), "wides stay at the drawn size");
+assert.match(String(sdxlFlow.filter((node) => node.class_type === "CLIPTextEncode")[1].inputs.text), /watermark/, "SDXL gets a negative prompt");
+
+// A tailored site's content says what each photograph is of, and names new ones.
+const { contentPhotos, withContentPhotos } = await import("../src/media/SitePhotos.js");
+const tailored = `export const site = {
+  menu: [{ title: "Starters", dishes: [
+    { photo: "line-fish", name: "Bunny chow", description: "Soft bread filled with mutton curry.", price: 85 },
+    { photo: "mutton-and-bean-curry", name: "Mutton and bean curry", description: "Slow-cooked.", price: 120 }
+  ] }],
+  products: [{ id: "chai-blend", name: "Masala chai blend", price: 95, description: "Loose-leaf." }],
+  nav: [{ label: "Menu", href: "#menu" }]
+};`;
+assert.deepEqual(
+  contentPhotos(tailored).map((p) => p.key),
+  ["line-fish", "mutton-and-bean-curry", "chai-blend"]
+);
+assert.equal(contentPhotos(tailored)[0].item, "Bunny chow — Soft bread filled with mutton curry.");
+const plan = withContentPhotos([{ name: "line-fish", subject: "a grilled line fish", kind: "photo", size: "square" }, { name: "hero", subject: "the grill", kind: "photo", size: "wide" }], tailored);
+assert.equal(plan.find((p) => p.name === "line-fish")?.onSite, "Bunny chow — Soft bread filled with mutton curry.", "the picture is told what it is on the site now");
+assert.deepEqual(plan.filter((p) => !["line-fish", "hero"].includes(p.name)).map((p) => [p.name, p.file]), [
+  ["mutton-and-bean-curry", "src/images/mutton-and-bean-curry.webp"],
+  ["chai-blend", "src/images/chai-blend.webp"]
+]);
+assert.equal(withContentPhotos([], null).length, 0);
+
 fs.rmSync(dir, { recursive: true, force: true });
 console.log("art library: all checks passed");

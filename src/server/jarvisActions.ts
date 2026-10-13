@@ -20,7 +20,7 @@ type Call = [method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: Rec
 
 export interface BridgeAction {
   name: string;
-  /** Group in the catalogue: builds, apps, art, media, projects, research, orders, model, machine. */
+  /** Group in the catalogue: builds, apps, art, media, projects, research, orders, academy, library, model, machine. */
   area: string;
   label: string;
   scope: AgentScope;
@@ -166,6 +166,14 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
   { name: "issue.report", area: "projects", label: "Report an issue", scope: "write", params: { title: "what is wrong", "detail?": "more", "project?": "which project", "severity?": "info | warning | error" }, call: (p) => ["POST", "/api/ecosystem/issues", pick(p, "title", "detail", "project", "severity")] },
 
   // ── Research ───────────────────────────────────────────────────────────────
+  // ── Template Academy: the builder teaching itself new templates ────────────
+  { name: "ask", area: "builds", label: "Ask in plain words; the builder picks the action (build, draw, research, apps, templates…) and does it", scope: "write", params: { text: "what you want, as it was said" }, call: (p) => ["POST", "/api/agent-builder/ask", { text: str(p.text) || str(p.message) }] },
+  { name: "library", area: "library", label: "Everything you asked the builder to make, and how each turned out (builds, apps, pictures, media, research, templates)", scope: "read", params: { "kind?": "build | app | picture | media | project | research | template" }, call: (p) => ["GET", `/api/jarvis/library${query(p, "kind")}`] },
+  { name: "academy", area: "academy", label: "The Template Academy: ideas, practice attempts and scores, graduates", scope: "read", params: {}, call: () => ["GET", "/api/academy"] },
+  { name: "academy.add", area: "academy", label: "Teach it a new template (it practises until it scores 100)", scope: "execute", params: { name: "e.g. Law Firm", brief: "what the site is for", "category?": "the kind of business", "mustHave?": "[things it must have]", "icon?": "an emoji" }, call: (p) => ["POST", "/api/academy/ideas", pick(p, "name", "brief", "category", "mustHave", "icon")] },
+  { name: "academy.propose", area: "academy", label: "Let it suggest new templates the catalogue lacks", scope: "execute", params: { "count?": "1-5" }, call: (p) => ["POST", "/api/academy/propose", pick(p, "count")] },
+  { name: "academy.practise", area: "academy", label: "Practise one idea now", scope: "execute", params: { id: "the idea" }, call: (p) => ["POST", `/api/academy/${enc(str(p.id))}/practise`] },
+  { name: "academy.publish", area: "academy", label: "Put a graduated template on sale", scope: "execute", params: { id: "the idea", "price?": "rand" }, call: (p) => ["POST", `/api/academy/${enc(str(p.id))}/publish`, pick(p, "price")] },
   { name: "research.topics", area: "research", label: "Research topics", scope: "read", params: {}, call: () => ["GET", "/api/research/topics"] },
   { name: "research.start", area: "research", label: "Start researching a topic", scope: "write", params: { title: "the topic", "question?": "what to find out" }, call: (p) => ["POST", "/api/research/topics", { title: str(p.title), question: str(p.question) || str(p.title) }] },
   { name: "research.ask", area: "research", label: "Ask a question inside a topic", scope: "write", params: { topicId: "the topic", text: "the question" }, call: (p) => ["POST", `/api/research/topics/${enc(str(p.topicId))}/questions`, { text: str(p.text) }] },

@@ -1,6 +1,8 @@
 import { useState, type ReactNode } from "react";
 
 import { site } from "./content";
+import { Photo, ScrollProgress, SplitHeadline } from "./lib/pro";
+import { photos } from "./photos";
 import { DemoBanner, Footer, Header, Section, SmartForm, brandStyle, useHashRoute } from "./lib/site";
 import { findPosts, formatDate, parseMarkdown, readingMinutes, tagsOf, type Block, type Inline, type Post } from "./posts";
 
@@ -41,12 +43,20 @@ function Article({ blocks }: { blocks: Block[] }) {
   );
 }
 
+/** The post's cover photograph: posts take the drawn covers in order. */
+const coverOf = (post: Post): string | undefined => photos.posts[site.posts.findIndex((entry) => entry.slug === post.slug)];
+
 function PostCard({ post }: { post: Post }) {
+  const cover = coverOf(post);
   return (
-    <a href={`#/post/${post.slug}`} className="card post-card">
-      <span className="post-cover" aria-hidden="true">
-        {post.cover}
-      </span>
+    <a href={`#/post/${post.slug}`} className="card post-card spotlight lift">
+      {cover ? (
+        <Photo src={cover} alt="" ratio="16 / 10" className="post-photo zoom" />
+      ) : (
+        <span className="post-cover" aria-hidden="true">
+          {post.cover}
+        </span>
+      )}
       <div>
         <p className="post-meta muted">
           {formatDate(post.date)} · {readingMinutes(post.body)} min read
@@ -143,11 +153,12 @@ export default function App() {
     const shown = findPosts(site.posts, query, tag);
     page = (
       <>
-        <section className="hero blog-hero">
-          <div className="container">
+        <section className="hero-cover blog-cover">
+          <Photo src={photos.hero} alt={site.business.name} ratio="auto" eager />
+          <div className="container blog-cover-inner">
             <p className="eyebrow">{site.hero.eyebrow}</p>
-            <h1>{site.hero.title}</h1>
-            <p className="lead muted">{site.hero.subtitle}</p>
+            <SplitHeadline text={site.hero.title} className="blog-title" />
+            <p className="lead">{site.hero.subtitle}</p>
           </div>
         </section>
         <Section title="Latest articles" eyebrow={`${shown.length} of ${site.posts.length}`}>
@@ -181,6 +192,7 @@ export default function App() {
 
   return (
     <div className="site" style={brandStyle(site.brand)}>
+      <ScrollProgress />
       <DemoBanner show={site.demo} label="Blog / Content Platform" />
       <Header business={business} nav={site.nav} cta={{ label: "Subscribe", href: "#newsletter" }} />
       <main>

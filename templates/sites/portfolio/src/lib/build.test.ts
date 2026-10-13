@@ -24,8 +24,14 @@ describe.skipIf(!fs.existsSync(built))("the built site", () => {
     expect(page).not.toMatch(/<link[^>]+rel="stylesheet"/);
   });
 
-  it("is a single file", () => {
-    const files = fs.readdirSync(path.resolve("dist")).filter((name) => !name.startsWith("."));
+  it("is a single file, beside at most a folder of pictures", () => {
+    // A game's drawn pictures go in assets/ (public/assets), read by its board at run time.
+    const files = fs.readdirSync(path.resolve("dist")).filter((name) => !name.startsWith(".") && name !== "assets");
     expect(files).toEqual(["index.html"]);
+    const assets = path.resolve("dist/assets");
+    if (fs.existsSync(assets)) {
+      const other = fs.readdirSync(assets).filter((name) => !/\.(png|webp|jpe?g|svg|gif|json)$/i.test(name));
+      expect(other).toEqual([]);
+    }
   });
 });

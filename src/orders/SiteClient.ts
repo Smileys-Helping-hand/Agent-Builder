@@ -38,6 +38,19 @@ export interface SiteOrder {
 }
 
 /** What the builder tells the site each time it checks in. */
+/** A customer's change to their finished site, as the site hands it over. */
+export interface SiteEditRequest {
+  /** The order's id on the site. */
+  orderId: string;
+  orderRef?: string;
+  editId: string;
+  status: "pending" | "applying";
+  patch: Record<string, string>;
+  sections: { order: string[]; hidden: string[] } | null;
+  note: string | null;
+  at: number;
+}
+
 export interface CheckIn {
   items: unknown[];
   version: string;
@@ -139,6 +152,43 @@ export const SiteClient = {
       return response.ok;
     } catch (error) {
       Logger.log("Order progress not reported", { externalId, detail: errorMessage(error) });
+      return false;
+    }
+  },
+
+  /** Changes customers made to their finished sites from their dashboard, waiting for us. */
+  async pendingEdits(): Promise<SiteEditRequest[]> {
+    const url = base();
+    if (!url || !key()) return [];
+    try {
+      const response = await fetch(`${url}/api/builder/edits`, { headers: headers(), signal: AbortSignal.timeout(TIMEOUT_MS) });
+      // An older site without the edits route answers 404: nothing to do.
+      if (!response.ok) return [];
+      const body = (await response.json()) as { edits?: SiteEditRequest[] };
+      return Array.isArray(body.edits) ? body.edits : [];
+    } catch (error) {
+      Logger.log("Site edits: site unreachable", { detail: errorMessage(error) });
+      return [];
+    }
+  },
+
+  /** Tell the site where a customer's change stands: applying, done (live at the link) or failed. */
+  async reportEdit(
+    externalId: string,
+    update: { editId: string; status: "applying" | "done" | "failed"; message?: string; previewUrl?: string | null }
+  ): Promise<boolean> {
+    const url = base();
+    if (!url || !key()) return false;
+    try {
+      const response = await fetch(`${url}/api/builder/edits/${encodeURIComponent(externalId)}`, {
+        method: "PATCH",
+        headers: headers(),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+        body: JSON.stringify(update)
+      });
+      return response.ok;
+    } catch (error) {
+      Logger.log("Site edit not reported", { externalId, detail: errorMessage(error) });
       return false;
     }
   },

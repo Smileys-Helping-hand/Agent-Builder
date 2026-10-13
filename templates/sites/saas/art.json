@@ -1,0 +1,19 @@
+{
+  "style": "premium abstract 3D render, soft studio lighting, glossy glass and frosted acrylic materials, violet and cyan accents, clean minimal composition, high detail",
+  "pictures": [
+    {
+      "name": "hero",
+      "subject": "abstract floating translucent glass bars rising like a growth chart, violet and cyan glow, on a soft light background",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/hero.webp"
+    },
+    {
+      "name": "team",
+      "subject": "a bright modern Cape Town startup office with laptops on a long wooden table and plants, people seen from behind, natural light",
+      "kind": "photo",
+      "size": "wide",
+      "file": "src/images/team.webp"
+    }
+  ]
+}

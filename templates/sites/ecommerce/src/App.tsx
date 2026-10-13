@@ -2,6 +2,8 @@ import { useState } from "react";
 
 import { addToCart, filterProducts, orderReference, orderSummary, setQuantity, totals, type CartLine, type Product } from "./cart";
 import { site } from "./content";
+import { Photo, ScrollProgress, SplitHeadline, Tilt } from "./lib/pro";
+import { photos } from "./photos";
 import {
   DemoBanner,
   Footer,
@@ -19,9 +21,10 @@ const find = (id: string): Product | undefined => site.products.find((product) =
 
 function ProductCard({ product, onAdd }: { product: Product; onAdd: (product: Product) => void }) {
   return (
-    <article className="card product-card">
-      <a href={`#/product/${product.id}`} className="product-art" aria-label={product.name}>
-        <span aria-hidden="true">{product.emoji}</span>
+    <article className="card product-card spotlight lift">
+      <a href={`#/product/${product.id}`} className={photos[product.id] ? "product-photo" : "product-art"} aria-label={product.name}>
+        {photos[product.id] ? <Photo src={photos[product.id]} alt={product.name} ratio="1 / 1" className="zoom" /> : <span aria-hidden="true">{product.emoji}</span>}
+        {product.compareAt ? <span className="sale-tag">Save {Math.round((1 - product.price / product.compareAt) * 100)}%</span> : null}
       </a>
       <p className="chip">{product.category}</p>
       <h3>
@@ -64,9 +67,15 @@ export default function App() {
     page = (
       <Section title={product.name} eyebrow={product.category}>
         <div className="grid grid-2">
-          <div className="product-art product-art-large" aria-hidden="true">
-            {product.emoji}
-          </div>
+          {photos[product.id] ? (
+            <Tilt className="product-hero-photo">
+              <Photo src={photos[product.id]} alt={product.name} ratio="1 / 1" eager />
+            </Tilt>
+          ) : (
+            <div className="product-art product-art-large" aria-hidden="true">
+              {product.emoji}
+            </div>
+          )}
           <div>
             <p className="price">
               {formatMoney(product.price)} {product.compareAt ? <s className="muted">{formatMoney(product.compareAt)}</s> : null}
@@ -103,9 +112,13 @@ export default function App() {
                 if (!product) return null;
                 return (
                   <div key={line.productId} className="cart-line">
-                    <span className="cart-emoji" aria-hidden="true">
-                      {product.emoji}
-                    </span>
+                    {photos[product.id] ? (
+                      <img className="cart-thumb" src={photos[product.id]} alt="" decoding="async" />
+                    ) : (
+                      <span className="cart-emoji" aria-hidden="true">
+                        {product.emoji}
+                      </span>
+                    )}
                     <div className="cart-name">
                       <strong>{product.name}</strong>
                       <span className="muted">{formatMoney(product.price)} each</span>
@@ -174,14 +187,23 @@ export default function App() {
     const shown = filterProducts(site.products, query, category);
     page = (
       <>
-        <section className="hero hero-compact">
-          <div className="container">
+        <section className="hero-cover shop-cover">
+          <Photo src={photos.hero} alt={site.business.name} ratio="auto" eager />
+          <div className="container shop-cover-inner">
             <p className="eyebrow">{site.hero.eyebrow}</p>
-            <h1>{site.hero.title}</h1>
-            <p className="lead muted">{site.hero.subtitle}</p>
+            <SplitHeadline text={site.hero.title} className="shop-title" />
+            <p className="lead">{site.hero.subtitle}</p>
+            <div className="btn-row">
+              <a className="btn" href="#shop">
+                Shop the collection
+              </a>
+              <a className="btn btn-ghost btn-on-photo" href="#story">
+                Our story
+              </a>
+            </div>
           </div>
         </section>
-        <Section title="Shop" eyebrow={`${shown.length} products`}>
+        <Section id="shop" title="Shop" eyebrow={`${shown.length} products`}>
           <div className="shop-tools">
             <input
               className="search"
@@ -202,19 +224,34 @@ export default function App() {
           {shown.length === 0 ? (
             <p className="muted">Nothing matches that. Try another word or category.</p>
           ) : (
-            <div className="grid grid-4">
+            <div className="grid grid-4 reveal stagger">
               {shown.map((product) => (
                 <ProductCard key={product.id} product={product} onAdd={add} />
               ))}
             </div>
           )}
         </Section>
+        <section id="story" className="story-band">
+          {photos.farm ? <Photo src={photos.farm} alt={site.about.title} ratio="auto" /> : null}
+          <div className="container story-inner reveal">
+            <div className="story-card glass">
+              <p className="eyebrow">Our story</p>
+              <h2>{site.about.title}</h2>
+              {site.about.paragraphs.map((paragraph) => (
+                <p key={paragraph} className="muted">
+                  {paragraph}
+                </p>
+              ))}
+            </div>
+          </div>
+        </section>
       </>
     );
   }
 
   return (
     <div className="site" style={brandStyle(site.brand)}>
+      <ScrollProgress />
       <DemoBanner show={site.demo} label="E-Commerce Store" />
       <Header business={site.business} nav={site.nav} cta={{ label: `Cart (${sum.items})`, href: "#/cart" }} />
       <main>{page}</main>

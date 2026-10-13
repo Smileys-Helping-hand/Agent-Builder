@@ -14,6 +14,7 @@ import path from "path";
 import { promisify } from "util";
 
 import { EcosystemStore, type EcosystemProject } from "./EcosystemStore.js";
+import { getKnowledgeDb } from "../knowledge/KnowledgeDb.js";
 import { Logger } from "../utils/Logger.js";
 
 const run = promisify(execFile);
@@ -247,14 +248,17 @@ export const ProjectScanner = {
     for (const project of scanned) {
       folderCounts.set(project.name, (folderCounts.get(project.name) ?? 0) + 1);
     }
-    for (const project of scanned) {
-      if ((folderCounts.get(project.name) ?? 0) > 1) {
-        const drive = project.path.slice(0, 2).toUpperCase();
-        project.name = `${project.name} (${drive})`;
+    // One transaction for the lot: a hundred separate commits held the event loop over a second.
+    getKnowledgeDb().transaction(() => {
+      for (const project of scanned) {
+        if ((folderCounts.get(project.name) ?? 0) > 1) {
+          const drive = project.path.slice(0, 2).toUpperCase();
+          project.name = `${project.name} (${drive})`;
+        }
+        EcosystemStore.upsertProject(project);
+        keptPaths.push(project.path);
       }
-      EcosystemStore.upsertProject(project);
-      keptPaths.push(project.path);
-    }
+    })();
 
     // Prune only within the roots we just scanned. Scanning one root must not
     // evict projects belonging to another — an earlier version wiped the whole
