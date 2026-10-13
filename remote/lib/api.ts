@@ -662,6 +662,19 @@ export interface AcademyIdea {
   note: string | null;
 }
 
+/** A machine whose screen the phone can see (and use). */
+export interface ScreenMachine {
+  id: "pc" | "laptop";
+  label: string;
+  kind: string;
+  available: boolean;
+  /** Whether input goes through; null when only the machine itself can say (the laptop). */
+  control: boolean | null;
+  note: string | null;
+}
+export type ScreenInput = Record<string, unknown> & { kind: string };
+export type ScreenFrame = { status: "new"; url: string; etag: string | null; control: string | null; size: string | null } | { status: "same" } | { status: "error"; error: string; waiting?: boolean; setup?: boolean };
+
 /** Something Jarvis asked the builder to make, and what came of it. */
 export type LibraryKind = "build" | "app" | "picture" | "media" | "project" | "research" | "template";
 export interface LibraryItem {
@@ -1315,6 +1328,30 @@ export const api = {
   academyPractise: (id: string) => request<{ buildId: string; message: string }>(`/api/academy/${encodeURIComponent(id)}/practise`, { method: "POST" }, 120000),
   academyPublish: (id: string, price?: number) => request<{ idea: AcademyIdea }>(`/api/academy/${encodeURIComponent(id)}/publish`, { method: "POST", body: JSON.stringify({ price }) }),
   academyRemove: (id: string) => request<{ ok: boolean }>(`/api/academy/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  screens: () => request<{ machines: ScreenMachine[]; maxText: number }>("/api/screens"),
+  /** The next frame of a machine's screen, as an object URL; "same" when it has not changed since etag. */
+  screenFrame: async (machine: string, etag: string | null, width: number): Promise<ScreenFrame> => {
+    const conn = loadConnection();
+    if (!conn) return { status: "error", error: "Not connected to a machine yet." };
+    const headers: Record<string, string> = { "x-agent-key": conn.key };
+    if (etag) headers["If-None-Match"] = etag;
+    try {
+      const res = await fetch(`${conn.address}/api/screens/${machine}/frame?w=${Math.round(width)}`, { headers, cache: "no-store", signal: AbortSignal.timeout(40000) });
+      if (res.status === 304) return { status: "same" };
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string; waiting?: boolean; setup?: boolean };
+        return { status: "error", error: body.error ?? `The screen did not come (${res.status}).`, waiting: body.waiting, setup: body.setup };
+      }
+      return { status: "new", url: URL.createObjectURL(await res.blob()), etag: res.headers.get("etag"), control: res.headers.get("x-control"), size: res.headers.get("x-screen-size") };
+    } catch (error) {
+      return { status: "error", error: error instanceof Error ? error.message : String(error) };
+    }
+  },
+  /** Whether Jarvis's tray app (his paired-device link) is on this PC, and whether the builder can install it. */
+  screenJarvis: () => request<{ paired: boolean; canPair: boolean }>("/api/screens/pc/jarvis"),
+  screenPairJarvis: () => request<{ ok: boolean; already?: boolean; message: string }>("/api/screens/pc/jarvis", { method: "POST", body: "{}" }, 90000),
+  screenInput: (machine: string, events: ScreenInput[]) =>
+    request<{ ok: boolean }>(`/api/screens/${machine}/input`, { method: "POST", body: JSON.stringify({ events }) }, 25000),
   library: (kind?: LibraryKind) => request<{ items: LibraryItem[]; counts: Record<LibraryKind, number> }>(`/api/jarvis/library${kind ? `?kind=${kind}` : ""}`),
   libraryRemove: (id: number) => request<{ ok: boolean }>(`/api/jarvis/library/${id}`, { method: "DELETE" }),
   artStatus: () => request<ArtStatus>("/api/art/status"),

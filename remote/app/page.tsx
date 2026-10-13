@@ -209,6 +209,15 @@ export default function Home() {
           ) : null}
         </section>
 
+        <Link href="/screens" className="card library-link">
+          <span className="library-icon" aria-hidden="true">{Icon.eye}</span>
+          <span style={{ flex: 1 }}>
+            <strong>Screens</strong>
+            <span className="muted small" style={{ display: "block" }}>See and use this PC and the laptop from anywhere</span>
+          </span>
+          <span aria-hidden="true">›</span>
+        </Link>
+
         <GameModeCard />
 
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: -4 }}>
