@@ -41,9 +41,16 @@ $lockChanged = [bool](git diff --name-only HEAD origin/main -- package-lock.json
 # Tell the launcher's watchdog to leave him alone while he is rebuilt.
 Set-Content -Path $flag -Value (Get-Date -Format o) -Encoding ascii
 try {
-    Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
+    # The cmd.exe that started each of them holds jarvis.log open too; stopping
+    # only node left the log locked, and the merge below (which writes to it)
+    # failed with "being used by another process", so Jarvis was not updated.
+    Get-CimInstance Win32_Process -Filter "Name = 'node.exe' OR Name = 'cmd.exe'" -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -like "*next*start -p 3005*" -or $_.CommandLine -like "*jarvis-node-agent*" } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    # Wait (up to 20 s) until the log can be written again.
+    for ($i = 0; $i -lt 20; $i++) {
+        try { [IO.File]::Open($jarvisLog, 'Append', 'Write', 'Read').Close(); break } catch { Start-Sleep -Seconds 1 }
+    }
 
     & cmd.exe /c "git merge --ff-only --quiet --no-progress origin/main >> `"$jarvisLog`" 2>&1"
     if ($LASTEXITCODE -ne 0) {

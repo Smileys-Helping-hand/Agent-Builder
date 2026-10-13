@@ -354,6 +354,20 @@ assert.match(fixedGame, /handleSave\(\)/, "a different name is NOT swapped in (h
 assert.ok(typeNotes.length >= 3, `notes: ${typeNotes.join(" | ")}`);
 assert.deepEqual(TypeFixer.run(typed).filter((note) => !/handleSave/.test(note)), [], "nothing left to fix but the real gap");
 
+// The same fixes on a worker thread, with the event loop free meanwhile.
+const offThread = fs.mkdtempSync(path.join(os.tmpdir(), "ab-types-worker-"));
+fs.mkdirSync(path.join(offThread, "src"));
+for (const file of ["tsconfig.json", "src/util.ts"]) fs.copyFileSync(path.join(typed, file), path.join(offThread, file));
+fs.writeFileSync(path.join(offThread, "src/game.ts"), fs.readFileSync(path.join(typed, "src/game.ts"), "utf8").replace("state.current!.options", "state.current.options"));
+let ticks = 0;
+const ticker = setInterval(() => (ticks += 1), 5);
+const workerNotes = await TypeFixer.runOffThread(offThread);
+clearInterval(ticker);
+assert.match(fs.readFileSync(path.join(offThread, "src/game.ts"), "utf8"), /state\.current!\.options\[0\]/, "the worker fixed it too");
+assert.ok(workerNotes.some((note) => /marked as set/.test(note)), `worker notes: ${workerNotes.join(" | ")}`);
+assert.ok(ticks > 3, `the event loop kept running while TypeScript worked (${ticks} ticks)`);
+assert.equal(await TypeFixer.errorCountOffThread(offThread), TypeFixer.errorCount(offThread), "error count, on or off the thread");
+
 // A lone arrow parameter given a type keeps it on the parameter: `(b): { id: number } =>` is a return type.
 const arrows = fs.mkdtempSync(path.join(os.tmpdir(), "ab-arrows-"));
 fs.mkdirSync(path.join(arrows, "src"));
