@@ -54,6 +54,7 @@ import { registerAutonomousRoutes } from "./autonomous.js";
 import { registerArtRoutes } from "./art.js";
 import { registerAcademyRoutes } from "./academy.js";
 import { registerJarvisLibraryRoutes } from "./jarvisLibrary.js";
+import { registerBuilderAskRoutes } from "./builderAsk.js";
 import { TemplateAcademy } from "../academy/TemplateAcademy.js";
 import { registerResearchRoutes } from "./research.js";
 import { registerEcosystemRoutes } from "./ecosystem.js";
@@ -253,6 +254,7 @@ registerAutonomousRoutes(app);
 registerArtRoutes(app);
 registerAcademyRoutes(app);
 registerJarvisLibraryRoutes(app);
+registerBuilderAskRoutes(app);
 // Practises new templates when the PC is idle (ACADEMY=off to stop).
 TemplateAcademy.start();
 registerResearchRoutes(app);

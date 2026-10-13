@@ -38,6 +38,7 @@
     "test:site-edits": "tsx scripts/site-edits-smoketest.ts",
     "test:academy": "tsx scripts/academy-smoketest.ts",
     "test:jarvis-library": "tsx scripts/jarvis-library-smoketest.ts",
+    "test:builder-ask": "tsx scripts/builder-ask-smoketest.ts",
     "test:sqlite-lock": "tsx scripts/sqlite-lock-smoketest.ts",
     "test:research-chat": "tsx scripts/research-chat-smoketest.ts",
     "test:exemplars": "tsx scripts/exemplar-memory-smoketest.ts",
