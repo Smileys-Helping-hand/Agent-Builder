@@ -26,6 +26,7 @@ import path from "path";
 
 import { MAX_TEXT, WindowsScreen, validateEvent, type ScreenEvent } from "../machine/WindowsScreen.js";
 import { AgentActivity } from "../state/AgentActivity.js";
+import { setEnvValues } from "../utils/EnvFile.js";
 import { Logger } from "../utils/Logger.js";
 import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
 
@@ -67,6 +68,58 @@ async function laptopFetch(pathname: string, init: RequestInit & { headers?: Rec
   const key = laptopKey();
   if (!url || !key) return null;
   return fetch(`${url}${pathname}`, { ...init, headers: { ...(init.headers ?? {}), Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(timeoutMs) });
+}
+
+/** The laptop's address: one already configured here, or on the tailnet. */
+const trustedLaptopUrl = (url: string): boolean => {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
+    const known = [process.env.JARVIS_CLOUD_URL, process.env.LAPTOP_JARVIS_URL, process.env.JARVIS_HOST, process.env.SECOND_BRAIN_HOST]
+      .map((value) => value?.trim())
+      .filter((value): value is string => Boolean(value))
+      .map((value) => {
+        try {
+          return new URL(value).origin;
+        } catch {
+          return null;
+        }
+      });
+    return known.includes(parsed.origin) || parsed.hostname.endsWith(".ts.net");
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Put this PC on Jarvis's dashboard: ask the laptop for his Windows tray app
+ * made for this PC (his paired-device link: no admin rights) and run it here.
+ * The installer carries its own key and is deleted once it has unpacked.
+ */
+async function pairPcWithJarvis(req: Request, again: boolean): Promise<{ status: number; body: Record<string, unknown> }> {
+  if (!WindowsScreen.available()) return { status: 501, body: { error: "This is for Windows PCs." } };
+  if (jarvisDeviceInstalled() && !again) return { status: 200, body: { ok: true, already: true, message: "Jarvis can already see this PC (its tray icon is installed)." } };
+  try {
+    const answer = await laptopFetch("/api/jarvis/devices/windows", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label: os.hostname() }) }, 60_000);
+    if (!answer) return { status: 409, body: { error: LAPTOP_SETUP, setup: true } };
+    if (!answer.ok) {
+      const body = (await answer.json().catch(() => ({}))) as Record<string, unknown>;
+      return { status: 502, body: { error: String(body.error ?? `The laptop answered ${answer.status}.`) } };
+    }
+    const installer = path.join(os.tmpdir(), `Jarvis-Setup-${process.pid}.cmd`);
+    fs.writeFileSync(installer, Buffer.from(await answer.arrayBuffer()));
+    const child = spawn("cmd.exe", ["/c", installer], { detached: true, stdio: "ignore", windowsHide: true });
+    child.unref();
+    setTimeout(() => fs.rmSync(installer, { force: true }), 5 * 60_000).unref();
+    Logger.log("Paired this PC with Jarvis", { deviceId: answer.headers.get("x-device-id") });
+    AgentActivity.record({ direction: "in", agent: (req as AgentRequest).agent?.name ?? "owner", method: "SCREEN", path: "pair", status: 200, summary: "Let Jarvis see this PC (installed his tray app)" });
+    return {
+      status: 200,
+      body: { ok: true, deviceId: answer.headers.get("x-device-id"), message: "Jarvis's tray app is installing on this PC: it shows on his dashboard in a minute, and fetches its video helpers (about 120 MB) in the background." }
+    };
+  } catch (error) {
+    return { status: 504, body: { error: `The laptop did not answer: ${error instanceof Error ? error.message : String(error)}` } };
+  }
 }
 
 export const registerScreenRoutes = (app: Express) => {
@@ -150,27 +203,50 @@ export const registerScreenRoutes = (app: Express) => {
 
   app.post("/api/screens/pc/jarvis", authenticateAgent("execute"), async (req: Request, res: Response) => {
     if (!ownerOnly(req, res)) return;
-    if (!WindowsScreen.available()) return res.status(501).json({ error: "This is for Windows PCs." });
-    if (jarvisDeviceInstalled() && req.body?.again !== true) return res.json({ ok: true, already: true, message: "Jarvis can already see this PC (its tray icon is installed)." });
+    const result = await pairPcWithJarvis(req, req.body?.again === true);
+    res.status(result.status).json(result.body);
+  });
+
+  /**
+   * Jarvis connects the two: "connect the builder to the laptop". He mints a
+   * screens-only key on the laptop and hands it here through his bridge, and
+   * it is checked against the laptop before it is kept (in .env, at once,
+   * no restart). With pairPc, this PC then goes on his dashboard too. Jarvis's
+   * keys may call this route and the one below: the key is his laptop's to give.
+   */
+  app.post("/api/screens/link", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const key = typeof req.body?.key === "string" ? req.body.key.trim() : "";
+    if (!/^[A-Za-z0-9_.~-]{20,400}$/.test(key)) return res.status(400).json({ error: "Send the laptop's key in key." });
+    const url = typeof req.body?.url === "string" && req.body.url.trim() ? req.body.url.trim().replace(/\/+$/, "") : laptopUrl();
+    if (!url || !trustedLaptopUrl(url)) return res.status(400).json({ error: "That is not the laptop's address (Tailscale, or JARVIS_CLOUD_URL)." });
     try {
-      const answer = await laptopFetch("/api/jarvis/devices/windows", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label: os.hostname() }) }, 60_000);
-      if (!answer) return res.status(409).json({ error: LAPTOP_SETUP, setup: true });
-      if (!answer.ok) {
-        const body = (await answer.json().catch(() => ({}))) as Record<string, unknown>;
-        return res.status(502).json({ error: String(body.error ?? `The laptop answered ${answer.status}.`) });
-      }
-      const installer = path.join(os.tmpdir(), `Jarvis-Setup-${process.pid}.cmd`);
-      fs.writeFileSync(installer, Buffer.from(await answer.arrayBuffer()));
-      const child = spawn("cmd.exe", ["/c", installer], { detached: true, stdio: "ignore", windowsHide: true });
-      child.unref();
-      // The installer holds this device's key: gone once it has unpacked itself.
-      setTimeout(() => fs.rmSync(installer, { force: true }), 5 * 60_000).unref();
-      Logger.log("Paired this PC with Jarvis", { deviceId: answer.headers.get("x-device-id") });
-      AgentActivity.record({ direction: "in", agent: (req as AgentRequest).agent?.name ?? "owner", method: "SCREEN", path: "pair", status: 200, summary: "Let Jarvis see this PC (installed his tray app)" });
-      res.json({ ok: true, deviceId: answer.headers.get("x-device-id"), message: "Installing Jarvis's tray app on this PC. It shows on his dashboard in a minute; it downloads its video helpers (about 120 MB) in the background." });
+      const probe = await fetch(`${url}/api/jarvis/screen`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(30_000) });
+      if (probe.status === 401 || probe.status === 403) return res.status(400).json({ error: "The laptop refused that key." });
     } catch (error) {
-      res.status(504).json({ error: `The laptop did not answer: ${error instanceof Error ? error.message : String(error)}` });
+      return res.status(504).json({ error: `The laptop did not answer at ${url}: ${error instanceof Error ? error.message : String(error)}` });
     }
+    setEnvValues({ LAPTOP_JARVIS_KEY: key, LAPTOP_JARVIS_URL: url === (process.env.JARVIS_CLOUD_URL ?? "").trim().replace(/\/+$/, "") ? null : url });
+    const who = (req as AgentRequest).agent?.name ?? "owner";
+    AgentActivity.record({ direction: "in", agent: who, method: "SCREEN", path: "link", status: 200, summary: "Connected the laptop's screen to the builder" });
+    Logger.log("The laptop's screen is connected", { by: who });
+    const pc = req.body?.pairPc === false ? null : await pairPcWithJarvis(req, false);
+    res.json({
+      ok: true,
+      laptop: "connected",
+      pc: pc ? (pc.status < 400 ? (pc.body.already ? "already" : "installing") : "failed") : "skipped",
+      message: [
+        "Agent Builder can now see and use the laptop (phone app > Screens > Laptop).",
+        pc ? String(pc.body.message ?? pc.body.error ?? "") : ""
+      ]
+        .filter(Boolean)
+        .join(" ")
+    });
+  });
+
+  app.delete("/api/screens/link", authenticateAgent("execute"), (req: Request, res: Response) => {
+    setEnvValues({ LAPTOP_JARVIS_KEY: null, LAPTOP_JARVIS_URL: null });
+    AgentActivity.record({ direction: "in", agent: (req as AgentRequest).agent?.name ?? "owner", method: "SCREEN", path: "unlink", status: 200, summary: "Disconnected the laptop's screen from the builder" });
+    res.json({ ok: true, message: "Agent Builder no longer has the laptop's key." });
   });
 
   app.post("/api/screens/:machine/input", authenticateAgent("execute"), async (req: Request, res: Response) => {

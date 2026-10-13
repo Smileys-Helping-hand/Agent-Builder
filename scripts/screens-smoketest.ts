@@ -6,9 +6,29 @@
  */
 import assert from "node:assert/strict";
 import express from "express";
+import fs from "fs";
+import http from "http";
 import type { AddressInfo } from "net";
+import os from "os";
+import path from "path";
 
+// A temp folder: its .env and key database, never the real ones.
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ab-screens-"));
+fs.mkdirSync(path.join(tmp, "data"), { recursive: true });
+process.chdir(tmp);
 delete process.env.LAPTOP_JARVIS_KEY;
+delete process.env.LAPTOP_JARVIS_URL;
+
+// A stand-in laptop: its screen route knows one key.
+const GOOD = "jl_" + "k".repeat(40);
+const laptop = http.createServer((req, res) => {
+  const ok = req.headers.authorization === `Bearer ${GOOD}`;
+  res.writeHead(ok ? 503 : 401, { "content-type": "application/json" });
+  res.end(JSON.stringify(ok ? { waiting: true, error: "Asking the laptop for its screen" } : { error: "Owner only." }));
+});
+laptop.listen(0, "127.0.0.1");
+await new Promise((resolve) => laptop.once("listening", resolve));
+process.env.JARVIS_CLOUD_URL = `http://127.0.0.1:${(laptop.address() as AddressInfo).port}`;
 const { validateEvent, WindowsScreen } = await import("../src/machine/WindowsScreen.js");
 const { registerScreenRoutes } = await import("../src/server/screens.js");
 const { AgentKeyModel } = await import("../src/models/AgentKeyModel.js");
@@ -65,6 +85,21 @@ if (process.platform === "win32") {
   WindowsScreen.stop("test done");
 }
 
+// Jarvis connects the laptop: a wrong key is refused, a good one kept (and used at once), a foreign address refused.
+const link = (body: unknown) => call("/api/screens/link", jarvis, { method: "POST", body: JSON.stringify(body) });
+assert.equal((await link({ key: "jl_" + "x".repeat(40), pairPc: false })).status, 400, "the laptop refused it");
+assert.equal((await link({ key: GOOD, url: "https://evil.example.com", pairPc: false })).status, 400, "not the laptop's address");
+const linked = await link({ key: GOOD, pairPc: false });
+assert.equal(linked.status, 200, await linked.clone().text());
+assert.equal(process.env.LAPTOP_JARVIS_KEY, GOOD, "in use at once");
+assert.match(fs.readFileSync(path.join(tmp, ".env"), "utf8"), /^LAPTOP_JARVIS_KEY=jl_k+$/m, "kept in .env");
+const after = (await (await call("/api/screens", owner)).json()) as { machines: Array<{ id: string; available: boolean }> };
+assert.equal(after.machines[1].available, true, "the Laptop tab is ready");
+assert.equal((await call("/api/screens/laptop/frame", owner)).status, 503, "relayed: the laptop is still waking its screen");
+assert.equal((await call("/api/screens/link", jarvis, { method: "DELETE" })).status, 200);
+assert.equal(process.env.LAPTOP_JARVIS_KEY, undefined, "unlinked");
+
+laptop.close();
 server.close();
 AgentKeyModel.revoke("screens-test-phone");
 AgentKeyModel.revoke("jarvis-screens-test");
