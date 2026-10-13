@@ -53,6 +53,7 @@ import { syncDynamicEnv } from "../utils/EnvLoader.js";
 import { registerAutonomousRoutes } from "./autonomous.js";
 import { registerArtRoutes } from "./art.js";
 import { registerAcademyRoutes } from "./academy.js";
+import { registerJarvisLibraryRoutes } from "./jarvisLibrary.js";
 import { TemplateAcademy } from "../academy/TemplateAcademy.js";
 import { registerResearchRoutes } from "./research.js";
 import { registerEcosystemRoutes } from "./ecosystem.js";
@@ -251,6 +252,7 @@ registerAdminRoutes(app);
 registerAutonomousRoutes(app);
 registerArtRoutes(app);
 registerAcademyRoutes(app);
+registerJarvisLibraryRoutes(app);
 // Practises new templates when the PC is idle (ACADEMY=off to stop).
 TemplateAcademy.start();
 registerResearchRoutes(app);

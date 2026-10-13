@@ -20,7 +20,7 @@ type Call = [method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: Rec
 
 export interface BridgeAction {
   name: string;
-  /** Group in the catalogue: builds, apps, art, media, projects, research, orders, academy, model, machine. */
+  /** Group in the catalogue: builds, apps, art, media, projects, research, orders, academy, library, model, machine. */
   area: string;
   label: string;
   scope: AgentScope;
@@ -167,6 +167,7 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
 
   // ── Research ───────────────────────────────────────────────────────────────
   // ── Template Academy: the builder teaching itself new templates ────────────
+  { name: "library", area: "library", label: "Everything you asked the builder to make, and how each turned out (builds, apps, pictures, media, research, templates)", scope: "read", params: { "kind?": "build | app | picture | media | project | research | template" }, call: (p) => ["GET", `/api/jarvis/library${query(p, "kind")}`] },
   { name: "academy", area: "academy", label: "The Template Academy: ideas, practice attempts and scores, graduates", scope: "read", params: {}, call: () => ["GET", "/api/academy"] },
   { name: "academy.add", area: "academy", label: "Teach it a new template (it practises until it scores 100)", scope: "execute", params: { name: "e.g. Law Firm", brief: "what the site is for", "category?": "the kind of business", "mustHave?": "[things it must have]", "icon?": "an emoji" }, call: (p) => ["POST", "/api/academy/ideas", pick(p, "name", "brief", "category", "mustHave", "icon")] },
   { name: "academy.propose", area: "academy", label: "Let it suggest new templates the catalogue lacks", scope: "execute", params: { "count?": "1-5" }, call: (p) => ["POST", "/api/academy/propose", pick(p, "count")] },

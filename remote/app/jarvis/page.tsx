@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { api, type JarvisActivity, type JarvisOverview } from "@/lib/api";
@@ -179,6 +180,14 @@ export default function JarvisPage() {
       <div className="wrap">
         {overview.error ? <Banner kind="error">{overview.error}</Banner> : null}
         {!data && overview.loading ? <Skeleton rows={4} /> : null}
+        <Link href="/library" className="card library-link">
+          <span className="library-icon" aria-hidden="true">{Icon.image}</span>
+          <span style={{ flex: 1 }}>
+            <strong>His library</strong>
+            <span className="muted small" style={{ display: "block" }}>Everything he asked the builder to make, with the results</span>
+          </span>
+          <span aria-hidden="true">›</span>
+        </Link>
 
         {data ? (
           <>

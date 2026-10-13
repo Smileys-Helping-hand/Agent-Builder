@@ -18,6 +18,7 @@ import { Logger } from "../utils/Logger.js";
 import { readPublicUrl } from "../utils/PublicUrl.js";
 import { HEAD_STARTS, type HeadStart } from "../orchestrator/AutonomousOrchestrator.js";
 import { bridgeCatalogue, callAsCaller, resolveBridgeAction } from "./jarvisActions.js";
+import { JarvisLibrary } from "../state/JarvisLibrary.js";
 
 /** The agent key Jarvis uses to reach into the builder. */
 const JARVIS_KEY_NAME = "jarvis";
@@ -274,6 +275,7 @@ export const registerJarvisRoutes = (app: Express) => {
       const profile = metadata.profile === "fast" || metadata.profile === "balanced" || metadata.profile === "deep" ? metadata.profile : undefined;
       const record = BuildService.start({ projectName: title || "Jarvis request", description: message, startedBy: actor, targetPlatforms: platforms?.length ? platforms : undefined, headStart, profile });
       note(`Build started: ${record.projectName}`);
+      JarvisLibrary.record("build", { title, message }, 200, { buildId: record.buildId, projectName: record.projectName });
       return res.json({ ok: true, action: "build", buildId: record.buildId, projectName: record.projectName });
     }
 
@@ -305,6 +307,8 @@ export const registerJarvisRoutes = (app: Express) => {
       try {
         const result = await callAsCaller(req, resolved.call);
         note(`${eventType}: ${resolved.call[0]} ${resolved.call[1].split("?")[0]} → ${result.status}`);
+        // What he asked to be made goes in his library, for the owner to see.
+        JarvisLibrary.record(eventType, params, result.status, result.body);
         const payload = result.body && typeof result.body === "object" && !Array.isArray(result.body) ? (result.body as Record<string, unknown>) : { result: result.body };
         return res.status(result.status).json({ ok: result.status < 400, action: eventType, status: result.status, ...payload });
       } catch (error) {
