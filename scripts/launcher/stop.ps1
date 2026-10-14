@@ -34,15 +34,25 @@ Get-Process -Name "agent-builder-api" | ForEach-Object {
     Write-Host "  Packaged builder stopped" -ForegroundColor Gray
 }
 
-# The tunnel.
-Get-Process -Name "cloudflared" | ForEach-Object {
-    Stop-Process -Id $_.Id -Force
-    $stopped++
-    Write-Host "  Tunnel closed" -ForegroundColor Gray
-}
+# The tunnel - only the builder's own. SaveState's tunnel (NexusEmuHost) serves savestate.co.za,
+# and stopping the builder must not take that site down.
+Get-CimInstance Win32_Process -Filter "Name = 'cloudflared.exe'" |
+    Where-Object { $_.CommandLine -notlike "*NexusEmuHost*" } |
+    ForEach-Object {
+        Stop-Process -Id $_.ProcessId -Force
+        $stopped++
+        Write-Host "  Tunnel closed" -ForegroundColor Gray
+    }
 
 Remove-Item (Join-Path $repo "data\remote-url.txt")
 Remove-Item (Join-Path $repo "data\launcher-pids.json")
+
+# Stopped on purpose: the Host Manager leaves it stopped until it is started again.
+$holdsFile = Join-Path $repo "data\host-holds.json"
+$holds = @{}
+if (Test-Path $holdsFile) { try { (Get-Content $holdsFile -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $holds[$_.Name] = $_.Value } } catch { } }
+$holds["agent-builder"] = @{ since = (Get-Date).ToString("o"); by = "stop.ps1" }
+[System.IO.File]::WriteAllText($holdsFile, ($holds | ConvertTo-Json -Compress))
 
 # Ollama is deliberately left running: it is shared, cheap to keep, and other
 # things on this machine may be using it. Pass -IncludeModel to stop it too.

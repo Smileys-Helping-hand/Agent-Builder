@@ -8,6 +8,7 @@ import { STAGE_LABEL } from "../build/parts";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
 import { ModelCard } from "./model";
 import { PowerTools } from "./power";
+import { ThisPcCard } from "./host";
 import { UpdateCard } from "./update";
 
 /**
@@ -904,6 +905,9 @@ export default function Control() {
         </div>
 
         {/* ---------- power tools ---------- */}
+        <div className="section-title">This PC</div>
+        <ThisPcCard />
+
         <div className="section-title">Power tools</div>
         <UpdateCard />
         <PowerTools />

@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<title>Host Manager</title>
+<style>
+  :root {
+    --bg: #0b1020; --panel: #121a30; --panel2: #18223d; --line: #24304f; --text: #e8ecf6; --muted: #8e9bbb;
+    --up: #34d399; --warn: #fbbf24; --down: #f87171; --off: #64748b; --accent: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+  h1 { margin: 0; font-size: 22px; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px; min-width: 0; }
+  .card h2 { margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+  .about { color: var(--muted); font-size: 12.5px; margin: 6px 0 10px; }
+  .state { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: var(--panel2); text-transform: capitalize; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--off); flex: none; }
+  .up .dot { background: var(--up); } .starting .dot, .stopping .dot { background: var(--warn); animation: pulse 1.2s infinite; }
+  .down .dot { background: var(--down); } .stopped .dot, .absent .dot { background: var(--off); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .detail { font-size: 13.5px; margin: 8px 0 12px; word-break: break-word; }
+  .since { color: var(--muted); font-size: 12px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  button { font: inherit; font-size: 13.5px; font-weight: 600; border-radius: 10px; padding: 9px 14px; border: 1px solid var(--line); background: var(--panel2); color: var(--text); cursor: pointer; min-height: 40px; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #06122b; }
+  button.danger { color: #fecaca; border-color: #7f1d1d; }
+  button:disabled { opacity: .5; cursor: default; }
+  .switch { position: relative; width: 54px; height: 30px; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; inset: 0; background: var(--off); border-radius: 999px; transition: .2s; cursor: pointer; }
+  .slider:before { content: ""; position: absolute; height: 24px; width: 24px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .2s; }
+  input:checked + .slider { background: var(--up); } input:checked + .slider:before { transform: translateX(24px); }
+  input:disabled + .slider { opacity: .5; cursor: default; }
+  .feature { border-color: #2c4a7a; background: linear-gradient(160deg, #13203d, #121a30); }
+  .stats { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); margin-bottom: 12px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px; min-width: 0; }
+  .stat b { display: block; font-size: 18px; overflow-wrap: anywhere; }
+  .stat.disks { grid-column: 1 / -1; }
+  .disk { display: grid; grid-template-columns: 2.2em 1fr 7.5em; align-items: center; gap: 10px; font-size: 13px; margin-top: 8px; }
+  .disk .bar { margin: 0; } .disk em { font-style: normal; color: var(--muted); text-align: right; } .stat span { color: var(--muted); font-size: 12px; }
+  .bar { height: 6px; border-radius: 99px; background: var(--panel2); margin-top: 8px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); }
+  .events { list-style: none; margin: 0; padding: 0; }
+  .events li { padding: 9px 0; border-top: 1px solid var(--line); font-size: 13.5px; display: flex; gap: 10px; }
+  .events li:first-child { border-top: 0; }
+  .events time { color: var(--muted); font-size: 12px; white-space: nowrap; flex: none; width: 74px; }
+  .sev-warn { color: var(--warn); } .sev-notice { color: var(--accent); }
+  .step { font-size: 12.5px; color: var(--warn); background: #2a2410; border: 1px solid #4a3d12; border-radius: 10px; padding: 8px 10px; margin-bottom: 12px; }
+  .login { max-width: 420px; margin: 12vh auto 0; }
+  .login input { width: 100%; font: inherit; padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel2); color: var(--text); margin: 10px 0; }
+  .toast { position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--panel2); border: 1px solid var(--line); padding: 10px 16px; border-radius: 12px; font-size: 14px; max-width: calc(100% - 32px); display: none; }
+  .section { margin: 22px 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  @media (max-width: 420px) { .grid { grid-template-columns: 1fr; } button { flex: 1 1 auto; } }
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<div class="toast" id="toast"></div>
+<script>
+(() => {
+  const app = document.getElementById('app');
+  const toastEl = document.getElementById('toast');
+  let key = '';
+  try { key = localStorage.getItem('hostManagerKey') || ''; } catch {}
+  let data = null, timer = null, pending = new Set();
+
+  const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => '&#' + c.charCodeAt(0) + ';');
+  const ago = (ms) => { const s = Math.max(0, Math.round((Date.now() - ms) / 1000)); return s < 60 ? s + 's' : s < 3600 ? Math.round(s / 60) + ' min' : s < 86400 ? Math.round(s / 3600) + ' h' : Math.round(s / 86400) + ' d'; };
+  const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  function toast(text) { toastEl.textContent = text; toastEl.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => (toastEl.style.display = 'none'), 4000); }
+
+  async function api(path, opts = {}) {
+    const res = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', 'x-host-key': key, ...(opts.headers || {}) } });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401) { key = ''; try { localStorage.removeItem('hostManagerKey'); } catch {} render(); throw new Error('Key needed'); }
+    if (!res.ok) throw new Error(body.error || 'That did not work.');
+    return body;
+  }
+
+  async function refresh(fresh) {
+    if (!key) return;
+    try { data = await api('/api/status' + (fresh ? '?fresh=1' : '')); render(); } catch (e) { if (key) toast(e.message); }
+  }
+
+  async function act(id, action, name) {
+    if (action === 'stop' && !confirm('Stop ' + name + '?')) return;
+    pending.add(id); render();
+    try { await api('/api/services/' + id + '/' + action, { method: 'POST', body: JSON.stringify({ by: 'the Host Manager dashboard' }) }); toast(name + ': ' + (action === 'stop' ? 'stopped' : action === 'start' ? 'starting' : 'restarting')); }
+    catch (e) { toast(e.message); }
+    finally { pending.delete(id); refresh(true); }
+  }
+  window.hm = { act, refresh };
+
+  function serviceCard(s) {
+    const busy = pending.has(s.id) || s.busy;
+    const isUp = s.state === 'up' || s.state === 'starting';
+    if (s.id === 'savestate') {
+      const on = !(s.state === 'stopped' || s.state === 'stopping' || s.held);
+      return '<div class="card feature"><div class="row"><h2>' + esc(s.name) + '</h2>' +
+        '<label class="switch" title="Hosting on or off"><input type="checkbox" ' + (on ? 'checked' : '') + (busy || s.state === 'absent' ? ' disabled' : '') +
+        ' onchange="hm.act(\'savestate\', this.checked ? \'start\' : \'stop\', \'SaveState hosting\')"><span class="slider"></span></label></div>' +
+        '<p class="about">' + esc(s.about) + '</p>' +
+        '<span class="state ' + esc(s.state) + '"><span class="dot"></span>' + esc(busy ? (s.busy || 'working') : s.state) + '</span>' +
+        '<p class="detail">' + esc(s.detail) + '</p><div class="since">' + esc(s.state) + ' for ' + ago(s.since) + '</div></div>';
+    }
+    const step = s.id === 'agent-builder' && s.state === 'starting' && s.step ? '<div class="step">Launcher: ' + esc(s.step.step) + (s.step.detail ? ' — ' + esc(s.step.detail) : '') + (s.step.since ? ' (' + ago(Date.parse(s.step.since)) + ')' : '') + '</div>' : '';
+    return '<div class="card"><div class="row"><h2>' + esc(s.name) + '</h2><span class="state ' + esc(s.state) + '"><span class="dot"></span>' + esc(busy ? (s.busy || 'working') : s.state) + '</span></div>' +
+      '<p class="about">' + esc(s.about) + '</p>' + step + '<p class="detail">' + esc(s.detail) + '</p>' +
+      '<div class="actions">' +
+      (isUp ? '' : '<button class="primary" ' + (busy ? 'disabled' : '') + ' onclick="hm.act(\'' + s.id + '\', \'start\', ' + esc(JSON.stringify(s.name)) + ')">Start</button>') +
+      (s.state === 'stopped' || s.state === 'down' ? '' : '<button ' + (busy ? 'disabled' : '') + ' onclick="hm.act(\'' + s.id + '\', \'restart\', ' + esc(JSON.stringify(s.name)) + ')">Restart</button>') +
+      (s.state === 'stopped' || s.state === 'down' ? '' : '<button class="danger" ' + (busy ? 'disabled' : '') + ' onclick="hm.act(\'' + s.id + '\', \'stop\', ' + esc(JSON.stringify(s.name)) + ')">Stop</button>') +
+      '</div><div class="since" style="margin-top:10px">' + esc(s.state) + ' for ' + ago(s.since) + '</div></div>';
+  }
+
+  function stats(sys) {
+    if (!sys) return '';
+    const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+    const items = [
+      { label: 'CPU', value: sys.cpuPct + '%', p: sys.cpuPct },
+      { label: 'Memory', value: sys.memory.usedGb + ' / ' + sys.memory.totalGb + ' GB', p: pct(sys.memory.usedGb, sys.memory.totalGb) },
+    ];
+    if (sys.gpu) items.push({ label: 'GPU · ' + sys.gpu.name, value: sys.gpu.util + '% · ' + Math.round(sys.gpu.memUsedMb / 1024 * 10) / 10 + ' / ' + Math.round(sys.gpu.memTotalMb / 1024) + ' GB · ' + sys.gpu.tempC + '°C', p: pct(sys.gpu.memUsedMb, sys.gpu.memTotalMb) });
+    const colour = (p) => (p > 90 ? 'var(--down)' : p > 75 ? 'var(--warn)' : 'var(--accent)');
+    const disks = (sys.disks || []).map((d) => { const p = pct(d.sizeGb - d.freeGb, d.sizeGb); return '<div class="disk"><span>' + esc(d.drive) + '</span><div class="bar"><i style="width:' + p + '%;background:' + colour(p) + '"></i></div><em>' + esc(d.freeGb) + ' GB free</em></div>'; }).join('');
+    return '<div class="stats">' + items.map((i) => '<div class="stat"><span>' + esc(i.label) + '</span><b>' + esc(i.value) + '</b><div class="bar"><i style="width:' + Math.min(100, i.p) + '%;background:' + colour(i.p) + '"></i></div></div>').join('') +
+      (disks ? '<div class="stat disks"><span>Disks</span>' + disks + '</div>' : '') + '</div>';
+  }
+
+  function render() {
+    if (!key) {
+      app.innerHTML = '<div class="card login"><h1>Host Manager</h1><p class="sub">Enter the Host Manager key (HOST_MANAGER_KEY in Agent Builder\'s .env on this PC).</p>' +
+        '<form id="f"><input id="k" type="password" autocomplete="current-password" placeholder="hm_…" aria-label="Host Manager key"><button class="primary" style="width:100%">Open</button></form></div>';
+      document.getElementById('f').onsubmit = (e) => { e.preventDefault(); key = document.getElementById('k').value.trim(); try { localStorage.setItem('hostManagerKey', key); } catch {} refresh(true); };
+      return;
+    }
+    if (!data) { app.innerHTML = '<p class="sub">Checking this PC…</p>'; return; }
+    const sys = data.system;
+    app.innerHTML =
+      '<header><div><h1>' + esc(sys ? sys.machine : 'This PC') + '</h1><div class="sub">Host Manager · up ' + (sys ? sys.uptimeHours + ' h' : '?') + ' · checked ' + ago(data.at) + ' ago</div></div>' +
+      '<div class="actions"><button onclick="hm.refresh(true)">Refresh</button></div></header>' +
+      '<div class="section">Services</div><div class="grid">' + data.services.map(serviceCard).join('') + '</div>' +
+      '<div class="section">This PC</div>' + stats(sys) +
+      '<div class="section">Recent</div><div class="card"><ul class="events">' +
+      (data.events.length ? data.events.map((e) => '<li><time>' + clock(e.at) + '</time><span class="sev-' + esc(e.severity) + '">' + esc(e.title) + (e.body ? ' <span class="sub">' + esc(e.body) + '</span>' : '') + '</span></li>').join('') : '<li class="sub">Nothing yet.</li>') +
+      '</ul></div>';
+  }
+
+  render();
+  refresh(true);
+  timer = setInterval(() => { if (document.visibilityState === 'visible') refresh(false); }, 5000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refresh(false); });
+})();
+</script>
+</body>
+</html>

@@ -15,8 +15,16 @@ import { Logger } from "../utils/Logger.js";
 
 export type JarvisEventType = "build" | "repair" | "issue" | "research" | "status" | "test";
 
+/**
+ * How much it matters, decided here so Jarvis does not have to guess (his
+ * webhook skips its AI triage when it is given): info is kept on his record,
+ * notice is told to you, warn and critical raise an alert.
+ */
+export type JarvisSeverity = "info" | "notice" | "warn" | "critical";
+
 export interface JarvisEvent {
   type: JarvisEventType;
+  severity?: JarvisSeverity;
   subject: string;
   body: string;
   project?: string | null;
@@ -100,6 +108,7 @@ const deliver = async (event: JarvisEvent): Promise<{ ok: boolean; detail: strin
           app: "Agent Builder",
           sender: "Agent Builder",
           type: event.type,
+          severity: event.severity,
           subject: event.subject,
           body: event.body,
           project: event.project ?? undefined,

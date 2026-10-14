@@ -87,9 +87,28 @@ const wireJarvisReporting = (): void => {
   if (reportingWired) return;
   reportingWired = true;
 
+  // Practice builds (the Template Academy) go on his record; yours and customers' are told to you.
+  const practice = (record: BuildRecord) => (record.startedBy ?? "").startsWith("academy:");
+
+  buildEvents.on("started", (record: BuildRecord) => {
+    // An order's build is announced by the order pipeline already.
+    if (record.orderId) return;
+    void JarvisClient.send({
+      type: "build",
+      severity: practice(record) ? "info" : "notice",
+      project: record.projectName,
+      subject: `Build started: ${record.projectName}`,
+      body: [`Agent Builder started building ${record.projectName}.`, `What it was asked for: ${record.description.slice(0, 400)}`, record.orderId ? `This is for order ${record.orderId}.` : ""]
+        .filter(Boolean)
+        .join("\n"),
+      metadata: { buildId: record.buildId, orderId: record.orderId }
+    });
+  });
+
   buildEvents.on("completed", (record: BuildRecord) => {
     void JarvisClient.send({
       type: "build",
+      severity: practice(record) ? "info" : "notice",
       project: record.projectName,
       subject: `Build finished: ${record.projectName} (quality ${Math.round(record.qualityScore)})`,
       body: [
@@ -109,6 +128,7 @@ const wireJarvisReporting = (): void => {
   buildEvents.on("failed", (record: BuildRecord) => {
     void JarvisClient.send({
       type: "build",
+      severity: practice(record) ? "info" : "warn",
       project: record.projectName,
       subject: `Build failed: ${record.projectName}`,
       body: [

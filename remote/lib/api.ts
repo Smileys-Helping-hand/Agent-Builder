@@ -529,6 +529,31 @@ export interface Template {
   developing?: string | null;
 }
 
+export interface HostService {
+  id: string;
+  name: string;
+  about: string;
+  state: "up" | "starting" | "stopping" | "stopped" | "down" | "absent" | "unknown";
+  detail: string;
+  since: number;
+  busy: string | null;
+  held: boolean;
+}
+
+export interface HostStatus {
+  at: number;
+  services: HostService[];
+  system: {
+    machine: string;
+    uptimeHours: number;
+    cpuPct: number;
+    memory: { usedGb: number; totalGb: number };
+    gpu: { name: string; util: number; memUsedMb: number; memTotalMb: number; tempC: number } | null;
+    disks: Array<{ drive: string; sizeGb: number; freeGb: number }>;
+  } | null;
+  events: Array<{ at: number; type: string; title: string; body?: string; severity?: string }>;
+}
+
 export interface Order {
   id: string;
   externalId: string | null;
@@ -1454,6 +1479,10 @@ export const api = {
   topicDocument: (id: string, documentId: number) =>
     request<{ document: TopicDocumentMeta & { markdown: string } }>(`/api/research/topics/${id}/documents/${documentId}`),
 
+  /** This PC through the Host Manager: services, the PC, recent events (control/host.tsx). */
+  hostStatus: (fresh = false) => request<HostStatus>(`/api/host${fresh ? "?fresh=1" : ""}`, {}, 60000),
+  hostAction: (id: string, action: "start" | "stop" | "restart") =>
+    request<{ ok: boolean; status?: Partial<HostStatus> }>(`/api/host/services/${id}/${action}`, { method: "POST" }, 150000),
   warmModel: () => request<{ success: boolean; model: string; seconds: number; message: string }>("/api/power/warm-model", { method: "POST" }, 200000),
   modelStatus: () => request<ModelStatus>("/api/power/model", {}, 15000),
   restartModelServer: (force = false) =>

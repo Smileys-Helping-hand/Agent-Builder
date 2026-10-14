@@ -192,6 +192,8 @@ const buildPrompt = (order: Order, from: StartingPoint = "scratch"): string => {
 const notifyJarvis = (order: Order, subject: string, body: string): void => {
   void JarvisClient.send({
     type: "build",
+    // A customer's order: always worth telling you about.
+    severity: /fail|could not|on hold|stuck/i.test(subject) ? "warn" : "notice",
     project: order.title,
     subject,
     body,
