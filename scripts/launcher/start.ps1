@@ -50,6 +50,64 @@ function Limit-Log($path) {
 # First, so a start that goes wrong later still shows it happened.
 Write-LauncherLog "Launcher starting"
 
+# A click inside a console window selects text ("QuickEdit") and pauses the
+# script until a key is pressed: the launcher then sat on "Starting the model
+# server..." or "Starting the builder..." for hours. Switch QuickEdit off for
+# this window so a stray click can never stop it.
+try {
+    Add-Type -Namespace AB -Name Console -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern System.IntPtr GetStdHandle(int h);
+[DllImport("kernel32.dll")] public static extern bool GetConsoleMode(System.IntPtr h, out uint m);
+[DllImport("kernel32.dll")] public static extern bool SetConsoleMode(System.IntPtr h, uint m);
+'@ -ErrorAction Stop
+    $stdin = [AB.Console]::GetStdHandle(-10)
+    [uint32]$mode = 0
+    if ([AB.Console]::GetConsoleMode($stdin, [ref]$mode)) {
+        # ENABLE_EXTENDED_FLAGS on, ENABLE_QUICK_EDIT_MODE off.
+        [void][AB.Console]::SetConsoleMode($stdin, (($mode -bor 0x80) -band (-bnot 0x40)))
+    }
+} catch { }
+
+# Where the start has got to, for the Host Manager, the app and Jarvis
+# ("Starting the builder - 45s"), so a slow start shows as slow, not as dead.
+$statusFile = Join-Path $dataDir "launcher-status.json"
+$script:stepSince = Get-Date
+function Set-LauncherStep($step, $detail = "") {
+    if ($step -ne $script:currentStep) { $script:stepSince = Get-Date; $script:currentStep = $step }
+    $value = [ordered]@{ step = $step; detail = $detail; since = $script:stepSince.ToString("o"); updatedAt = (Get-Date).ToString("o"); pid = $PID }
+    try { [System.IO.File]::WriteAllText($statusFile, ($value | ConvertTo-Json -Compress)) } catch { }
+}
+Set-LauncherStep "Starting"
+
+# Things switched off on purpose from the Host Manager stay off: the launcher
+# does not start or restart them. Starting the launcher means the builder is wanted.
+$holdsFile = Join-Path $dataDir "host-holds.json"
+function Test-Held($id) {
+    if (-not (Test-Path $holdsFile)) { return $false }
+    try { return [bool]((Get-Content $holdsFile -Raw | ConvertFrom-Json).$id) } catch { return $false }
+}
+function Set-Held($id, [bool]$on) {
+    $holds = @{}
+    if (Test-Path $holdsFile) {
+        try { (Get-Content $holdsFile -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $holds[$_.Name] = $_.Value } } catch { }
+    }
+    if ($on) { $holds[$id] = @{ since = (Get-Date).ToString("o"); by = "launcher closed" } } else { $holds.Remove($id) }
+    try { [System.IO.File]::WriteAllText($holdsFile, ($holds | ConvertTo-Json -Compress)) } catch { }
+}
+Set-Held "agent-builder" $false
+
+# The Host Manager (scripts/host-manager): what runs on this PC and the switches
+# for it, separate from the builder so it answers while the builder is down.
+$hostManagerScript = Join-Path $repo "scripts\host-manager\host-manager.mjs"
+$hostManagerLog = Join-Path $dataDir "host-manager.log"
+function Start-HostManager {
+    if (-not (Test-Path $hostManagerScript)) { return }
+    if (Test-Endpoint "http://127.0.0.1:4100/api/health" 3) { return }
+    Limit-Log $hostManagerLog
+    Start-Process -FilePath "cmd.exe" -ArgumentList "/c node `"$hostManagerScript`" >> `"$hostManagerLog`" 2>&1" `
+        -WorkingDirectory $repo -WindowStyle Hidden | Out-Null
+}
+
 # Game mode (set from the app): the graphics card is the gamer's, so the model
 # server stays off until it is switched off again. See src/utils/GameMode.ts.
 $gameModeFile = Join-Path $dataDir "game-mode.json"
@@ -78,13 +136,24 @@ function Test-Endpoint($url, $timeoutSeconds = 3) {
 }
 
 function Wait-For($url, $seconds, $what) {
-    for ($i = 0; $i -lt $seconds; $i++) {
+    $start = Get-Date
+    $nextNote = 15
+    while (((Get-Date) - $start).TotalSeconds -lt $seconds) {
         if (Test-Endpoint $url 2) { return $true }
+        $waited = [int]((Get-Date) - $start).TotalSeconds
+        if ($waited -ge $nextNote) {
+            if (-not $Quiet) { Write-Host "    ...still waiting for $what ($waited s)" -ForegroundColor DarkGray }
+            Set-LauncherStep "Waiting for $what" "$waited s of $seconds s"
+            $nextNote += 15
+        }
         Start-Sleep -Seconds 1
     }
     Write-Host "  $what did not answer within $seconds seconds." -ForegroundColor Yellow
+    Set-LauncherStep "Waiting for $what" "no answer after $seconds s; carrying on"
     return $false
 }
+
+Start-HostManager
 
 if (-not $Quiet) {
     Write-Host ""
@@ -97,6 +166,7 @@ if (-not $Quiet) {
 # update needs. Fast-forward only: if this PC has its own commits or edits in
 # the way, git refuses, nothing is overwritten, and it starts as it is.
 if (-not $NoUpdate -and (Test-Path (Join-Path $repo ".git")) -and (Get-Command git -ErrorAction SilentlyContinue)) {
+    Set-LauncherStep "Updating from GitHub"
     # git and npm write progress to stderr; Windows PowerShell would treat that
     # as a failure under "Stop" and end the launcher. An update must never stop a start.
     $previousPreference = $ErrorActionPreference
@@ -113,12 +183,13 @@ if (-not $NoUpdate -and (Test-Path (Join-Path $repo ".git")) -and (Get-Command g
         $git = Start-Process git -ArgumentList "pull", "--ff-only", "--quiet" -NoNewWindow -PassThru `
             -RedirectStandardOutput "$gitLog.out" -RedirectStandardError $gitLog
         $null = $git.Handle  # without this, Windows PowerShell never reports the exit code
-        if ($git.WaitForExit(60000)) {
+        # Two minutes: on a busy, slow disk one minute was not always enough.
+        if ($git.WaitForExit(120000)) {
             $pulled = ($git.ExitCode -eq 0)
             $output = (Get-Content $gitLog -Raw -ErrorAction SilentlyContinue)
         } else {
             & taskkill.exe /T /F /PID $git.Id 2>&1 | Out-Null
-            $output = "git pull did not finish within a minute (no network yet?)"
+            $output = "git pull did not finish within two minutes (no network yet, or the disk is busy)"
         }
     } catch {
         $output = $_.Exception.Message
@@ -133,6 +204,7 @@ if (-not $NoUpdate -and (Test-Path (Join-Path $repo ".git")) -and (Get-Command g
         Write-LauncherLog "Updated $($before.Substring(0, 7)) -> $($after.Substring(0, 7))"
         if ($changed -match '^(package\.json|package-lock\.json)$') {
             Write-Step "Installing the builder's packages..."
+            Set-LauncherStep "Installing packages after an update"
             & npm install --no-audit --no-fund 2>&1 | Out-Null
         }
         if (($changed -match '^remote/') -and (Test-Path (Join-Path $repo "remote\node_modules"))) {
@@ -172,8 +244,11 @@ $cacheType = Get-DotEnv "OLLAMA_KV_CACHE_TYPE"
 $env:OLLAMA_KV_CACHE_TYPE = if ($cacheType) { $cacheType } else { "q8_0" }
 $maxLoaded = Get-DotEnv "OLLAMA_MAX_LOADED_MODELS"
 $env:OLLAMA_MAX_LOADED_MODELS = if ($maxLoaded) { $maxLoaded } else { "1" }
+Set-LauncherStep "Starting the model server"
 if (Test-GameMode) {
     Write-Step "Game mode is on: leaving the model server off (switch it off in the app)"
+} elseif (Test-Held "model-server") {
+    Write-Step "The model server was switched off in the Host Manager - leaving it off."
 } elseif (Test-Endpoint "http://localhost:11434/api/tags") {
     Write-Good "Model server already running"
 } else {
@@ -260,6 +335,7 @@ if (Test-Endpoint "http://127.0.0.1:4000/api/update/check") {
     }
 
     Write-Step "Starting the builder..."
+    Set-LauncherStep "Starting the builder"
     $started.api = Start-Api
     if (Wait-For "http://127.0.0.1:4000/api/update/check" 90 "The builder") {
         Write-Good "Builder ready on http://127.0.0.1:4000"
@@ -307,7 +383,10 @@ function Stop-JarvisProcesses {
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 
-if ($hasJarvis) {
+Set-LauncherStep "Starting Jarvis"
+if ($hasJarvis -and (Test-Held "jarvis")) {
+    Write-Step "Jarvis was switched off in the Host Manager - leaving him off."
+} elseif ($hasJarvis) {
     if (Test-Endpoint $jarvisUrl 3) {
         Write-Good "Jarvis already running"
     } else {
@@ -354,6 +433,7 @@ if ($hasBridge) {
 }
 
 # --- 3. a way in from outside -------------------------------------------------
+Set-LauncherStep "Opening the way in from outside"
 $address = "http://127.0.0.1:4000"
 $cloudflared = Get-Command cloudflared -ErrorAction SilentlyContinue
 $namedConfig = Join-Path $env:USERPROFILE ".cloudflared\config.yml"
@@ -430,6 +510,7 @@ if (-not $appStale) {
 }
 if ($appStale) {
     Write-Step "Building the app (a minute, only after an update)..."
+    Set-LauncherStep "Building the app after an update"
     $appLog = Join-Path $dataDir "app-build.log"
     & cmd.exe /c "npm --prefix remote run build > `"$appLog`" 2>&1"
     if ($LASTEXITCODE -eq 0) { Write-Good "App ready" } else { Write-Host "  The app did not build; see $appLog" -ForegroundColor Yellow }
@@ -469,6 +550,7 @@ $ollamaMisses = 0
 $jarvisMisses = 0
 $healthySince = Get-Date
 Write-LauncherLog "Launcher watching the builder, the model server and Jarvis"
+Set-LauncherStep "Running"
 
 try {
     while ($true) {
@@ -489,6 +571,7 @@ try {
                 $wait = $backoff[[Math]::Min($apiFailures, $backoff.Count - 1)]
                 $why = if ($apiAlive) { "stopped answering" } else { "exited" }
                 Write-LauncherLog "Builder $why; restarting in ${wait}s (restart $($apiFailures + 1))"
+                Set-LauncherStep "Restarting the builder" "it $why (restart $($apiFailures + 1))"
                 if (-not $Quiet) { Write-Host "  The builder $why - restarting in $wait seconds." -ForegroundColor Yellow }
                 Stop-ApiProcesses
                 Start-Sleep -Seconds $wait
@@ -498,6 +581,7 @@ try {
                 $healthySince = Get-Date
                 if (Wait-For "http://127.0.0.1:4000/api/update/check" 90 "The builder") {
                     Write-LauncherLog "Builder back up"
+                    Set-LauncherStep "Running"
                 } else {
                     Write-LauncherLog "Builder did not come back within 90s; will try again"
                 }
@@ -517,7 +601,9 @@ try {
             if (Test-Path $jarvisFlag) { $jarvisUpdating = ((Get-Date) - (Get-Item $jarvisFlag).LastWriteTime).TotalMinutes -lt 25 }
             # An update still running is an update, however long a busy PC makes it take.
             if (-not $jarvisUpdating) { $jarvisUpdating = [bool](Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*update-jarvis.ps1*" }) }
-            if ($hasJarvis -and -not $jarvisUpdating) {
+            Start-HostManager
+
+            if ($hasJarvis -and -not $jarvisUpdating -and -not (Test-Held "jarvis")) {
                 if (Test-Endpoint $jarvisUrl 5) {
                     $jarvisMisses = 0
                 } else {
@@ -541,7 +627,7 @@ try {
 
             # The model server: builds, repairs and research all need it.
             # Not while game mode is on: then it is off on purpose.
-            if ($ollamaExe -and -not (Test-GameMode)) {
+            if ($ollamaExe -and -not (Test-GameMode) -and -not (Test-Held "model-server")) {
                 if (Test-Endpoint "http://localhost:11434/api/tags" 5) {
                     $ollamaMisses = 0
                 } else {
@@ -561,6 +647,9 @@ try {
     }
 } finally {
     Write-LauncherLog "Launcher stopping everything it started"
+    # Closed by hand (or Ctrl+C): stopped on purpose, so the Host Manager does not start it again.
+    if (-not $Daemon) { Set-Held "agent-builder" $true }
+    Set-LauncherStep "Stopped"
     if (-not $Daemon) {
         if (-not $Quiet) { Write-Host "  Stopping..." -ForegroundColor Gray }
         foreach ($id in @($started.tunnel, $started.api, $started.ollama, $started.jarvis, $started.jarvisAgent, $started.jarvisBridge)) {

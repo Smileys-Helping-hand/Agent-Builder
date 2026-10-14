@@ -44,7 +44,10 @@
   .feature { border-color: #2c4a7a; background: linear-gradient(160deg, #13203d, #121a30); }
   .stats { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); margin-bottom: 12px; }
   .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px; min-width: 0; }
-  .stat b { display: block; font-size: 20px; } .stat span { color: var(--muted); font-size: 12px; }
+  .stat b { display: block; font-size: 18px; overflow-wrap: anywhere; }
+  .stat.disks { grid-column: 1 / -1; }
+  .disk { display: grid; grid-template-columns: 2.2em 1fr 7.5em; align-items: center; gap: 10px; font-size: 13px; margin-top: 8px; }
+  .disk .bar { margin: 0; } .disk em { font-style: normal; color: var(--muted); text-align: right; } .stat span { color: var(--muted); font-size: 12px; }
   .bar { height: 6px; border-radius: 99px; background: var(--panel2); margin-top: 8px; overflow: hidden; }
   .bar i { display: block; height: 100%; background: var(--accent); }
   .events { list-style: none; margin: 0; padding: 0; }
@@ -128,8 +131,10 @@
       { label: 'Memory', value: sys.memory.usedGb + ' / ' + sys.memory.totalGb + ' GB', p: pct(sys.memory.usedGb, sys.memory.totalGb) },
     ];
     if (sys.gpu) items.push({ label: 'GPU · ' + sys.gpu.name, value: sys.gpu.util + '% · ' + Math.round(sys.gpu.memUsedMb / 1024 * 10) / 10 + ' / ' + Math.round(sys.gpu.memTotalMb / 1024) + ' GB · ' + sys.gpu.tempC + '°C', p: pct(sys.gpu.memUsedMb, sys.gpu.memTotalMb) });
-    for (const d of sys.disks || []) items.push({ label: 'Disk ' + d.drive, value: d.freeGb + ' GB free', p: pct(d.sizeGb - d.freeGb, d.sizeGb) });
-    return '<div class="stats">' + items.map((i) => '<div class="stat"><span>' + esc(i.label) + '</span><b>' + esc(i.value) + '</b><div class="bar"><i style="width:' + Math.min(100, i.p) + '%;background:' + (i.p > 90 ? 'var(--down)' : i.p > 75 ? 'var(--warn)' : 'var(--accent)') + '"></i></div></div>').join('') + '</div>';
+    const colour = (p) => (p > 90 ? 'var(--down)' : p > 75 ? 'var(--warn)' : 'var(--accent)');
+    const disks = (sys.disks || []).map((d) => { const p = pct(d.sizeGb - d.freeGb, d.sizeGb); return '<div class="disk"><span>' + esc(d.drive) + '</span><div class="bar"><i style="width:' + p + '%;background:' + colour(p) + '"></i></div><em>' + esc(d.freeGb) + ' GB free</em></div>'; }).join('');
+    return '<div class="stats">' + items.map((i) => '<div class="stat"><span>' + esc(i.label) + '</span><b>' + esc(i.value) + '</b><div class="bar"><i style="width:' + Math.min(100, i.p) + '%;background:' + colour(i.p) + '"></i></div></div>').join('') +
+      (disks ? '<div class="stat disks"><span>Disks</span>' + disks + '</div>' : '') + '</div>';
   }
 
   function render() {
@@ -144,8 +149,8 @@
     app.innerHTML =
       '<header><div><h1>' + esc(sys ? sys.machine : 'This PC') + '</h1><div class="sub">Host Manager · up ' + (sys ? sys.uptimeHours + ' h' : '?') + ' · checked ' + ago(data.at) + ' ago</div></div>' +
       '<div class="actions"><button onclick="hm.refresh(true)">Refresh</button></div></header>' +
-      stats(sys) +
       '<div class="section">Services</div><div class="grid">' + data.services.map(serviceCard).join('') + '</div>' +
+      '<div class="section">This PC</div>' + stats(sys) +
       '<div class="section">Recent</div><div class="card"><ul class="events">' +
       (data.events.length ? data.events.map((e) => '<li><time>' + clock(e.at) + '</time><span class="sev-' + esc(e.severity) + '">' + esc(e.title) + (e.body ? ' <span class="sub">' + esc(e.body) + '</span>' : '') + '</span></li>').join('') : '<li class="sub">Nothing yet.</li>') +
       '</ul></div>';

@@ -36,7 +36,8 @@ import { fileURLToPath } from 'node:url';
 
 const run = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const REPO = path.resolve(HERE, '..', '..');
+// HOST_MANAGER_REPO: run a copy against another checkout (testing a branch against the live builder).
+const REPO = process.env.HOST_MANAGER_REPO ? path.resolve(process.env.HOST_MANAGER_REPO) : path.resolve(HERE, '..', '..');
 const DATA = path.join(REPO, 'data');
 const ENV_FILE = path.join(REPO, '.env');
 fs.mkdirSync(DATA, { recursive: true });
@@ -235,6 +236,8 @@ function comfyCommand() {
   return null;
 }
 
+const comfyProcesses = (procs) => procs.filter((p) => /python/i.test(p.name) && /ComfyUI[\\/]main\.py/i.test(p.cmd) && p.cmd.includes(`--port ${COMFY_PORT}`));
+
 const savestateConfig = () => readJson(SAVESTATE_CONFIG, null);
 /** Ready | Running | Disabled | null (not installed), from this check's facts. */
 const savestateTask = () => machineFacts.task;
@@ -338,8 +341,9 @@ const SERVICES = [
     id: 'image-engine',
     name: 'Image engine',
     about: 'ComfyUI (port 8188): pictures and sprites. Starts by itself when something is drawn.',
-    async probe() {
+    async probe(ctx) {
       if (await answers(`http://127.0.0.1:${COMFY_PORT}/system_stats`, 4000)) return { state: 'up', detail: 'Running (uses the graphics card)' };
+      if (comfyProcesses(ctx.procs).length) return { state: 'starting', detail: 'Loading (a minute or two on a busy disk)' };
       return { state: 'stopped', detail: comfyCommand() ? 'Off — starts on its own when a picture is drawn' : 'Comfy Desktop has no installation to run' };
     },
     async start() {
@@ -347,9 +351,10 @@ const SERVICES = [
       if (!command) throw new Error('Comfy Desktop has no installation to run.');
       launch(command.python, command.args, command.cwd);
     },
-    async stop() {
+    async stop(ctx) {
+      // Answering or still loading: ComfyUI's own python (and the venv launcher in front of it).
       const pid = await listenerPid(COMFY_PORT);
-      if (pid) await kill([pid], true);
+      await kill([pid, ...comfyProcesses(ctx.procs).map((p) => p.pid)], true);
     },
   },
   {
