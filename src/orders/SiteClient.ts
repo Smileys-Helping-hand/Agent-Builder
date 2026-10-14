@@ -35,6 +35,8 @@ export interface SiteOrder {
   paid?: boolean;
   /** The reference the customer was given, e.g. ARP-1A2B3C. */
   orderRef?: string;
+  /** Sold through a partner's app (VerifiedBizLink), not the site itself. */
+  source?: { partnerId: string; partnerName: string } | null;
 }
 
 /** What the builder tells the site each time it checks in. */

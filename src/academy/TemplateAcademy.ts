@@ -233,7 +233,11 @@ async function startAttempt(idea: AcademyIdea): Promise<BuildRecord | null> {
     if (attempt.outcome !== "stopped") sinceFresh += 1;
   }
   const lastStopped = idea.attempts[idea.attempts.length - 1]?.outcome === "stopped";
-  const fresh = !idea.workspace || !fs.existsSync(idea.workspace) || (!lastStopped && sinceFresh >= CONTINUES_PER_FRESH);
+  // The build it would carry on can be gone from the history (lost in a crash, or
+  // forgotten): then carrying on fails every tick for ever, so start afresh.
+  const lastBuild = [...idea.attempts].reverse().find((attempt) => attempt.buildId)?.buildId;
+  const lastKnown = lastBuild ? BuildService.view(lastBuild) !== null : false;
+  const fresh = !idea.workspace || !fs.existsSync(idea.workspace) || !lastKnown || (!lastStopped && sinceFresh >= CONTINUES_PER_FRESH);
   let build: BuildRecord;
   if (fresh) {
     const starter = starterFor(idea);

@@ -137,7 +137,8 @@ const normalize = (raw: SiteOrder): Parameters<typeof OrderStore.create>[0] | nu
     title: (raw.title ?? "").trim() || `${template?.name ?? productType} for ${customerName}`,
     brief: features.length > 0 ? `${brief}\n\nFeatures they chose: ${features.join(", ")}.` : brief,
     budget: raw.budget ?? null,
-    timeline: raw.timeline ?? null
+    timeline: raw.timeline ?? null,
+    via: raw.source?.partnerName?.trim() || null
   };
 };
 

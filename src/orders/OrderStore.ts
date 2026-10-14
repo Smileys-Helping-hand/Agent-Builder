@@ -75,6 +75,8 @@ export interface Order {
   /** Keep improving it after delivery. */
   autoImprove: boolean;
   notes: string | null;
+  /** The partner app the customer ordered through ("VerifiedBizLink"), or null for the site itself. */
+  via: string | null;
   receivedAt: string;
   deliveredAt: string | null;
   updatedAt: string;
@@ -138,6 +140,9 @@ const db = () => {
   const database = getKnowledgeDb();
   if (!ready) {
     database.exec(SCHEMA);
+    // Added after the first release: orders taken in through a partner's app.
+    const columns = database.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === "via")) database.exec("ALTER TABLE orders ADD COLUMN via TEXT");
     ready = true;
   }
   return database;
@@ -162,6 +167,7 @@ type OrderRow = {
   attempts: number;
   auto_improve: number;
   notes: string | null;
+  via: string | null;
   received_at: string;
   delivered_at: string | null;
   updated_at: string;
@@ -186,6 +192,7 @@ const mapOrder = (row: OrderRow): Order => ({
   attempts: row.attempts,
   autoImprove: row.auto_improve === 1,
   notes: row.notes,
+  via: row.via ?? null,
   receivedAt: row.received_at,
   deliveredAt: row.delivered_at,
   updatedAt: row.updated_at
@@ -206,6 +213,7 @@ export interface NewOrder {
   budget?: string | null;
   timeline?: string | null;
   autoImprove?: boolean;
+  via?: string | null;
 }
 
 export const OrderStore = {
@@ -225,8 +233,8 @@ export const OrderStore = {
     db()
       .prepare(
         `INSERT INTO orders (id, external_id, source, customer_name, customer_email, product_type, title, brief,
-                             budget, timeline, status, auto_improve, received_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'received', ?, ?, ?)`
+                             budget, timeline, status, auto_improve, via, received_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'received', ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -240,13 +248,14 @@ export const OrderStore = {
         input.budget ?? null,
         input.timeline ?? null,
         input.autoImprove === false ? 0 : 1,
+        input.via?.trim().slice(0, 60) || null,
         now,
         now
       );
 
     const order = this.get(id);
     if (!order) throw new Error("Order was written but could not be read back.");
-    this.note(id, "received", `Order received from ${source}.`);
+    this.note(id, "received", `Order received from ${source}${input.via ? ` (through ${input.via})` : ""}.`);
     return { order, created: true };
   },
 
