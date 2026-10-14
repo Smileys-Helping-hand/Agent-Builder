@@ -279,6 +279,7 @@ export default function Orders() {
 
                         <div className="chips" style={{ marginTop: 8 }}>
                           <span className="chip">{order.productType}</span>
+                          {order.via ? <span className="chip accent">via {order.via}</span> : null}
                           {order.budget ? <span className="chip">{order.budget}</span> : null}
                           {order.timeline ? <span className="chip">{order.timeline}</span> : null}
                           {order.qualityScore > 0 ? (

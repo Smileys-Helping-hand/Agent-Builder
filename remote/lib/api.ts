@@ -547,6 +547,8 @@ export interface Order {
   qualityScore: number;
   attempts: number;
   autoImprove: boolean;
+  /** Ordered through a partner's app ("VerifiedBizLink"), or null. */
+  via?: string | null;
   receivedAt: string;
   deliveredAt: string | null;
   updatedAt: string;
