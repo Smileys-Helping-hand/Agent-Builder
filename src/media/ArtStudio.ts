@@ -306,6 +306,18 @@ export const ArtStudio = {
   },
 
   /**
+   * Whether a picture can be drawn now: "ready" (answering), "starts" (not
+   * running, but drawing starts it), "game-mode" (kept off on purpose) or
+   * "missing" (not installed where expected). The app used to grey Draw out
+   * whenever the engine was not running, though drawing is what starts it.
+   */
+  async state(): Promise<"ready" | "starts" | "game-mode" | "missing"> {
+    if (await ArtStudio.available()) return "ready";
+    if (GameMode.isOn()) return "game-mode";
+    return comfyBinary() ? "starts" : "missing";
+  },
+
+  /**
    * The image engine answering, started if it is not: a picture asked for
    * (by the app, a build's art pass, or Jarvis) should be drawn, not refused
    * because nobody had opened Comfy Desktop. Not in game mode, which keeps the

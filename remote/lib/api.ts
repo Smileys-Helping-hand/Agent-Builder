@@ -707,7 +707,8 @@ export interface AcademyStatus {
 }
 
 export interface ArtStatus {
-  engine: "ready" | "offline";
+  /** ready · starts (not running; drawing starts it) · game-mode (kept off) · missing (not installed). "offline" from older builders. */
+  engine: "ready" | "starts" | "game-mode" | "missing" | "offline";
   mediagen: { configured: boolean; reachable: boolean; workerOnline: boolean | null; url: string | null; error?: string };
 }
 

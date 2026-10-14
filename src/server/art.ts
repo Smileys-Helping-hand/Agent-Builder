@@ -39,7 +39,7 @@ const kindOf = (value: unknown): ArtKind | undefined => (KINDS.includes(value as
 
 export const registerArtRoutes = (app: Express) => {
   app.get("/api/art/status", authenticateAgent("read"), async (_req: Request, res: Response) => {
-    res.json({ engine: (await ArtStudio.available()) ? "ready" : "offline", mediagen: await MediaGen.status() });
+    res.json({ engine: await ArtStudio.state(), mediagen: await MediaGen.status() });
   });
 
   app.post("/api/art/draw", authenticateAgent("execute"), (req: Request, res: Response) => {
