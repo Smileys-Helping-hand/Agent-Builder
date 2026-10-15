@@ -24,7 +24,7 @@ import {
   type ResearchQuestion,
   type ResearchTopic
 } from "./ResearchStore.js";
-import { fetchDocument, keywordQuery, searchAll, type SearchResult } from "./SourceProviders.js";
+import { fetchDocument, keywordQuery, rankResults, searchAll, type SearchResult } from "./SourceProviders.js";
 
 const envMs = (name: string, fallback: number): number => {
   const value = Number(process.env[name]);
@@ -35,7 +35,8 @@ const BASE_DELAY_MS = envMs("RESEARCH_CYCLE_DELAY_MS", 60_000);
 const MAX_BACKOFF_MS = envMs("RESEARCH_MAX_BACKOFF_MS", 30 * 60_000);
 const BUILD_YIELD_DELAY_MS = 30_000;
 const QUESTIONS_PER_CYCLE = 2;
-const SOURCES_PER_QUESTION = 3;
+/** Read per question: the best four of every provider's results (rankResults). */
+const SOURCES_PER_QUESTION = 4;
 const RESULTS_PER_PROVIDER = 3;
 const SOURCE_CHARS_FOR_MODEL = 6_000;
 const DOC_REFRESH_AFTER_NEW_FINDINGS = 8;
@@ -456,7 +457,7 @@ Rules: no title heading; use ONLY the findings; keep citation numbers exactly as
         (unavailable.length > 0 ? ` (unavailable right now: ${unavailable.join(", ")})` : "")
     );
 
-    const unread = results.filter((result) => !ResearchStore.hasSource(topic.id, result.url)).slice(0, SOURCES_PER_QUESTION);
+    const unread = rankResults(question.text, results).filter((result) => !ResearchStore.hasSource(topic.id, result.url)).slice(0, SOURCES_PER_QUESTION);
     if (unread.length === 0) {
       ResearchStore.logActivity(topic.id, cycle, "search", "Every result for this question has already been read");
       return outcome;

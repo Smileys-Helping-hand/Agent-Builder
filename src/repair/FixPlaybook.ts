@@ -67,7 +67,7 @@ interface PlaybookFile {
  * worth another go once it has learned a better way to carry it out (editing a
  * long file by regions, say). Raise it when how recipes are applied changes.
  */
-export const DOCTOR_VERSION = 3;
+export const DOCTOR_VERSION = 4;
 
 const FILE = () => path.join(process.cwd(), "data", "fix-playbook.json");
 

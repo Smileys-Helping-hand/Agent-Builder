@@ -1402,6 +1402,8 @@ export const api = {
   library: (kind?: LibraryKind) => request<{ items: LibraryItem[]; counts: Record<LibraryKind, number> }>(`/api/jarvis/library${kind ? `?kind=${kind}` : ""}`),
   libraryRemove: (id: number) => request<{ ok: boolean }>(`/api/jarvis/library/${id}`, { method: "DELETE" }),
   artStatus: () => request<ArtStatus>("/api/art/status"),
+  artEnhance: (subject: string, kind: ArtKind) => request<{ subject: string }>("/api/art/enhance", { method: "POST", body: JSON.stringify({ subject, kind }) }, 120000),
+  artIdea: (kind: ArtKind) => request<{ subject: string }>("/api/art/idea", { method: "POST", body: JSON.stringify({ kind }) }, 120000),
   artDraw: (input: { subject: string; name?: string; kind?: ArtKind; size?: ArtShape; style?: string; seed?: number; count?: number }) =>
     request<{ jobs: ArtJob[] }>("/api/art/draw", { method: "POST", body: JSON.stringify(input) }),
   artEdit: (id: string, change: string, strength: number) =>

@@ -123,6 +123,8 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
     params: { subject: "what it shows", "kind?": "image | photo | sprite | icon | ui | background", "size?": "wide | square | tall (image and photo)", "name?": "short name for it", "style?": "art style", "count?": "how many variations (1-4)", "seed?": "number, to repeat one" },
     call: (p) => ["POST", "/api/art/draw", pick(p, "subject", "prompt", "kind", "size", "name", "style", "count", "seed")]
   },
+  { name: "art.enhance", area: "art", label: "Turn a short picture idea into a rich description that draws better", scope: "execute", params: { subject: "the idea", "kind?": "image | photo | sprite | icon | ui | background" }, call: (p) => ["POST", "/api/art/enhance", pick(p, "subject", "kind")] },
+  { name: "art.idea", area: "art", label: "Invent a picture idea for a kind of picture", scope: "execute", params: { "kind?": "image | photo | sprite | icon | ui | background" }, call: (p) => ["POST", "/api/art/idea", pick(p, "kind")] },
   { name: "art.jobs", area: "art", label: "Pictures being drawn and just drawn", scope: "read", params: {}, call: () => ["GET", "/api/art/jobs"] },
   { name: "art.job", area: "art", label: "One drawing job", scope: "read", params: { id: "the job" }, call: (p) => ["GET", `/api/art/jobs/${enc(str(p.id))}`] },
   { name: "art.list", area: "art", label: "The picture library", scope: "read", params: { "q?": "search words", "kind?": "sprite | icon | ui | background" }, call: (p) => ["GET", `/api/art${query(p, "q", "kind")}`] },

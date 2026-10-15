@@ -781,7 +781,10 @@ export class AutonomousOrchestrator extends EventEmitter {
       projectName: this.config.projectName,
       note: (title, text) => this.think(iterationNum, "decision", title, text),
       editFile: async (file, content, instruction, errors) => {
-        const reply = await ModelRouter.generate(
+        // A few lines are a mechanical fix: the fast model that fits the card does them in
+        // seconds; a slow one that does not fit ran past the time allowed. Whole files keep the build's model.
+        const fast = content.length < 6000 ? process.env.FAST_EDIT_MODEL ?? "qwen2.5-coder:7b" : undefined;
+        const ask = (model?: string) => ModelRouter.generate(
           `Fix this one file. Change only what the instruction asks; keep everything else exactly as it is.
 
 Instruction: ${instruction}
@@ -792,8 +795,10 @@ FILE: ${file}
 ${content}
 \`\`\`
 
-Reply with all of the code you were given, corrected, in one code block, nothing else.`
+Reply with all of the code you were given, corrected, in one code block, nothing else.`,
+          model ? { model } : {}
         );
+        const reply = await (fast ? ask(fast).catch(() => ask()) : ask());
         const block = /\`\`\`[a-z]*\n([\s\S]*?)\`\`\`/.exec(reply);
         return block ? block[1] : null;
       }

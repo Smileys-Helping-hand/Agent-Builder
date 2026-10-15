@@ -255,6 +255,35 @@ export default function Studio() {
   const [chosen, setChosen] = useState<string[]>([]);
   const [open, setOpen] = useState<ArtItem | null>(null);
   const [busy, setBusy] = useState(false);
+  const [wording, setWording] = useState<"enhance" | "idea" | null>(null);
+  const [before, setBefore] = useState<string | null>(null);
+
+  // Better words for the engine, and an idea when there is none (PromptCraft).
+  const enhance = async () => {
+    if (!subject.trim()) return toast("Write a few words first, then enhance them.");
+    setWording("enhance");
+    try {
+      const { subject: richer } = await api.artEnhance(subject, kind);
+      setBefore(subject);
+      setSubject(richer);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setWording(null);
+    }
+  };
+  const surprise = async () => {
+    setWording("idea");
+    try {
+      const { subject: idea } = await api.artIdea(kind);
+      setBefore(subject || null);
+      setSubject(idea);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setWording(null);
+    }
+  };
 
   // Jobs started elsewhere (Jarvis, another device) show up live too.
   useEffect(() => {
@@ -324,6 +353,19 @@ export default function Studio() {
             <span>What to draw</span>
             <textarea rows={3} value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="a friendly dragon pet with green scales, full body" />
           </label>
+          <div className="btn-row" style={{ marginTop: -4, marginBottom: 10 }}>
+            <button className="btn small" disabled={wording !== null || !subject.trim()} onClick={() => void enhance()} title="Turn your words into a richer description that draws better">
+              {wording === "enhance" ? <Busy label="Enhancing…" /> : <>{Icon.sparkle} Enhance</>}
+            </button>
+            <button className="btn small ghost" disabled={wording !== null} onClick={() => void surprise()} title="An idea for this kind of picture">
+              {wording === "idea" ? <Busy label="Thinking…" /> : "🎲 Surprise me"}
+            </button>
+            {before !== null ? (
+              <button className="btn small ghost" onClick={() => { setSubject(before); setBefore(null); }} title="Back to what you wrote">
+                Undo
+              </button>
+            ) : null}
+          </div>
           <div className="studio-row">
             <label className="field">
               <span>Kind</span>
