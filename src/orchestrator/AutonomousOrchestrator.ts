@@ -28,6 +28,9 @@ import { WorkloadCoordinator } from "../utils/WorkloadCoordinator.js";
 import { toKey } from "../knowledge/KnowledgeDb.js";
 import { ProjectSnapshot } from "./ProjectSnapshot.js";
 import { ensureOllama } from "../utils/Ollama.js";
+import { StuckDoctor } from "../repair/StuckDoctor.js";
+import { FixPlaybook } from "../repair/FixPlaybook.js";
+import { fingerprint, groupErrors, parseErrors } from "../repair/ErrorFingerprint.js";
 
 export interface BuildIteration {
   iteration: number;
@@ -178,6 +181,10 @@ export class AutonomousOrchestrator extends EventEmitter {
 
   // The files as the previous pass left them, to say what a new pass changed.
   private lastFiles: Record<string, string> = {};
+  /** The last failing check's errors as a fingerprint, and its score: "the same problem again" across attempts and passes. */
+  private lastFailure: { fingerprint: string; score: number } | null = null;
+  /** Problems the Stuck Doctor has already investigated in this build (it learns once, then the playbook has it). */
+  private doctored = new Set<string>();
 
   constructor(private config: AutonomousConfig) {
     super();
@@ -492,6 +499,16 @@ export class AutonomousOrchestrator extends EventEmitter {
           }
         }
 
+        // Stuck on the same errors (or meeting ones it has a learned fix for):
+        // find out why and fix it without the model rewriting the code again.
+        const doctored = failingBefore ? await this.consultDoctor(iterationNum, repairAttempt, failingBefore, verification, profileSettings.reviewModel) : false;
+        if (doctored) {
+          currentFiles = await this.reloadFiles(currentFiles);
+          verification = await this.verifyAndReport(iterationNum, `After the Stuck Doctor`);
+          if (verification.passed) break;
+          continue;
+        }
+
         const filesBeforeRepair = currentFiles;
         const verificationBeforeRepair = verification;
         const headBeforeRepair = await this.workspace.getHead();
@@ -725,6 +742,78 @@ export class AutonomousOrchestrator extends EventEmitter {
    * so keeping its job to a few sentences instead of a full generation is
    * what makes the CPU detour cost seconds instead of minutes.
    */
+  /**
+   * The Stuck Doctor (repair/StuckDoctor.ts), for apps this builder made (never
+   * a project someone owns): on the first failure only the fixes it has
+   * learned; once the same errors come back with no better score, a full
+   * look (evidence, a diagnosis, fixes tried and kept only if they help).
+   * Returns true when it changed the app.
+   */
+  private async consultDoctor(
+    iterationNum: number,
+    repairAttempt: number,
+    failing: { name: string; output: string },
+    verification: VerificationReport,
+    reviewModel: string | undefined
+  ): Promise<boolean> {
+    if (process.env.STUCK_DOCTOR === "off") return false;
+    const ours = !this.config.workingDir || fs.existsSync(path.join(this.workspace.root, "template.json"));
+    if (!ours || !["typecheck", "build", "test"].includes(failing.name)) return false;
+    const groups = groupErrors(parseErrors(failing.output));
+    if (!groups.length) return false;
+
+    const print = fingerprint(failing.output);
+    const same = this.lastFailure?.fingerprint === print && verification.score <= this.lastFailure.score;
+    this.lastFailure = { fingerprint: print, score: verification.score };
+    const known = groups.some((group) => FixPlaybook.match(group.code, group.example).length > 0);
+    const stuck = same && repairAttempt >= 2 && !this.doctored.has(print);
+    if (!stuck && !(known && repairAttempt === 1)) return false;
+    if (stuck) this.doctored.add(print);
+
+    this.think(iterationNum, "decision", stuck ? "Same errors again: investigating instead of rewriting" : "Trying fixes it learned before", groups.map((g) => `• ${g.count}× ${g.example.slice(0, 160)}`).join("\n"));
+    const result = await StuckDoctor.resolve({
+      root: this.workspace.root,
+      check: failing,
+      models: this.isOllamaProvider() && reviewModel ? [reviewModel, undefined] : [undefined],
+      playbookOnly: !stuck,
+      originalOf: async (file) => (await this.templateOriginal(file).catch(() => "")) || null,
+      buildId: (this.config as { buildId?: string }).buildId ?? null,
+      projectName: this.config.projectName,
+      note: (title, text) => this.think(iterationNum, "decision", title, text),
+      editFile: async (file, content, instruction, errors) => {
+        const reply = await ModelRouter.generate(
+          `Fix this one file. Change only what the instruction asks; keep everything else exactly as it is.
+
+Instruction: ${instruction}
+The error it must fix: ${errors}
+
+FILE: ${file}
+\`\`\`
+${content}
+\`\`\`
+
+Reply with all of the code you were given, corrected, in one code block, nothing else.`
+        );
+        const block = /\`\`\`[a-z]*\n([\s\S]*?)\`\`\`/.exec(reply);
+        return block ? block[1] : null;
+      }
+    }).catch((error: unknown) => {
+      Logger.warn("Stuck Doctor failed", { error: error instanceof Error ? error.message : String(error) });
+      return null;
+    });
+    if (!result || result.fixed === 0) return false;
+    await this.workspace.commitCurrentState(`Iteration ${iterationNum}: Stuck Doctor (${result.notes.join("; ").slice(0, 120)})`);
+    this.lastFailure = null;
+    return true;
+  }
+
+  /** The files this build tracks, as they are now on disk (after a fix made outside the model). */
+  private async reloadFiles(files: Record<string, string>): Promise<Record<string, string>> {
+    const next: Record<string, string> = {};
+    for (const file of Object.keys(files)) next[file] = await this.workspace.readFile(file).catch(() => files[file]);
+    return next;
+  }
+
   private async getRepairCritique(
     reviewModel: string,
     files: Record<string, string>,

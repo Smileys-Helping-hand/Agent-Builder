@@ -11,6 +11,7 @@ import { useState } from "react";
 
 import { api, type AcademyIdea } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, useConnected, useRemote, useToast } from "../ui";
+import { LearnedFixes } from "./learned";
 
 const STATUS: Record<AcademyIdea["status"], { label: string; tone: string }> = {
   idea: { label: "Waiting to practise", tone: "" },
@@ -181,6 +182,8 @@ export default function Academy() {
         {sorted.map((idea) => (
           <IdeaCard key={idea.id} idea={idea} onChange={() => academy.refresh()} />
         ))}
+
+        <LearnedFixes />
 
         <section className="card">
           <h2>Teach it a new template</h2>

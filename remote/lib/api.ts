@@ -529,6 +529,20 @@ export interface Template {
   developing?: string | null;
 }
 
+export interface PlaybookEntry {
+  id: string;
+  code: string;
+  pattern: string;
+  cause: string;
+  steps: string[];
+  evidence: string[];
+  worked: number;
+  failed: number;
+  createdAt: string;
+  lastUsedAt: string | null;
+  foundIn: string | null;
+}
+
 export interface HostService {
   id: string;
   name: string;
@@ -1349,6 +1363,9 @@ export const api = {
   },
 
   // --- Studio (pictures) ---
+  /** Fixes the builder taught itself (repair/FixPlaybook). */
+  playbook: () => request<{ entries: PlaybookEntry[] }>("/api/playbook"),
+  forgetFix: (id: string) => request<{ removed: boolean }>(`/api/playbook/${id}`, { method: "DELETE" }),
   academy: () => request<AcademyStatus>("/api/academy"),
   academyAdd: (input: { name: string; category?: string; brief: string; mustHave?: string[]; icon?: string }) =>
     request<{ idea: AcademyIdea }>("/api/academy/ideas", { method: "POST", body: JSON.stringify(input) }),
