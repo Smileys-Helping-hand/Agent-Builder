@@ -33,7 +33,9 @@ export type FixAction =
   /** Vitest's own settings in vite.config / vitest.config: the environment and setup files. */
   | { type: "vitest_config"; environment?: "jsdom" | "happy-dom" | "node"; setupFiles?: string[] }
   /** One source file changed by the model to follow an instruction, given the errors in it. */
-  | { type: "edit_file"; path: string; instruction: string };
+  | { type: "edit_file"; path: string; instruction: string }
+  /** Functions where the errors are that a model cut down to a placeholder, put back from the build's history (RestoreCode). */
+  | { type: "restore_placeholders" };
 
 export interface PlaybookEntry {
   id: string;
@@ -57,8 +59,15 @@ interface PlaybookFile {
   version: 1;
   entries: PlaybookEntry[];
   /** Recipes that were tried for an error and did not help, so they are not tried again for it. */
-  tried: Array<{ pattern: string; recipe: string; at: string }>;
+  tried: Array<{ pattern: string; recipe: string; at: string; doctor?: number }>;
 }
+
+/**
+ * The Doctor's own version: a recipe that failed under an older Doctor is
+ * worth another go once it has learned a better way to carry it out (editing a
+ * long file by regions, say). Raise it when how recipes are applied changes.
+ */
+export const DOCTOR_VERSION = 3;
 
 const FILE = () => path.join(process.cwd(), "data", "fix-playbook.json");
 
@@ -135,6 +144,8 @@ export const checkAction = (action: unknown): FixAction | null => {
       if (!environment && !setupFiles?.length) return null;
       return { type: "vitest_config", environment: environment as "jsdom" | "happy-dom" | "node" | undefined, setupFiles };
     }
+    case "restore_placeholders":
+      return { type: "restore_placeholders" };
     case "edit_file": {
       const file = String(a.path ?? "").trim().replace(/\\/g, "/");
       const instruction = String(a.instruction ?? "").trim();
@@ -160,6 +171,8 @@ export const describeAction = (action: FixAction): string => {
       return `set Vitest ${[action.environment ? `environment to ${action.environment}` : "", action.setupFiles?.length ? `setup files ${action.setupFiles.join(", ")}` : ""].filter(Boolean).join(" and ")}`;
     case "edit_file":
       return `edit ${action.path}: ${action.instruction}`;
+    case "restore_placeholders":
+      return "put back functions a model left as placeholders (from the build's history), or remove them if invented and unused";
   }
 };
 
@@ -182,12 +195,12 @@ export const FixPlaybook = {
   wasTried(message: string, actions: FixAction[]): boolean {
     const pattern = generalise(message);
     const key = recipeKey(actions);
-    return read().tried.some((t) => t.recipe === key && similarity(t.pattern, pattern) >= 0.9);
+    return read().tried.some((t) => t.recipe === key && (t.doctor ?? 1) === DOCTOR_VERSION && similarity(t.pattern, pattern) >= 0.9);
   },
 
   recordTried(message: string, actions: FixAction[]): void {
     const data = read();
-    data.tried.push({ pattern: generalise(message), recipe: recipeKey(actions), at: new Date().toISOString() });
+    data.tried.push({ pattern: generalise(message), recipe: recipeKey(actions), at: new Date().toISOString(), doctor: DOCTOR_VERSION });
     write(data);
   },
 

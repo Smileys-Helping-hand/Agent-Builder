@@ -38,6 +38,7 @@ import { JarvisClient } from "../integrations/JarvisClient.js";
 import { searchGitHubIssues, searchNpm, searchStackOverflow, type SearchResult } from "../research/SourceProviders.js";
 import { Logger } from "../utils/Logger.js";
 import { errorCount, groupErrors, parseErrors, type ErrorGroup } from "./ErrorFingerprint.js";
+import { placeholdersAt, removeDeclarations, restoreFunctions, unreferenced } from "./RestoreCode.js";
 import { FixPlaybook, checkAction, describeAction, type FixAction, type PlaybookEntry } from "./FixPlaybook.js";
 
 export interface DoctorContext {
@@ -51,6 +52,8 @@ export interface DoctorContext {
   note: (title: string, text: string) => void;
   buildId?: string | null;
   projectName?: string;
+  /** A template build's original of a file, for code a model deleted (RestoreCode). */
+  originalOf?: (file: string) => Promise<string | null>;
   /** Only the playbook: no research, no model (cheap, for the first failure). */
   playbookOnly?: boolean;
   /** No web searches (offline, or a test). */
@@ -227,6 +230,26 @@ const apply = async (root: string, actions: FixAction[], ctx: DoctorContext, gro
         }
         break;
       }
+      case "restore_placeholders": {
+        const restoredAll: string[] = [];
+        for (const file of Array.from(new Set(group.locations.map((l) => l.file)))) {
+          const full = path.join(root, file);
+          const text = readText(full);
+          if (text === null) continue;
+          const names = placeholdersAt(file, text, group.locations.filter((l) => l.file === file).map((l) => l.line));
+          if (!names.length) continue;
+          remember(backup, full);
+          const restored = await restoreFunctions(root, file, names, ctx.originalOf ? await ctx.originalOf(file).catch(() => null) : null);
+          restoredAll.push(...restored.map((n) => `${file}: ${n}`));
+          // Never whole anywhere: an invented stub. Nothing uses it, so it goes.
+          const stubs = unreferenced(root, file, names.filter((n) => !restored.includes(n)));
+          const removed = stubs.length ? removeDeclarations(root, file, stubs) : [];
+          restoredAll.push(...removed.map((n) => `${file}: removed unused stub ${n}`));
+        }
+        if (!restoredAll.length) throw new Error("no whole version of those functions in the build's history, and they are in use");
+        done.push(restoredAll.join(", "));
+        continue;
+      }
       case "edit_file": {
         if (!ctx.editFile) throw new Error("no model to edit with");
         const file = path.join(root, action.path);
@@ -234,12 +257,20 @@ const apply = async (root: string, actions: FixAction[], ctx: DoctorContext, gro
         if (before === null) throw new Error(`${action.path} does not exist`);
         const errors = group.files.includes(action.path) || !group.files.length ? group.example : `${group.example} (in ${group.files.join(", ")})`;
         // A slow model must not hold the build: six minutes, then it is a failed try.
-        const after = await Promise.race([
-          ctx.editFile(action.path, before, action.instruction, errors),
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), EDIT_TIMEOUT_MS))
-        ]);
-        // Half a file back is a truncated answer, not a fix.
-        if (!after || after.trim().length < before.trim().length * 0.5) throw new Error("the edit came back empty or cut short");
+        const ask = (content: string, label: string) =>
+          Promise.race([ctx.editFile!(label, content, action.instruction, errors), new Promise<null>((resolve) => setTimeout(() => resolve(null), EDIT_TIMEOUT_MS))]);
+        const regions = errorRegions(before, action.instruction);
+        let after: string | null;
+        if (regions.length) {
+          // A long file is edited where the errors are: a small model sent the
+          // whole of a 400-line file back cut short, and the fix was lost.
+          after = await editRegions(before, regions, (region, label) => ask(region, `${action.path} ${label}`));
+          if (!after) throw new Error("the model did not send the corrected lines back");
+        } else {
+          after = await ask(before, action.path);
+          // Half a file back is a truncated answer, not a fix.
+          if (!after || after.trim().length < before.trim().length * 0.5) throw new Error("the edit came back empty or cut short");
+        }
         remember(backup, file);
         fs.writeFileSync(file, after);
         break;
@@ -253,6 +284,61 @@ const apply = async (root: string, actions: FixAction[], ctx: DoctorContext, gro
     if (install.exitCode !== 0) throw new Error(`npm install failed: ${`${install.stderr}`.slice(-300)}`);
   }
   return done;
+};
+
+/* ─── editing a long file where its errors are ─── */
+
+const REGION_PAD = 20;
+const WHOLE_FILE_LINES = 160;
+
+/**
+ * The lines to edit in a long file: around each line the instruction names
+ * ("line 120: …"), widened to whole blocks, merged where they meet. Empty for
+ * a short file, or an instruction without line numbers (then the whole file).
+ */
+export const errorRegions = (content: string, instruction: string): Array<{ start: number; end: number }> => {
+  const lines = content.split("\n");
+  const wanted = Array.from(instruction.matchAll(/\bline (\d+)/g)).map((m) => Number(m[1])).filter((n) => n >= 1 && n <= lines.length);
+  if (lines.length <= WHOLE_FILE_LINES || !wanted.length) return [];
+  const regions = wanted
+    .sort((a, b) => a - b)
+    .map((line) => {
+      let start = Math.max(1, line - REGION_PAD);
+      let end = Math.min(lines.length, line + REGION_PAD);
+      // Out to a blank line or the file's edge, so a region holds whole statements.
+      while (start > 1 && lines[start - 2].trim() !== "" && line - start < REGION_PAD * 2) start--;
+      while (end < lines.length && lines[end - 1].trim() !== "" && end - line < REGION_PAD * 2) end++;
+      return { start, end };
+    });
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const region of regions) {
+    const last = merged[merged.length - 1];
+    if (last && region.start <= last.end + 1) last.end = Math.max(last.end, region.end);
+    else merged.push({ ...region });
+  }
+  return merged.slice(0, 6);
+};
+
+/** Each region sent alone, its corrected lines put back in its place (last first, so the line numbers hold). */
+export const editRegions = async (
+  content: string,
+  regions: Array<{ start: number; end: number }>,
+  edit: (region: string, label: string) => Promise<string | null>
+): Promise<string | null> => {
+  const lines = content.split("\n");
+  let changed = false;
+  for (const { start, end } of [...regions].reverse()) {
+    const original = lines.slice(start - 1, end).join("\n");
+    const fixed = await edit(original, `(lines ${start}-${end} only; send back exactly these lines, corrected)`);
+    // A region that comes back far shorter was cut short, not fixed.
+    if (!fixed || fixed.trim().length < original.trim().length * 0.6) continue;
+    // As many trailing blank lines as the original had: a code block often adds or drops one.
+    const trailing = (/\n*$/.exec(original)?.[0] ?? "").length;
+    const body = fixed.replace(/\n*$/, "") + "\n".repeat(trailing);
+    lines.splice(start - 1, end - start + 1, ...body.split("\n"));
+    changed = true;
+  }
+  return changed ? lines.join("\n") : null;
 };
 
 /* ─── evidence ─── */
@@ -321,17 +407,19 @@ const entryPoints = (dir: string): string[] => {
   }
 };
 
-const localEvidence = (root: string, names: string[], tools: string[] = []): { text: string; sources: string[] } => {
+export const localEvidence = (root: string, names: string[], tools: string[] = []): { text: string; sources: string[]; setupImports: string[] } => {
   const started = Date.now();
-  const hits: string[] = [];
-  const sources: string[] = [];
-  const packages = installedPackages(root);
-  for (const name of packages) {
-    if (Date.now() - started > 6000 || hits.length >= 6) break;
+  // Per package: the most specific name it declares. The first name in an
+  // error is what it is about ('toBeInTheDocument'); later ones are context
+  // ('Assertion', which Vitest itself declares), so they rank lower.
+  const found: Array<{ name: string; dir: string; rank: number; line: string }> = [];
+  for (const name of installedPackages(root)) {
+    if (Date.now() - started > 8000) break;
     const dir = path.join(root, "node_modules", name);
-    let found: string | null = null;
+    let best: { rank: number; line: string } | null = null;
+    let files = 0;
     const walk = (d: string, depth: number) => {
-      if (found || depth > 4) return;
+      if (depth > 4 || files > 400 || best?.rank === 0) return;
       let entries: fs.Dirent[] = [];
       try {
         entries = fs.readdirSync(d, { withFileTypes: true });
@@ -339,33 +427,55 @@ const localEvidence = (root: string, names: string[], tools: string[] = []): { t
         return;
       }
       for (const entry of entries) {
-        if (found) return;
+        if (best?.rank === 0) return;
         if (entry.name === "node_modules") continue;
         const full = path.join(d, entry.name);
         if (entry.isDirectory()) walk(full, depth + 1);
         else if (/\.d\.(m|c)?ts$/.test(entry.name)) {
+          files += 1;
           const text = readText(full) ?? "";
-          const name2 = names.find((n) => text.includes(n));
-          if (name2) {
-            const at = text.indexOf(name2);
-            found = `${path.relative(path.join(root, "node_modules"), full).replace(/\\/g, "/")} declares ${name2}: …${text.slice(Math.max(0, at - 200), at + 200).replace(/\s+/g, " ")}…`;
+          const rank = names.findIndex((n) => text.includes(n));
+          if (rank >= 0 && (!best || rank < best.rank)) {
+            const at = text.indexOf(names[rank]);
+            best = {
+              rank,
+              line: `${path.relative(path.join(root, "node_modules"), full).replace(/\\/g, "/")} declares ${names[rank]}: …${text.slice(Math.max(0, at - 200), at + 200).replace(/\s+/g, " ")}…`
+            };
           }
         }
       }
     };
     walk(dir, 0);
-    if (!found) continue;
-    hits.push(found);
+    const hit = best as { rank: number; line: string } | null;
+    if (hit) found.push({ name, dir, rank: hit.rank, line: hit.line });
+  }
+  found.sort((a, b) => a.rank - b.rank);
+
+  const hits: string[] = [];
+  const sources: string[] = [];
+  const setupImports: Array<{ spec: string; rank: number }> = [];
+  for (const { name, dir, rank, line } of found.slice(0, 4)) {
+    hits.push(line);
     sources.push(`node_modules/${name}`);
     const entries = entryPoints(dir);
+    // A sub-entry named for one of the project's tools ("@testing-library/jest-dom/vitest")
+    // is how the package means to be used with it; a tool's own package is not one.
+    for (const entry of entries) if (entry !== name && tools.some((tool) => tool !== name && entry === `${name}/${tool}`)) setupImports.push({ spec: entry, rank });
     if (entries.length) hits.push(`${name} can be imported as: ${entries.join(", ")}`);
     const readme = ["README.md", "readme.md", "Readme.md"].map((f) => readText(path.join(dir, f))).find(Boolean);
     if (readme) {
       const setup = readmeSetup(readme, tools);
+      for (const match of setup.matchAll(/import\s+['"]([^'"\s]+)['"]/g)) {
+        if (match[1].startsWith(`${name}/`) || (match[1] === name && !tools.includes(name))) setupImports.push({ spec: match[1], rank });
+      }
       if (setup) hits.push(`${name} README (setup):\n${setup}`);
     }
   }
-  return { text: hits.join("\n\n"), sources };
+  // The most specific package first, and within it the import that names a project tool.
+  const ranked = Array.from(new Map(setupImports.map((s) => [s.spec, s])).values())
+    .sort((a, b) => a.rank - b.rank || Number(tools.some((t) => b.spec.endsWith(`/${t}`))) - Number(tools.some((t) => a.spec.endsWith(`/${t}`))))
+    .map((s) => s.spec);
+  return { text: hits.join("\n\n"), sources, setupImports: ranked.slice(0, 2) };
 };
 
 const projectContext = (root: string, group: ErrorGroup): string => {
@@ -480,6 +590,52 @@ Reply with only JSON: {"cause":"<one sentence>","recipes":[[<actions>],[<actions
   return null;
 };
 
+/**
+ * Recipes read straight from the evidence, no model needed:
+ *  - an import the error's package documents for this project's tools
+ *    ("import '@testing-library/jest-dom/vitest'"), in the test files, or in a
+ *    setup file Vitest loads;
+ *  - for an error in the code itself, each file given its own exact errors to
+ *    fix, rather than a model's paraphrase of the problem.
+ */
+const evidenceRecipes = (root: string, group: ErrorGroup, setupImports: string[], output: string): Diagnosis => {
+  const recipes: FixAction[][] = [];
+  for (const spec of setupImports.slice(0, 1)) {
+    const line = `import "${spec}";`;
+    recipes.push([{ type: "add_import", where: "test_files", line }]);
+    const setup = ["src/setupTests.ts", "src/test-setup.ts", "src/test/setup.ts"].find((f) => fs.existsSync(path.join(root, f)));
+    recipes.push(
+      setup
+        ? [{ type: "add_import", where: setup, line }, { type: "vitest_config", setupFiles: [`./${setup}`] }]
+        : [{ type: "create_file", path: "src/setupTests.ts", content: `${line}\n` }, { type: "vitest_config", setupFiles: ["./src/setupTests.ts"] }]
+    );
+  }
+  // Functions a model cut down to a comment: put back from history before anyone edits them.
+  if (/^TS\d+$/.test(group.code)) {
+    const placeholders = Array.from(new Set(group.locations.map((l) => l.file))).some((file) => {
+      const text = readText(path.join(root, file));
+      return text !== null && placeholdersAt(file, text, group.locations.filter((l) => l.file === file).map((l) => l.line)).length > 0;
+    });
+    if (placeholders) recipes.push([{ type: "restore_placeholders" }]);
+  }
+  // Then each file given its own exact errors (also after a restore: what is left may be ordinary mistakes).
+  if (!setupImports.length && /^TS\d+$/.test(group.code)) {
+    const errors = parseErrors(output).filter((e) => `${e.code}: ${e.pattern}` === group.key && e.file);
+    const byFile = new Map<string, string[]>();
+    for (const e of errors) byFile.set(e.file!, [...(byFile.get(e.file!) ?? []), `line ${e.line}: ${e.message}`]);
+    for (const [file, lines] of Array.from(byFile.entries()).sort((a, b) => b[1].length - a[1].length).slice(0, 2)) {
+      const action = checkAction({ type: "edit_file", path: file, instruction: `Fix these TypeScript errors without changing what the code does: ${lines.slice(0, 8).join("; ")}`.slice(0, 600) });
+      if (action) recipes.push([action]);
+    }
+  }
+  const cause = recipes[0]?.[0]?.type === "restore_placeholders"
+    ? "These functions are placeholders a model left (a comment where the code should be): put back from the build's history, or removed if they were invented and nothing uses them."
+    : setupImports.length
+    ? `${setupImports[0].split("/").slice(0, setupImports[0].startsWith("@") ? 2 : 1).join("/")} documents ${setupImports[0]} as the import for this project's tools.`
+    : `The code itself: each file's own errors, fixed where they are.`;
+  return { cause, recipes };
+};
+
 /* ─── the doctor ─── */
 
 const countFor = (output: string, group: ErrorGroup) => groupErrors(parseErrors(output)).find((g) => g.key === group.key)?.count ?? 0;
@@ -556,17 +712,13 @@ export const StuckDoctor = {
         .join("\n\n")
         .slice(0, 9000);
 
-      // 3. Try, keep what helps, learn it; a miss is fed back for one more think.
+      // 3. Try, keep what helps, learn it. First what the evidence itself says
+      // to do (the packages' own setup instructions; the exact errors, one file
+      // at a time), then the model's diagnosis, and once more told what failed.
       const attempts: string[] = [];
-      for (let round = 0; round < DIAGNOSIS_ROUNDS && !solved; round++) {
-        if (Date.now() - started > TOTAL_BUDGET_MS) break;
-        const diagnosis = await diagnose(ctx, group, evidence, attempts);
-        if (!diagnosis) {
-          result.notes.push(`no usable diagnosis for: ${group.example.slice(0, 120)}`);
-          break;
-        }
-        ctx.note(round ? `Thinking again` : `Diagnosis`, `${diagnosis.cause}\nTrying: ${diagnosis.recipes.map((r) => r.map(describeAction).join(" + ")).join("  |  or  ")}`);
+      const tryRecipes = async (diagnosis: Diagnosis): Promise<void> => {
       for (const actions of diagnosis.recipes) {
+        if (solved || Date.now() - started > TOTAL_BUDGET_MS) return;
         if (FixPlaybook.wasTried(group.example, actions)) continue;
         result.tried += 1;
         const outcome = await trial(ctx, group, actions, before);
@@ -597,8 +749,29 @@ export const StuckDoctor = {
         ctx.note(`Fixed it, and learned it`, `${diagnosis.cause}\n${outcome.done.map((d) => `• ${d}`).join("\n")}\n${group.count} → ${outcome.groupLeft} of these errors. Saved to the playbook (${entry.id}), so the next build that meets this is fixed straight away.`);
         result.notes.push(`learned: ${diagnosis.cause}`);
         solved = true;
-        break;
+        return;
       }
+      };
+
+      const fromDocs = evidenceRecipes(ctx.root, group, local.setupImports, output);
+      if (fromDocs.recipes.length) {
+        ctx.note(`What the evidence says to do`, `${fromDocs.cause}\nTrying: ${fromDocs.recipes.map((r) => r.map(describeAction).join(" + ")).join("  |  or  ")}`);
+        await tryRecipes(fromDocs);
+      }
+      for (let round = 0; round < DIAGNOSIS_ROUNDS && !solved; round++) {
+        if (Date.now() - started > TOTAL_BUDGET_MS) break;
+        const diagnosis = await diagnose(ctx, group, evidence, attempts);
+        if (!diagnosis) {
+          result.notes.push(`no usable diagnosis for: ${group.example.slice(0, 120)}`);
+          break;
+        }
+        const fresh = diagnosis.recipes.filter((recipe) => !FixPlaybook.wasTried(group.example, recipe));
+        if (!fresh.length) {
+          result.notes.push(`the model only repeated what was tried for: ${group.example.slice(0, 100)}`);
+          break;
+        }
+        ctx.note(round ? `Thinking again` : `Diagnosis`, `${diagnosis.cause}\nTrying: ${fresh.map((r) => r.map(describeAction).join(" + ")).join("  |  or  ")}`);
+        await tryRecipes({ cause: diagnosis.cause, recipes: fresh });
       }
     }
 

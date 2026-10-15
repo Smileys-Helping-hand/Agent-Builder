@@ -1,3 +1,4 @@
+import { Agent, fetch as undiciFetch } from "undici";
 import { OpenAIClient } from "./OpenAIClient.js";
 import { AnthropicClient } from "./AnthropicClient.js";
 import { gpuLock } from "../utils/GpuLock.js";
@@ -71,6 +72,15 @@ export const ollamaOptions = (model?: string) => ({
   ...(positiveInt(process.env.OLLAMA_NUM_THREAD, 0) > 0 ? { num_thread: positiveInt(process.env.OLLAMA_NUM_THREAD, 0) } : {})
 });
 
+/**
+ * The local model server, waited on as long as it takes. Ollama sends nothing,
+ * not even its headers, until the model is loaded and has read the prompt; a
+ * 14B model half in RAM, reading a long prompt beside a build, took more than
+ * five minutes, and Node's fetch gives up on headers after five: "fetch failed",
+ * taken for the server being down, retried, and failed again the same way.
+ */
+const ollamaAgent = new Agent({ headersTimeout: 30 * 60_000, bodyTimeout: 30 * 60_000, connectTimeout: 30_000 });
+
 const generateWithOllama = async (prompt: string, model?: string): Promise<string> => {
   const baseUrl = process.env.OLLAMA_BASE_URL ?? process.env.OLLAMA_URL ?? "http://localhost:11434";
   const targetModel = model ?? process.env.OLLAMA_MODEL ?? process.env.MODEL ?? "qwen2.5-coder:7b";
@@ -81,7 +91,8 @@ const generateWithOllama = async (prompt: string, model?: string): Promise<strin
   const keepAlive = process.env.OLLAMA_KEEP_ALIVE ?? "30m";
   // Streamed, so a build can show its answer as it is written. The text
   // returned is exactly what a non-streamed call returned.
-  const response = await fetch(`${baseUrl}/api/generate`, {
+  const response = await undiciFetch(`${baseUrl}/api/generate`, {
+    dispatcher: ollamaAgent,
     method: "POST",
     headers: {
       "Content-Type": "application/json"

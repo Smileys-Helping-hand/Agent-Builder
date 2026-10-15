@@ -26,6 +26,8 @@ export interface ErrorGroup {
   /** One real message, for prompts and searches. */
   example: string;
   files: string[];
+  /** Where each one is. */
+  locations: Array<{ file: string; line: number }>;
   count: number;
 }
 
@@ -83,11 +85,13 @@ export const groupErrors = (errors: ParsedError[]): ErrorGroup[] => {
   for (const error of errors) {
     const key = `${error.code}: ${error.pattern}`;
     const group = groups.get(key);
+    const location = error.file && error.line ? [{ file: error.file, line: error.line }] : [];
     if (group) {
       group.count += 1;
       if (error.file && !group.files.includes(error.file)) group.files.push(error.file);
+      group.locations.push(...location);
     } else {
-      groups.set(key, { key, code: error.code, pattern: error.pattern, example: error.message, files: error.file ? [error.file] : [], count: 1 });
+      groups.set(key, { key, code: error.code, pattern: error.pattern, example: error.message, files: error.file ? [error.file] : [], locations: location, count: 1 });
     }
   }
   return Array.from(groups.values()).sort((a, b) => b.count - a.count);

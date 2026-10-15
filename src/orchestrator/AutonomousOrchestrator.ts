@@ -776,6 +776,7 @@ export class AutonomousOrchestrator extends EventEmitter {
       check: failing,
       models: this.isOllamaProvider() && reviewModel ? [reviewModel, undefined] : [undefined],
       playbookOnly: !stuck,
+      originalOf: async (file) => (await this.templateOriginal(file).catch(() => "")) || null,
       buildId: (this.config as { buildId?: string }).buildId ?? null,
       projectName: this.config.projectName,
       note: (title, text) => this.think(iterationNum, "decision", title, text),
@@ -791,7 +792,7 @@ FILE: ${file}
 ${content}
 \`\`\`
 
-Reply with the whole corrected file in one code block, nothing else.`
+Reply with all of the code you were given, corrected, in one code block, nothing else.`
         );
         const block = /\`\`\`[a-z]*\n([\s\S]*?)\`\`\`/.exec(reply);
         return block ? block[1] : null;
