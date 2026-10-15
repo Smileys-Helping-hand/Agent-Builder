@@ -133,6 +133,8 @@ app.use(
     callback(null, { origin: allowedOrigins, credentials: true });
   })
 );
+// A picture Jarvis sends in (base64) is bigger than the default 100 kB; only that route takes more.
+app.use("/api/art/import", express.json({ limit: "18mb" }));
 app.use(express.json());
 
 const server = http.createServer(app);

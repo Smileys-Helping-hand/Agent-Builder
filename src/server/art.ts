@@ -39,6 +39,24 @@ const KINDS: ArtKind[] = ["sprite", "background", "icon", "ui", "image", "photo"
 const SHAPES = ["wide", "square", "tall"] as const;
 const kindOf = (value: unknown): ArtKind | undefined => (KINDS.includes(value as ArtKind) ? (value as ArtKind) : undefined);
 
+/** One delivery's pictures: few enough, and small enough together, for Jarvis's cloud to take in one request. */
+const DELIVER_COUNT = 4;
+const DELIVER_CHARS = 3_000_000;
+
+/** What a picture's bytes are, from their first bytes rather than a name. */
+const mimeOf = (bytes: Buffer): string =>
+  bytes[0] === 0x89 && bytes.toString("ascii", 1, 4) === "PNG"
+    ? "image/png"
+    : bytes[0] === 0xff && bytes[1] === 0xd8
+      ? "image/jpeg"
+      : bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP"
+        ? "image/webp"
+        : "application/octet-stream";
+
+/** A PNG's width and height (its IHDR); unknown for the rest. */
+const sizeOf = (bytes: Buffer): { width: number | null; height: number | null } =>
+  mimeOf(bytes) === "image/png" && bytes.length > 24 ? { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) } : { width: null, height: null };
+
 export const registerArtRoutes = (app: Express) => {
   app.get("/api/art/status", authenticateAgent("read"), async (_req: Request, res: Response) => {
     res.json({ engine: await ArtStudio.state(), mediagen: await MediaGen.status() });
@@ -63,11 +81,18 @@ export const registerArtRoutes = (app: Express) => {
     }
   });
 
-  app.post("/api/art/draw", authenticateAgent("execute"), (req: Request, res: Response) => {
+  app.post("/api/art/draw", authenticateAgent("execute"), async (req: Request, res: Response) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     try {
+      // From a request in a few words (Jarvis in chat): an idea when there is
+      // none (surprise), richer words when asked (enhance). Both answer at once.
+      const kind = kindOf(body.kind) ?? "sprite";
+      let subject = String(body.subject ?? body.prompt ?? "").trim();
+      let wording: "model" | "instant" | null = null;
+      if (!subject && (body.surprise === true || body.surprise === "true")) ({ subject, by: wording } = await PromptCraft.surprise(kind));
+      else if (subject && (body.enhance === true || body.enhance === "true")) ({ subject, by: wording } = await PromptCraft.enhance(subject, kind));
       const jobs = ArtLibrary.draw({
-        subject: String(body.subject ?? body.prompt ?? ""),
+        subject,
         name: typeof body.name === "string" ? body.name : undefined,
         kind: kindOf(body.kind),
         style: typeof body.style === "string" ? body.style : undefined,
@@ -75,7 +100,7 @@ export const registerArtRoutes = (app: Express) => {
         count: Number(body.count) || 1,
         size: SHAPES.includes(body.size as (typeof SHAPES)[number]) ? (body.size as (typeof SHAPES)[number]) : undefined
       });
-      res.json({ jobs });
+      res.json({ jobs, subject, ...(wording ? { wording } : {}) });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
@@ -142,6 +167,72 @@ export const registerArtRoutes = (app: Express) => {
     const ids = Array.isArray(req.body?.ids) ? (req.body.ids as unknown[]).map(String) : [];
     const added = ArtLibrary.useIn(path.resolve(build.outputDir), ids);
     res.json({ added, note: added.length ? "In the build's public/assets and its manifest; the game draws them after its next build." : "Nothing was added." });
+  });
+
+  // The pictures themselves, for Jarvis: he keeps his own copy (his media, his
+  // chat). As many as fit in one answer his cloud accepts; the rest are named
+  // in `rest` for the next request. A job still drawing is counted as pending.
+  app.post("/api/art/deliver", authenticateAgent("read"), (req: Request, res: Response) => {
+    const list = (value: unknown) => (Array.isArray(value) ? (value as unknown[]).map(String).slice(0, 40) : []);
+    const ids = list(req.body?.ids);
+    let pending = 0;
+    const failed: string[] = [];
+    for (const jobId of list(req.body?.jobs)) {
+      const job = ArtLibrary.job(jobId);
+      if (!job) failed.push(`${jobId}: not on this PC (lost in a restart)`);
+      else if (job.state === "failed") failed.push(job.error ?? "the drawing failed");
+      else if (job.item) ids.push(job.item.id);
+      else pending += 1;
+    }
+    const images: Array<{ id: string; name: string; kind: ArtKind; subject: string; mime: string; width: number | null; height: number | null; base64: string }> = [];
+    const rest: string[] = [];
+    let total = 0;
+    for (const id of [...new Set(ids)]) {
+      const item = ArtLibrary.get(id);
+      const file = item ? ArtLibrary.fileOf(item) : "";
+      if (!item || !fs.existsSync(file)) {
+        failed.push(`${id}: removed from the library`);
+        continue;
+      }
+      const bytes = fs.readFileSync(file);
+      const base64 = bytes.toString("base64");
+      if (images.length >= DELIVER_COUNT || total + base64.length > DELIVER_CHARS) {
+        // One too big on its own still goes, alone.
+        if (images.length > 0) {
+          rest.push(id);
+          continue;
+        }
+      }
+      total += base64.length;
+      images.push({ id: item.id, name: item.name, kind: item.kind, subject: item.subject, mime: mimeOf(bytes), ...sizeOf(bytes), base64 });
+    }
+    res.json({ images, rest, pending, failed });
+  });
+
+  // A picture from Jarvis (his media: a texture, a picture ComfyUI made for
+  // him, one he was sent) into the library, so a build can use it.
+  app.post("/api/art/import", authenticateAgent("write"), (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const bytes = Buffer.from(String(body.base64 ?? "").replace(/\s+/g, ""), "base64");
+    const mime = mimeOf(bytes);
+    if (bytes.length < 100 || mime === "application/octet-stream") return res.status(400).json({ error: "That is not a PNG, JPEG or WebP picture." });
+    if (bytes.length > 12 * 1024 * 1024) return res.status(413).json({ error: "That picture is bigger than 12 MB." });
+    const subject = String(body.subject ?? "").trim().slice(0, 600);
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "art-import-"));
+    try {
+      const file = path.join(tmp, `picture${mime === "image/jpeg" ? ".jpg" : mime === "image/webp" ? ".webp" : ".png"}`);
+      fs.writeFileSync(file, bytes);
+      const tags = Array.isArray(body.tags) ? (body.tags as unknown[]).map(String).filter(Boolean).slice(0, 8) : [];
+      const item = ArtLibrary.importFile(file, {
+        name: String(body.name ?? "").trim() || subject.split(/[,.]/)[0].split(/\s+/).slice(0, 3).join(" ") || "picture",
+        subject: subject || String(body.name ?? "a picture"),
+        kind: kindOf(body.kind) ?? "image",
+        tags: [...new Set(["jarvis", ...tags])]
+      });
+      res.json({ item });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   // MediaGen: video from a picture, cloud-queued images, and its gallery.

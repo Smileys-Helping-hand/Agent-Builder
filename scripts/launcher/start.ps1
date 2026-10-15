@@ -419,8 +419,11 @@ function Start-JarvisBridge {
     Get-JarvisBridge | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Limit-Log $bridgeLog
     Add-Content -Path $bridgeLog -Value ("`n==== started {0} ====" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss")) -Encoding ascii -ErrorAction SilentlyContinue
+    # A bridge that updates itself (v4+) runs under its keeper, which restarts it
+    # on the newer copy Jarvis sends; an older one cannot, and runs bare.
+    $supervise = if (Select-String -Path $bridgeScript -Pattern "--supervise" -SimpleMatch -Quiet) { " --supervise" } else { "" }
     $process = Start-Process -FilePath "cmd.exe" `
-        -ArgumentList "/c node `"$bridgeScript`" >> `"$bridgeLog`" 2>&1" `
+        -ArgumentList "/c node `"$bridgeScript`"$supervise >> `"$bridgeLog`" 2>&1" `
         -WorkingDirectory $repo -WindowStyle Hidden -PassThru
     return $process.Id
 }
