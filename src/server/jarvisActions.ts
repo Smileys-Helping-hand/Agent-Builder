@@ -118,10 +118,10 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
   {
     name: "art.draw",
     area: "art",
-    label: "Draw a picture: a sprite (cut out), icon, ui piece or background",
+    label: "Draw a picture: any image (illustration, poster, scene), a photo, or game art (a sprite cut out, an icon, a ui piece, a background)",
     scope: "execute",
-    params: { subject: "what it shows", "kind?": "sprite | icon | ui | background", "name?": "short name for it", "style?": "art style", "count?": "how many variations (1-4)", "seed?": "number, to repeat one" },
-    call: (p) => ["POST", "/api/art/draw", pick(p, "subject", "prompt", "kind", "name", "style", "count", "seed")]
+    params: { subject: "what it shows", "kind?": "image | photo | sprite | icon | ui | background", "size?": "wide | square | tall (image and photo)", "name?": "short name for it", "style?": "art style", "count?": "how many variations (1-4)", "seed?": "number, to repeat one" },
+    call: (p) => ["POST", "/api/art/draw", pick(p, "subject", "prompt", "kind", "size", "name", "style", "count", "seed")]
   },
   { name: "art.jobs", area: "art", label: "Pictures being drawn and just drawn", scope: "read", params: {}, call: () => ["GET", "/api/art/jobs"] },
   { name: "art.job", area: "art", label: "One drawing job", scope: "read", params: { id: "the job" }, call: (p) => ["GET", `/api/art/jobs/${enc(str(p.id))}`] },

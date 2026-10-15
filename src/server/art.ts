@@ -34,7 +34,8 @@ import { signLink, verifyLink } from "../utils/SignedLinks.js";
 import { authenticateAgent } from "./agentAuth.js";
 
 const run = promisify(execFile);
-const KINDS: ArtKind[] = ["sprite", "background", "icon", "ui"];
+const KINDS: ArtKind[] = ["sprite", "background", "icon", "ui", "image", "photo"];
+const SHAPES = ["wide", "square", "tall"] as const;
 const kindOf = (value: unknown): ArtKind | undefined => (KINDS.includes(value as ArtKind) ? (value as ArtKind) : undefined);
 
 export const registerArtRoutes = (app: Express) => {
@@ -51,7 +52,8 @@ export const registerArtRoutes = (app: Express) => {
         kind: kindOf(body.kind),
         style: typeof body.style === "string" ? body.style : undefined,
         seed: Number.isFinite(Number(body.seed)) && body.seed !== undefined && body.seed !== "" ? Number(body.seed) : undefined,
-        count: Number(body.count) || 1
+        count: Number(body.count) || 1,
+        size: SHAPES.includes(body.size as (typeof SHAPES)[number]) ? (body.size as (typeof SHAPES)[number]) : undefined
       });
       res.json({ jobs });
     } catch (error) {

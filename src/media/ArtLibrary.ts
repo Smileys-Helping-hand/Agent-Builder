@@ -16,7 +16,7 @@ import fs from "fs";
 import path from "path";
 
 import { Logger } from "../utils/Logger.js";
-import { ArtStudio, artName, artWorkflow, type ArtKind } from "./ArtStudio.js";
+import { ArtStudio, artName, artWorkflow, type ArtKind, type PhotoSize } from "./ArtStudio.js";
 
 export interface ArtItem {
   id: string;
@@ -39,7 +39,7 @@ export interface ArtItem {
 export interface ArtJob {
   id: string;
   state: "queued" | "drawing" | "done" | "failed";
-  request: { name: string; subject: string; style: string; kind: ArtKind; seed: number; parent: string | null; edit: string | null; strength: number | null };
+  request: { name: string; subject: string; style: string; kind: ArtKind; seed: number; parent: string | null; edit: string | null; strength: number | null; size?: PhotoSize };
   /** Steps done of steps, while drawing. */
   progress: { value: number; max: number };
   /** The latest preview frame has come in (fetch it from the preview route). */
@@ -93,7 +93,9 @@ const run = (job: ArtJob) => {
       try {
         png = await ArtStudio.render(
           artWorkflow(
-            request.edit ? { name: request.name, ...editPrompt(request.subject, request.edit), kind: request.kind } : { name: request.name, subject: request.subject, kind: request.kind },
+            request.edit
+              ? { name: request.name, ...editPrompt(request.subject, request.edit), kind: request.kind, size: request.size }
+              : { name: request.name, subject: request.subject, kind: request.kind, size: request.size },
             request.style,
             request.seed,
             `agentbuilder/library-${artName(request.name)}`,
@@ -192,6 +194,8 @@ export interface DrawRequest {
   seed?: number;
   /** How many to draw (variations), at most 4. */
   count?: number;
+  /** An image's or a photo's shape. */
+  size?: PhotoSize;
 }
 
 export const ArtLibrary = {
@@ -228,6 +232,7 @@ export const ArtLibrary = {
           subject,
           style: (request.style ?? "").trim().slice(0, 300),
           kind: request.kind ?? "sprite",
+          ...(request.size && (request.kind === "image" || request.kind === "photo") ? { size: request.size } : {}),
           seed: base + i,
           parent: null,
           edit: null,
