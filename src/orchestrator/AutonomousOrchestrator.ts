@@ -763,7 +763,15 @@ export class AutonomousOrchestrator extends EventEmitter {
     if (!groups.length) return false;
 
     const print = fingerprint(failing.output);
-    const same = this.lastFailure?.fingerprint === print && verification.score <= this.lastFailure.score;
+    // Mostly the same errors, no better score: a model rewriting the code shuffles
+    // a few errors each time, and waiting for an identical set let it rewrite on.
+    const overlap = (a: string, b: string) => {
+      const x = new Set(a.split("\n"));
+      const y = new Set(b.split("\n"));
+      const shared = [...x].filter((k) => y.has(k)).length;
+      return shared / Math.max(1, Math.min(x.size, y.size));
+    };
+    const same = this.lastFailure !== null && overlap(this.lastFailure.fingerprint, print) >= 0.6 && verification.score <= this.lastFailure.score;
     this.lastFailure = { fingerprint: print, score: verification.score };
     const known = groups.some((group) => FixPlaybook.match(group.code, group.example).length > 0);
     const stuck = same && repairAttempt >= 2 && !this.doctored.has(print);
@@ -781,7 +789,10 @@ export class AutonomousOrchestrator extends EventEmitter {
       projectName: this.config.projectName,
       note: (title, text) => this.think(iterationNum, "decision", title, text),
       editFile: async (file, content, instruction, errors) => {
-        const reply = await ModelRouter.generate(
+        // A few lines are a mechanical fix: the fast model that fits the card does them in
+        // seconds; a slow one that does not fit ran past the time allowed. Whole files keep the build's model.
+        const fast = content.length < 6000 ? process.env.FAST_EDIT_MODEL ?? "qwen2.5-coder:7b" : undefined;
+        const ask = (model?: string) => ModelRouter.generate(
           `Fix this one file. Change only what the instruction asks; keep everything else exactly as it is.
 
 Instruction: ${instruction}
@@ -792,8 +803,10 @@ FILE: ${file}
 ${content}
 \`\`\`
 
-Reply with all of the code you were given, corrected, in one code block, nothing else.`
+Reply with all of the code you were given, corrected, in one code block, nothing else.`,
+          model ? { model } : {}
         );
+        const reply = await (fast ? ask(fast).catch(() => ask()) : ask());
         const block = /\`\`\`[a-z]*\n([\s\S]*?)\`\`\`/.exec(reply);
         return block ? block[1] : null;
       }

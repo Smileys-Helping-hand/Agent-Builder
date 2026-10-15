@@ -11,14 +11,34 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { api, type ArtItem, type ArtJob, type ArtKind, type ArtStatus, type Build, type MediaGenJob } from "@/lib/api";
+import { api, type ArtItem, type ArtJob, type ArtKind, type ArtShape, type ArtStatus, type Build, type MediaGenJob } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, useConnected, usePersistentState, useRemote, useToast } from "../ui";
 
 const KINDS: { id: ArtKind; label: string; hint: string }[] = [
+  { id: "image", label: "Image", hint: "Any picture, kept whole: an illustration, a poster, a scene, a portrait" },
+  { id: "photo", label: "Photo", hint: "A realistic photograph: for websites, products, people, places" },
   { id: "sprite", label: "Sprite", hint: "One object, background cut out: characters, buildings, items" },
   { id: "background", label: "Background", hint: "A wide scene, kept whole" },
   { id: "icon", label: "Icon", hint: "A small square symbol, cut out" },
   { id: "ui", label: "UI piece", hint: "A button, panel or badge, cut out" }
+];
+
+const SHAPES: { id: ArtShape; label: string }[] = [
+  { id: "square", label: "Square" },
+  { id: "wide", label: "Wide (landscape)" },
+  { id: "tall", label: "Tall (portrait)" }
+];
+
+/** Looks that suit a picture or a photo, offered first when one of those is chosen. */
+const IMAGE_LOOKS = [
+  "detailed digital illustration, rich colour, beautiful lighting",
+  "professional photography, natural light, shallow depth of field",
+  "cinematic, dramatic lighting, film still",
+  "watercolour painting, soft edges, paper texture",
+  "oil painting, visible brush strokes",
+  "minimalist poster design, bold shapes, limited palette",
+  "anime illustration, clean line art",
+  "3D render, soft studio lighting"
 ];
 
 const LOOKS = [
@@ -37,7 +57,9 @@ const STARTERS = [
   { label: "Car (top-down)", subject: "a red sports car seen from directly above, facing right", kind: "sprite" as ArtKind },
   { label: "Item", subject: "a glowing blue health potion in a round glass bottle", kind: "icon" as ArtKind },
   { label: "Background", subject: "a lush fantasy valley with a river and distant mountains", kind: "background" as ArtKind },
-  { label: "App icon", subject: "a rounded square app icon with a golden crown", kind: "icon" as ArtKind }
+  { label: "App icon", subject: "a rounded square app icon with a golden crown", kind: "icon" as ArtKind },
+  { label: "Illustration", subject: "a cosy coffee shop on a rainy evening, warm light in the windows", kind: "image" as ArtKind },
+  { label: "Product photo", subject: "a handmade ceramic mug on a wooden table, morning light", kind: "photo" as ArtKind }
 ];
 
 type Format = "png" | "jpg" | "webp" | "ico";
@@ -223,6 +245,8 @@ export default function Studio() {
   const [kind, setKind] = usePersistentState<ArtKind>("studio-kind", "sprite");
   const [style, setStyle] = usePersistentState("studio-style", LOOKS[0]);
   const [count, setCount] = usePersistentState("studio-count", 1);
+  const [shape, setShape] = usePersistentState<ArtShape>("studio-shape", "square");
+  const pictureKind = kind === "image" || kind === "photo";
   const [seed, setSeed] = useState("");
   const [live, setLive] = useState<ArtJob[]>([]);
   const [q, setQ] = useState("");
@@ -231,6 +255,35 @@ export default function Studio() {
   const [chosen, setChosen] = useState<string[]>([]);
   const [open, setOpen] = useState<ArtItem | null>(null);
   const [busy, setBusy] = useState(false);
+  const [wording, setWording] = useState<"enhance" | "idea" | null>(null);
+  const [before, setBefore] = useState<string | null>(null);
+
+  // Better words for the engine, and an idea when there is none (PromptCraft).
+  const enhance = async () => {
+    if (!subject.trim()) return toast("Write a few words first, then enhance them.");
+    setWording("enhance");
+    try {
+      const { subject: richer } = await api.artEnhance(subject, kind);
+      setBefore(subject);
+      setSubject(richer);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setWording(null);
+    }
+  };
+  const surprise = async () => {
+    setWording("idea");
+    try {
+      const { subject: idea } = await api.artIdea(kind);
+      setBefore(subject || null);
+      setSubject(idea);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setWording(null);
+    }
+  };
 
   // Jobs started elsewhere (Jarvis, another device) show up live too.
   useEffect(() => {
@@ -243,7 +296,7 @@ export default function Studio() {
     if (!subject.trim()) return toast("Say what to draw first.");
     setBusy(true);
     try {
-      const { jobs } = await api.artDraw({ subject, name: name || undefined, kind, style, count, seed: seed ? Number(seed) : undefined });
+      const { jobs } = await api.artDraw({ subject, name: name || undefined, kind, size: pictureKind ? shape : undefined, style, count, seed: seed ? Number(seed) : undefined });
       setLive((now) => [...jobs, ...now]);
       toast(jobs.length > 1 ? `Drawing ${jobs.length} variations…` : "Drawing…");
     } catch (error) {
@@ -300,10 +353,33 @@ export default function Studio() {
             <span>What to draw</span>
             <textarea rows={3} value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="a friendly dragon pet with green scales, full body" />
           </label>
+          <div className="btn-row" style={{ marginTop: -4, marginBottom: 10 }}>
+            <button className="btn small" disabled={wording !== null || !subject.trim()} onClick={() => void enhance()} title="Turn your words into a richer description that draws better">
+              {wording === "enhance" ? <Busy label="Enhancing…" /> : <>{Icon.sparkle} Enhance</>}
+            </button>
+            <button className="btn small ghost" disabled={wording !== null} onClick={() => void surprise()} title="An idea for this kind of picture">
+              {wording === "idea" ? <Busy label="Thinking…" /> : "🎲 Surprise me"}
+            </button>
+            {before !== null ? (
+              <button className="btn small ghost" onClick={() => { setSubject(before); setBefore(null); }} title="Back to what you wrote">
+                Undo
+              </button>
+            ) : null}
+          </div>
           <div className="studio-row">
             <label className="field">
               <span>Kind</span>
-              <select value={kind} onChange={(e) => setKind(e.target.value as ArtKind)}>
+              <select
+                value={kind}
+                onChange={(e) => {
+                  const next = e.target.value as ArtKind;
+                  setKind(next);
+                  // A game look on a photo (or a photo look on a sprite) is never what is wanted: switch with the kind.
+                  const picture = next === "image" || next === "photo";
+                  if (picture && LOOKS.includes(style)) setStyle(IMAGE_LOOKS[next === "photo" ? 1 : 0]);
+                  if (!picture && IMAGE_LOOKS.includes(style)) setStyle(LOOKS[0]);
+                }}
+              >
                 {KINDS.map((k) => (
                   <option key={k.id} value={k.id}>
                     {k.label}
@@ -311,6 +387,18 @@ export default function Studio() {
                 ))}
               </select>
             </label>
+            {pictureKind ? (
+              <label className="field">
+                <span>Shape</span>
+                <select value={shape} onChange={(e) => setShape(e.target.value as ArtShape)}>
+                  {SHAPES.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <label className="field">
               <span>Name (optional)</span>
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="dragon" />
@@ -334,7 +422,7 @@ export default function Studio() {
             <span>Look</span>
             <input value={style} onChange={(e) => setStyle(e.target.value)} list="studio-looks" />
             <datalist id="studio-looks">
-              {LOOKS.map((look) => (
+              {(pictureKind ? [...IMAGE_LOOKS, ...LOOKS] : [...LOOKS, ...IMAGE_LOOKS]).map((look) => (
                 <option key={look} value={look} />
               ))}
             </datalist>

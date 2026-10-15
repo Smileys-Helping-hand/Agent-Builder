@@ -28,18 +28,39 @@ import type { Express, Request, Response } from "express";
 
 import { ArtLibrary } from "../media/ArtLibrary.js";
 import { ArtStudio, type ArtKind } from "../media/ArtStudio.js";
+import { PromptCraft } from "../media/PromptCraft.js";
 import { MediaGen } from "../media/MediaGen.js";
 import { BuildService } from "../orchestrator/BuildService.js";
 import { signLink, verifyLink } from "../utils/SignedLinks.js";
 import { authenticateAgent } from "./agentAuth.js";
 
 const run = promisify(execFile);
-const KINDS: ArtKind[] = ["sprite", "background", "icon", "ui"];
+const KINDS: ArtKind[] = ["sprite", "background", "icon", "ui", "image", "photo"];
+const SHAPES = ["wide", "square", "tall"] as const;
 const kindOf = (value: unknown): ArtKind | undefined => (KINDS.includes(value as ArtKind) ? (value as ArtKind) : undefined);
 
 export const registerArtRoutes = (app: Express) => {
   app.get("/api/art/status", authenticateAgent("read"), async (_req: Request, res: Response) => {
     res.json({ engine: await ArtStudio.state(), mediagen: await MediaGen.status() });
+  });
+
+  // Better words from a few ("a dragon" → a picture), and an idea when there is none.
+  app.post("/api/art/enhance", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    try {
+      res.json({ subject: await PromptCraft.enhance(String(body.subject ?? ""), kindOf(body.kind) ?? "image") });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post("/api/art/idea", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    try {
+      res.json({ subject: await PromptCraft.surprise(kindOf(body.kind) ?? "image") });
+    } catch (error) {
+      res.status(503).json({ error: error instanceof Error ? error.message : String(error) });
+    }
   });
 
   app.post("/api/art/draw", authenticateAgent("execute"), (req: Request, res: Response) => {
@@ -51,7 +72,8 @@ export const registerArtRoutes = (app: Express) => {
         kind: kindOf(body.kind),
         style: typeof body.style === "string" ? body.style : undefined,
         seed: Number.isFinite(Number(body.seed)) && body.seed !== undefined && body.seed !== "" ? Number(body.seed) : undefined,
-        count: Number(body.count) || 1
+        count: Number(body.count) || 1,
+        size: SHAPES.includes(body.size as (typeof SHAPES)[number]) ? (body.size as (typeof SHAPES)[number]) : undefined
       });
       res.json({ jobs });
     } catch (error) {

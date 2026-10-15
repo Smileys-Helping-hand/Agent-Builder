@@ -87,7 +87,12 @@ export const startComfy = (): string | null => {
 
 let starting: Promise<boolean> | null = null;
 
-export type ArtKind = "sprite" | "background" | "icon" | "ui" | "photo";
+/**
+ * sprite, icon, ui: one object, cut out (game art). background: a wide scene.
+ * image: any picture, kept whole (an illustration, a poster, a scene, a
+ * portrait). photo: a realistic photograph.
+ */
+export type ArtKind = "sprite" | "background" | "icon" | "ui" | "image" | "photo";
 
 /** The shape of a photograph. */
 export type PhotoSize = "wide" | "square" | "tall";
@@ -100,7 +105,7 @@ export interface ArtRequest {
   kind: ArtKind;
   /** What to steer away from (an edit's overridden details: "a red roof"). */
   avoid?: string;
-  /** A photograph's shape (photos only). */
+  /** The shape of an image or a photograph: wide, square or tall. */
   size?: PhotoSize;
   /** Where a photograph goes in the project (photos only), e.g. "src/images/hero.webp". */
   file?: string;
@@ -128,7 +133,18 @@ const SIZES: Record<ArtKind, { width: number; height: number; out: number; cutou
   icon: { width: 1024, height: 1024, out: 192, cutout: true },
   ui: { width: 1024, height: 1024, out: 256, cutout: true },
   background: { width: 1344, height: 768, out: 1024, cutout: false },
+  image: { width: 1024, height: 1024, out: 1024, cutout: false },
   photo: { width: 1344, height: 768, out: 1344, cutout: false }
+};
+
+/** The size a picture is drawn at: its kind's, or for an image or a photo the shape asked for. */
+const sizeFor = (request: Pick<ArtRequest, "kind" | "size">) => {
+  const base = SIZES[request.kind];
+  if ((request.kind === "image" || request.kind === "photo") && request.size) {
+    const shape = PHOTO_SIZES[request.size] ?? PHOTO_SIZES.square;
+    return { width: shape.width, height: shape.height, out: Math.min(shape.width, 1344), cutout: false };
+  }
+  return base;
 };
 
 /** A name safe as a file and a manifest key. */
@@ -147,6 +163,13 @@ export const artPrompts = (request: ArtRequest, style: string): { positive: stri
     return {
       positive: `${request.subject}. ${style.trim() || "professional editorial photography, natural light, shallow depth of field, true-to-life colour"}. No text, no logos, no watermark.`,
       negative: `${avoid}text, watermark, logo, lowres, blurry, deformed, cartoon, illustration, oversaturated, extra fingers`
+    };
+  }
+  if (request.kind === "image") {
+    // Any picture: the person's words and look lead, nothing about games or cut-outs.
+    return {
+      positive: `${request.subject}, ${style.trim() || "detailed digital illustration, rich colour, beautiful lighting"}, high quality, highly detailed, well composed`,
+      negative: `${avoid}text, watermark, logo, signature, lowres, blurry, jpeg artifacts, deformed, bad anatomy, extra fingers, cropped, out of frame`
     };
   }
   if (request.kind === "background") {
@@ -170,7 +193,7 @@ export interface WorkflowOptions {
 }
 
 export const artWorkflow = (request: ArtRequest, style: string, seed: number, prefix: string, options: WorkflowOptions = {}): Record<string, unknown> => {
-  const size = SIZES[request.kind];
+  const size = sizeFor(request);
   const { positive, negative } = artPrompts(request, style);
   const nodes: Record<string, { class_type: string; inputs: Record<string, unknown> }> = {
     "1": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: CHECKPOINT() } },

@@ -644,7 +644,9 @@ export interface PipelineStatus {
   hold?: { until: string; reason: string | null } | null;
 }
 
-export type ArtKind = "sprite" | "background" | "icon" | "ui";
+export type ArtKind = "sprite" | "background" | "icon" | "ui" | "image" | "photo";
+/** The shape of an image or a photo. */
+export type ArtShape = "wide" | "square" | "tall";
 
 /** A picture in the Studio's library. */
 export interface ArtItem {
@@ -1400,7 +1402,9 @@ export const api = {
   library: (kind?: LibraryKind) => request<{ items: LibraryItem[]; counts: Record<LibraryKind, number> }>(`/api/jarvis/library${kind ? `?kind=${kind}` : ""}`),
   libraryRemove: (id: number) => request<{ ok: boolean }>(`/api/jarvis/library/${id}`, { method: "DELETE" }),
   artStatus: () => request<ArtStatus>("/api/art/status"),
-  artDraw: (input: { subject: string; name?: string; kind?: ArtKind; style?: string; seed?: number; count?: number }) =>
+  artEnhance: (subject: string, kind: ArtKind) => request<{ subject: string }>("/api/art/enhance", { method: "POST", body: JSON.stringify({ subject, kind }) }, 120000),
+  artIdea: (kind: ArtKind) => request<{ subject: string }>("/api/art/idea", { method: "POST", body: JSON.stringify({ kind }) }, 120000),
+  artDraw: (input: { subject: string; name?: string; kind?: ArtKind; size?: ArtShape; style?: string; seed?: number; count?: number }) =>
     request<{ jobs: ArtJob[] }>("/api/art/draw", { method: "POST", body: JSON.stringify(input) }),
   artEdit: (id: string, change: string, strength: number) =>
     request<{ job: ArtJob }>(`/api/art/${encodeURIComponent(id)}/edit`, { method: "POST", body: JSON.stringify({ change, strength }) }),

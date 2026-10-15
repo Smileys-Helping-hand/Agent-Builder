@@ -29,7 +29,8 @@ const result = await StuckDoctor.resolve({
   note: (title, text) => console.log(`\n== ${title}\n${text}`),
   projectName: "doctor trial",
   editFile: async (file, content, instruction, errors) => {
-    const reply = await ModelRouter.generate(`Fix this one file. Change only what the instruction asks; keep everything else exactly as it is.\n\nInstruction: ${instruction}\nThe error it must fix: ${errors}\n\nFILE: ${file}\n\`\`\`\n${content}\n\`\`\`\n\nReply with all of the code you were given, corrected, in one code block, nothing else.`);
+    const fast = content.length < 6000 ? process.env.FAST_EDIT_MODEL ?? "qwen2.5-coder:7b" : undefined;
+    const reply = await ModelRouter.generate(`Fix this one file. Change only what the instruction asks; keep everything else exactly as it is.\n\nInstruction: ${instruction}\nThe error it must fix: ${errors}\n\nFILE: ${file}\n\`\`\`\n${content}\n\`\`\`\n\nReply with all of the code you were given, corrected, in one code block, nothing else.`, fast ? { model: fast } : {});
     return /```[a-z]*\n([\s\S]*?)```/.exec(reply)?.[1] ?? null;
   }
 });

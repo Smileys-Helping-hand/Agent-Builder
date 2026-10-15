@@ -288,7 +288,9 @@ const apply = async (root: string, actions: FixAction[], ctx: DoctorContext, gro
 
 /* ─── editing a long file where its errors are ─── */
 
-const REGION_PAD = 20;
+// A few lines around each error: enough to see the statement, little enough for a
+// small model to send back quickly (a 60-line region took a 14B model 12 minutes).
+const REGION_PAD = 8;
 const WHOLE_FILE_LINES = 160;
 
 /**
@@ -306,8 +308,8 @@ export const errorRegions = (content: string, instruction: string): Array<{ star
       let start = Math.max(1, line - REGION_PAD);
       let end = Math.min(lines.length, line + REGION_PAD);
       // Out to a blank line or the file's edge, so a region holds whole statements.
-      while (start > 1 && lines[start - 2].trim() !== "" && line - start < REGION_PAD * 2) start--;
-      while (end < lines.length && lines[end - 1].trim() !== "" && end - line < REGION_PAD * 2) end++;
+      while (start > 1 && lines[start - 2].trim() !== "" && line - start < REGION_PAD + 6) start--;
+      while (end < lines.length && lines[end - 1].trim() !== "" && end - line < REGION_PAD + 6) end++;
       return { start, end };
     });
   const merged: Array<{ start: number; end: number }> = [];

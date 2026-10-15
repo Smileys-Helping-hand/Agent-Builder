@@ -355,6 +355,48 @@ export const searchWeb = async (query: string, limit: number): Promise<SearchRes
 };
 
 /**
+ * The results worth reading first. Providers answer in their own order and the
+ * engine used to read the first few, so a loose Wikipedia match beat a
+ * Stack Overflow answer to the exact question. Each result is scored by how
+ * many of the question's words its title and snippet carry (the title counts
+ * double), with a lift for the source that suits the question (Q&A and issues
+ * for code, reference and web pages otherwise), and only the best result from
+ * each site is kept, so a question is read from several places, not one.
+ */
+export const rankResults = (query: string, results: SearchResult[]): SearchResult[] => {
+  const terms = [...new Set(contentTokens(query))];
+  const code = isCodeQuestion(query);
+  const prior: Record<ProviderName, number> = code
+    ? { stackoverflow: 1.5, issues: 1.3, github: 1, web: 1, npm: 0.8, hackernews: 0.5, wikipedia: 0.4, arxiv: 0.3 }
+    : { web: 1.2, wikipedia: 1.1, arxiv: 1, hackernews: 0.8, github: 0.7, stackoverflow: 0.6, issues: 0.5, npm: 0.4 };
+  const coverage = (text: string) => {
+    const hay = text.toLowerCase();
+    return terms.length ? terms.filter((t) => hay.includes(t.length > 5 ? t.slice(0, -2) : t)).length / terms.length : 0;
+  };
+  const scored = results.map((result) => ({
+    result,
+    score: (coverage(result.title) * 2 + coverage(result.snippet)) * (prior[result.provider] ?? 1)
+  }));
+  scored.sort((a, b) => b.score - a.score);
+  const seen = new Set<string>();
+  const out: SearchResult[] = [];
+  for (const { result } of scored) {
+    let site = result.url;
+    try {
+      site = new URL(result.url).hostname.replace(/^www\./, "");
+    } catch {
+      /* keep the url */
+    }
+    // GitHub hosts everyone: count it by owner, not as one site.
+    if (site === "github.com") site = `github.com/${result.url.split("/")[3] ?? ""}`;
+    if (seen.has(site)) continue;
+    seen.add(site);
+    out.push(result);
+  }
+  return out;
+};
+
+/**
  * Query every provider in parallel. A provider that is down, rate-limited, or
  * blocking automated requests is reported in `errors` rather than failing the
  * search — the loop keeps working with whatever is reachable.
