@@ -763,7 +763,15 @@ export class AutonomousOrchestrator extends EventEmitter {
     if (!groups.length) return false;
 
     const print = fingerprint(failing.output);
-    const same = this.lastFailure?.fingerprint === print && verification.score <= this.lastFailure.score;
+    // Mostly the same errors, no better score: a model rewriting the code shuffles
+    // a few errors each time, and waiting for an identical set let it rewrite on.
+    const overlap = (a: string, b: string) => {
+      const x = new Set(a.split("\n"));
+      const y = new Set(b.split("\n"));
+      const shared = [...x].filter((k) => y.has(k)).length;
+      return shared / Math.max(1, Math.min(x.size, y.size));
+    };
+    const same = this.lastFailure !== null && overlap(this.lastFailure.fingerprint, print) >= 0.6 && verification.score <= this.lastFailure.score;
     this.lastFailure = { fingerprint: print, score: verification.score };
     const known = groups.some((group) => FixPlaybook.match(group.code, group.example).length > 0);
     const stuck = same && repairAttempt >= 2 && !this.doctored.has(print);
