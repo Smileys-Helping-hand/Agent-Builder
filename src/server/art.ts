@@ -48,7 +48,7 @@ export const registerArtRoutes = (app: Express) => {
   app.post("/api/art/enhance", authenticateAgent("execute"), async (req: Request, res: Response) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     try {
-      res.json({ subject: await PromptCraft.enhance(String(body.subject ?? ""), kindOf(body.kind) ?? "image") });
+      res.json(await PromptCraft.enhance(String(body.subject ?? ""), kindOf(body.kind) ?? "image"));
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
@@ -57,7 +57,7 @@ export const registerArtRoutes = (app: Express) => {
   app.post("/api/art/idea", authenticateAgent("execute"), async (req: Request, res: Response) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     try {
-      res.json({ subject: await PromptCraft.surprise(kindOf(body.kind) ?? "image") });
+      res.json(await PromptCraft.surprise(kindOf(body.kind) ?? "image"));
     } catch (error) {
       res.status(503).json({ error: error instanceof Error ? error.message : String(error) });
     }
