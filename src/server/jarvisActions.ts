@@ -120,8 +120,26 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
     area: "art",
     label: "Draw a picture: any image (illustration, poster, scene), a photo, or game art (a sprite cut out, an icon, a ui piece, a background)",
     scope: "execute",
-    params: { subject: "what it shows", "kind?": "image | photo | sprite | icon | ui | background", "size?": "wide | square | tall (image and photo)", "name?": "short name for it", "style?": "art style", "count?": "how many variations (1-4)", "seed?": "number, to repeat one" },
-    call: (p) => ["POST", "/api/art/draw", pick(p, "subject", "prompt", "kind", "size", "name", "style", "count", "seed")]
+    params: {
+      "subject?": "what it shows (leave it out with surprise)",
+      "kind?": "image | photo | sprite | icon | ui | background",
+      "size?": "wide | square | tall (image and photo)",
+      "enhance?": "true: richer words from a few before drawing",
+      "surprise?": "true: invent the idea (no subject)",
+      "name?": "short name for it",
+      "style?": "art style",
+      "count?": "how many variations (1-4)",
+      "seed?": "number, to repeat one"
+    },
+    call: (p) => ["POST", "/api/art/draw", pick(p, "subject", "prompt", "kind", "size", "enhance", "surprise", "name", "style", "count", "seed")]
+  },
+  {
+    name: "art.deliver",
+    area: "art",
+    label: "The finished pictures themselves (PNG, base64), from drawing jobs or library ids: a few at a time, the rest named in rest",
+    scope: "read",
+    params: { "jobs?": "[drawing job ids]", "ids?": "[picture ids]" },
+    call: (p) => ["POST", "/api/art/deliver", pick(p, "jobs", "ids")]
   },
   { name: "art.enhance", area: "art", label: "Turn a short picture idea into a rich description that draws better", scope: "execute", params: { subject: "the idea", "kind?": "image | photo | sprite | icon | ui | background" }, call: (p) => ["POST", "/api/art/enhance", pick(p, "subject", "kind")] },
   { name: "art.idea", area: "art", label: "Invent a picture idea for a kind of picture", scope: "execute", params: { "kind?": "image | photo | sprite | icon | ui | background" }, call: (p) => ["POST", "/api/art/idea", pick(p, "kind")] },
