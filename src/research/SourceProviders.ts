@@ -1,16 +1,18 @@
 /**
  * SourceProviders - keyless search and page reading for the research loop.
  *
- * Five providers with no API keys: Wikipedia, arXiv, Hacker News (Algolia),
- * GitHub repository search, and general web results via DuckDuckGo's HTML
- * endpoint. Every request is throttled per host, time-bounded, size-capped,
+ * Eight providers with no API keys: Wikipedia, arXiv, Hacker News (Algolia),
+ * GitHub repository search, general web results via DuckDuckGo's HTML
+ * endpoint, and three for code: Stack Overflow (answered questions, by the
+ * error's own words), GitHub issues (where a library's maintainers explain
+ * its errors) and the npm registry (what a package is, and its version). Every request is throttled per host, time-bounded, size-capped,
  * and restricted to public http(s) addresses — a loop that never stops must
  * not become something that hammers a site or reaches into the local network.
  */
 import crypto from "crypto";
 import { contentTokens } from "../knowledge/KnowledgeDb.js";
 
-export type ProviderName = "wikipedia" | "arxiv" | "hackernews" | "github" | "web";
+export type ProviderName = "wikipedia" | "arxiv" | "hackernews" | "github" | "web" | "stackoverflow" | "issues" | "npm";
 
 export interface SearchResult {
   url: string;
@@ -256,6 +258,79 @@ export const searchGitHub = async (keywords: string, limit: number): Promise<Sea
   }));
 };
 
+/**
+ * Stack Overflow, through the Stack Exchange API (no key: 300 requests a day
+ * per address, plenty for research and stuck builds). Answered questions only,
+ * best first; the excerpt is where the answer usually shows.
+ */
+/** Stack Overflow matches every word, so a long error finds nothing: its distinctive words, paths and quotes gone. */
+const soQuery = (text: string): string =>
+  text
+    .replace(/['"`<>()]/g, " ")
+    .replace(/\S*[\\/]\S*/g, " ")
+    .replace(/\b(error|the|a|an|on|of|to|is|in|type|does|not|exist|property|ts\d{4})\b/gi, " ")
+    .split(/\s+/)
+    .filter((word) => word.length > 1)
+    .slice(0, 6)
+    .join(" ");
+
+export const searchStackOverflow = async (query: string, limit: number): Promise<SearchResult[]> => {
+  if (!query.trim()) return [];
+  const url =
+    `https://api.stackexchange.com/2.3/search/excerpts?order=desc&sort=relevance&site=stackoverflow&pagesize=${Math.min(limit * 2, 20)}` +
+    `&q=${encodeURIComponent(soQuery(query))}`;
+  const response = await politeFetch(url, "application/json");
+  if (!response.ok) throw new Error(`Stack Overflow HTTP ${response.status}`);
+  const data = (await response.json()) as {
+    items?: Array<{ item_type: string; question_id: number; answer_id?: number; title: string; excerpt?: string; body?: string; score: number; is_answered?: boolean; has_accepted_answer?: boolean }>;
+  };
+  return (data.items ?? [])
+    .filter((item) => item.item_type === "answer" || item.is_answered || item.has_accepted_answer)
+    .slice(0, limit)
+    .map((item) => ({
+      provider: "stackoverflow" as const,
+      title: decodeEntities(stripTags(item.title)),
+      snippet: `${item.item_type === "answer" ? "Answer" : "Question"} (score ${item.score}): ${decodeEntities(stripTags(item.excerpt ?? item.body ?? ""))}`.slice(0, 600),
+      url: item.answer_id ? `https://stackoverflow.com/a/${item.answer_id}` : `https://stackoverflow.com/q/${item.question_id}`
+    }));
+};
+
+/** GitHub issues and discussions across public repositories: where a library's own maintainers explain its errors. */
+export const searchGitHubIssues = async (query: string, limit: number): Promise<SearchResult[]> => {
+  if (!query.trim()) return [];
+  const url = `https://api.github.com/search/issues?per_page=${limit}&q=${encodeURIComponent(`${query.slice(0, 200)} is:issue`)}`;
+  const response = await politeFetch(url, "application/vnd.github+json", githubHeaders());
+  if (!response.ok) throw new Error(`GitHub issues HTTP ${response.status}`);
+  const data = (await response.json()) as {
+    items?: Array<{ title: string; html_url: string; body: string | null; comments: number; state: string }>;
+  };
+  return (data.items ?? []).map((item) => ({
+    provider: "issues" as const,
+    title: item.title,
+    snippet: `${item.state}, ${item.comments} comments: ${(item.body ?? "").replace(/\s+/g, " ").slice(0, 400)}`,
+    url: item.html_url
+  }));
+};
+
+/** The npm registry: what a package is for and its current version (a fix that needs a package names one that exists). */
+export const searchNpm = async (keywords: string, limit: number): Promise<SearchResult[]> => {
+  if (!keywords.trim()) return [];
+  const url = `https://registry.npmjs.org/-/v1/search?size=${limit}&text=${encodeURIComponent(keywords.slice(0, 120))}`;
+  const response = await politeFetch(url, "application/json");
+  if (!response.ok) throw new Error(`npm HTTP ${response.status}`);
+  const data = (await response.json()) as { objects?: Array<{ package: { name: string; version: string; description?: string; links?: { npm?: string } } }> };
+  return (data.objects ?? []).map(({ package: pkg }) => ({
+    provider: "npm" as const,
+    title: `${pkg.name}@${pkg.version}`,
+    snippet: pkg.description ?? "",
+    url: pkg.links?.npm ?? `https://www.npmjs.com/package/${pkg.name}`
+  }));
+};
+
+/** A question about code (an error, an API, a library), for which the code providers are the right ones. */
+export const isCodeQuestion = (text: string): boolean =>
+  /\b(TS\d{4}|error|exception|typescript|javascript|react|vite|vitest|jest|npm|node|webpack|eslint|tsconfig|api|sdk|library|package|import|module|function|compile|build fails?|stack ?trace|undefined is not|cannot find)\b/i.test(text);
+
 export const searchWeb = async (query: string, limit: number): Promise<SearchResult[]> => {
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
   const response = await politeFetch(url, "text/html", { "User-Agent": "Mozilla/5.0 (compatible; AgentBuilderResearch/1.0)" });
@@ -297,7 +372,14 @@ export const searchAll = async (
     ["web", () => searchWeb(query, perProvider)],
     ["arxiv", () => searchArxiv(keywords, perProvider)],
     ["github", () => searchGitHub(keywords, perProvider)],
-    ["hackernews", () => searchHackerNews(query, perProvider)]
+    ["hackernews", () => searchHackerNews(query, perProvider)],
+    // A question about code also asks the places code questions are answered.
+    ...(isCodeQuestion(query)
+      ? ([
+          ["stackoverflow", () => searchStackOverflow(query, perProvider)],
+          ["issues", () => searchGitHubIssues(keywords || query, perProvider)]
+        ] as Array<[ProviderName, () => Promise<SearchResult[]>]>)
+      : [])
   ];
   const errors: Partial<Record<ProviderName, string>> = {};
   const now = Date.now();
