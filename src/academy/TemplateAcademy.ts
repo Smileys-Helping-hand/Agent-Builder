@@ -25,6 +25,7 @@ import path from "path";
 import { copyForBuild } from "../ecosystem/ProjectBuilds.js";
 import { contentTokens } from "../knowledge/KnowledgeDb.js";
 import { BuildService, buildEvents, type BuildRecord } from "../orchestrator/BuildService.js";
+import { sampleBusiness, starterFor as pickStarter } from "../orchestrator/SiteStarters.js";
 import { Catalog } from "../orders/Catalog.js";
 import { OrderStore } from "../orders/OrderStore.js";
 import { ModelRouter } from "../tools/ModelRouter.js";
@@ -127,33 +128,11 @@ const update = (id: string, change: (idea: AcademyIdea) => void): AcademyIdea | 
  * changed; started from the solar company's landing page it needed the whole
  * page rebuilt, and the build model went round in type errors for hours.
  * Name and category decide first, the brief only when they say nothing.
+ * (Shared with builds from a prompt: orchestrator/SiteStarters.ts.)
  */
-const STARTERS: Array<{ id: string; words: RegExp }> = [
-  { id: "booking", words: /\b(book|appointment|clinic|dental|dentist|doctor|physio|therap|salon|spa\b|barber|beauty|nail|vet|tutor|lesson|yoga|pilates|gym|fitness|trainer|consult)/i },
-  { id: "restaurant", words: /\b(restaurant|caf[eé]|coffee|bakery|bistro|food|menu|takeaway|pizza|bar\b|pub\b|catering|braai)/i },
-  { id: "ecommerce", words: /\b(shop|store|boutique|retail|products?\b|merch|cart\b)/i },
-  { id: "event", words: /\b(event|wedding|conference|festival|concert|party|ticket|invitation)/i },
-  { id: "portfolio", words: /\b(portfolio|photograph|designer|artist|architect|creative|freelanc)/i },
-  { id: "saas", words: /\b(saas|software|platform|startup|subscription|dashboard)/i },
-  { id: "blog", words: /\b(blog|magazine|news|journal|writer|publication|podcast)/i }
-];
-
 export function starterFor(idea: Pick<AcademyIdea, "name" | "category" | "brief">): string {
-  const named = `${idea.name} ${idea.category}`;
-  const pick = STARTERS.find((starter) => starter.words.test(named)) ?? STARTERS.find((starter) => starter.words.test(idea.brief));
-  const id = pick?.id ?? "landing";
-  return fs.existsSync(path.join(TEMPLATES(), id, "src", "content.ts")) ? id : "landing";
+  return pickStarter(idea);
 }
-
-/** The invented business a starter template is written for ("Studio Nova Hair"). */
-const sampleBusiness = (starter: string): string | null => {
-  try {
-    const content = fs.readFileSync(path.join(TEMPLATES(), starter, "src", "content.ts"), "utf8");
-    return content.match(/^\s+name:\s*"([^"]+)"/m)?.[1] ?? null;
-  } catch {
-    return null;
-  }
-};
 
 /** The brief a practice build is given. */
 export function practiceBrief(idea: AcademyIdea, starter = idea.starter ?? starterFor(idea)): string {
