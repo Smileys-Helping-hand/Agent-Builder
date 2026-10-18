@@ -165,7 +165,12 @@ export interface StartBuildOptions extends Partial<AutonomousConfig> {
   orderId?: string | null;
   continuedFrom?: string | null;
   starter?: StarterChoice;
+  /** The local model this build writes with (e.g. "qwen2.5-coder:7b"); unset: the builder's own, or SITE_BUILD_MODEL for a site from a template. */
+  model?: string;
 }
+
+/** An Ollama model name: "qwen2.5-coder:7b". */
+const MODEL_NAME = /^[\w.-]{1,60}(?::[\w.-]{1,40})?$/;
 
 const STARTERS_DIR = path.resolve(process.env.STARTERS_DIR ?? "templates/starters");
 
@@ -505,7 +510,8 @@ export const BuildService = {
     const buildId = status.buildId as string;
     // Carried through every await of this build, so the model router can say
     // which build its streaming answer belongs to; phase follows the stage.
-    const scope: BuildScope = { buildId, phase: "Getting ready", orderId: options.orderId ?? null };
+    const model = MODEL_NAME.test(options.model ?? "") ? options.model : site && MODEL_NAME.test(process.env.SITE_BUILD_MODEL ?? "") ? process.env.SITE_BUILD_MODEL : undefined;
+    const scope: BuildScope = { buildId, phase: "Getting ready", orderId: options.orderId ?? null, ...(model ? { model } : {}) };
 
     orchestrators.set(buildId, orchestrator);
     const record: BuildRecord = {
@@ -541,7 +547,7 @@ export const BuildService = {
           kind: "start",
           message: `${options.continuedFrom ? "Continuing" : "Started"} (${profile}, target quality ${config.qualityThreshold}, up to ${config.maxIterations} passes)${
             site ? `, from our ${site.starter} site template, tailored to the brief` : ""
-          }`
+          }${model ? `, written with ${model}` : ""}`
         }
       ]
     };

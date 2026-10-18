@@ -180,6 +180,8 @@ export const registerAutonomousRoutes = (app: Express) => {
         patience: clampNumber(body.patience, 1, 50),
         autoPackaging: body.autoPackaging === false ? false : undefined,
         starter: body.starter === "site" || body.starter === "web" || body.starter === "none" ? body.starter : "auto",
+        // The local model this build writes with; unset: the builder's own (BuildService checks the name).
+        model: typeof body.model === "string" ? body.model.trim() : undefined,
         // prompt / engine / template; anything else is the Settings choice.
         headStart: typeof body.headStart === "string" && (HEAD_STARTS as readonly string[]).includes(body.headStart) ? (body.headStart as HeadStart) : undefined,
         startedBy: (req as AgentRequest).actor ?? "unknown"
