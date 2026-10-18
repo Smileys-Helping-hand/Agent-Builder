@@ -84,7 +84,8 @@ const ollamaAgent = new Agent({ headersTimeout: 30 * 60_000, bodyTimeout: 30 * 6
 
 const generateWithOllama = async (prompt: string, model?: string): Promise<string> => {
   const baseUrl = process.env.OLLAMA_BASE_URL ?? process.env.OLLAMA_URL ?? "http://localhost:11434";
-  const targetModel = model ?? process.env.OLLAMA_MODEL ?? process.env.MODEL ?? "qwen2.5-coder:7b";
+  // A build can write with its own model (a site tailored from a template: SITE_BUILD_MODEL); a call that names one keeps it.
+  const targetModel = model ?? currentBuild()?.model ?? process.env.OLLAMA_MODEL ?? process.env.MODEL ?? "qwen2.5-coder:7b";
   // Ollama unloads a model from VRAM 5 minutes after its last use by default.
   // Reloading weights between every generate() call is the largest avoidable
   // cost in an iterate-verify-repair loop that calls the model every few

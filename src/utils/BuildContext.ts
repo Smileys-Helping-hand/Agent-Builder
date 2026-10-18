@@ -17,6 +17,8 @@ export interface BuildScope {
   phase?: string;
   /** Set for a customer order's build, so the model router can give orders their own model. */
   orderId?: string | null;
+  /** The local model this build writes with, when it is not the builder's own (OLLAMA_MODEL). */
+  model?: string;
 }
 
 export const buildScope = new AsyncLocalStorage<BuildScope>();
