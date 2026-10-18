@@ -130,6 +130,7 @@ export function siteBrief(description: string, starter: string, business: string
     "- The kit in src/lib (site.tsx, customize.ts, pro.tsx, hours.ts) kept as it is and used: Section, SmartForm, Header, Footer, WhatsAppButton, brandStyle",
     `- Nothing left from ${was ? `${was}, the sample business` : "the template"} this started as: its name, wording, prices and features that do not fit replaced or removed`,
     "- Forms validate what is typed and say what went wrong",
+    "- Tests as the template writes them: pages rendered to HTML with renderAt from src/lib/testing (no browser DOM, no @testing-library render or screen), imports from vitest",
     "- Works on phones first, and looks finished: no placeholder text, no lorem ipsum, no TODO",
     "",
     "Look and feel:",

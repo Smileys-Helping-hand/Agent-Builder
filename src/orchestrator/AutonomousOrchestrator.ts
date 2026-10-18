@@ -2,7 +2,7 @@ import { EventEmitter } from "events";
 import { CodeGuard } from "./CodeGuard.js";
 import { AutoFix } from "./AutoFix.js";
 import { TypeFixer } from "./TypeFixer.js";
-import { setAside, sharedStateHint } from "./DisputedTests.js";
+import { noDomHint, setAside, sharedStateHint } from "./DisputedTests.js";
 import { appSource, coverage, dropUnrelatedResearch, engineUse, mustShow, parseReview, relatedTo, reviewPrompt, stubs, unreachableScreens, unshownComponents, unshownItems } from "./Completeness.js";
 import { applyFacts, readFacts, applyRewording, fixDietTags, rewordPrompt, sampleFactsLeft, sampleWording, stripInventedContact } from "./Tailoring.js";
 import { ExemplarMemory, type Exemplar } from "../learning/ExemplarMemory.js";
@@ -973,7 +973,7 @@ error) and the specific change needed to fix it. Do not write code.`;
         ? `\n${this.adoptedEngine.join(", ")} is a tested engine: do not rewrite it. A function it lacks (saving, loading, a new rule) goes in a new module such as src/lib/storage.ts, imported from there.\n`
         : "") +
       this.stuckTestHint(failing.name) +
-      (failing.name === "test" ? sharedStateHint(this.workspace.root, failing.output) : "");
+      (failing.name === "test" ? sharedStateHint(this.workspace.root, failing.output) + noDomHint(this.workspace.root, failing.output) : "");
 
     // The brief without its research notes: a repair needs to know what the app
     // is for, not what the research engine read last week.

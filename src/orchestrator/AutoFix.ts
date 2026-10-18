@@ -1020,8 +1020,33 @@ export const AutoFix = {
     return notes;
   },
 
+  /**
+   * `import '@testing-library/jest-dom'` in a Vitest project: its plain entry
+   * extends a global `expect` that Vitest does not have, so the file dies with
+   * "ReferenceError: expect is not defined" before a single test runs. The
+   * model writes that line from Jest habit, and a Real Estate build spent
+   * eight passes moving it from one test file to the next. The /vitest entry
+   * is the same matchers, registered with Vitest's expect.
+   */
+  async fixJestDomImport(root: string): Promise<string[]> {
+    const pkg = await fs.readFile(path.join(root, "package.json"), "utf8").catch(() => "");
+    if (!/"vitest"\s*:/.test(pkg)) return [];
+    const notes: string[] = [];
+    const plain = /(import\s+|require\(\s*)(["'])@testing-library\/jest-dom(?:\/extend-expect)?\2/g;
+    for (const file of await listFiles(path.join(root, "src"))) {
+      if (!/\.(t|j)sx?$/.test(file)) continue;
+      const text = await fs.readFile(file, "utf8");
+      if (!plain.test(text)) continue;
+      plain.lastIndex = 0;
+      await fs.writeFile(file, text.replace(plain, (_whole, lead: string, quote: string) => `${lead}${quote}@testing-library/jest-dom/vitest${quote}`), "utf8");
+      notes.push(`${posix(path.relative(root, file))}: imported jest-dom's Jest entry (expect is not defined under Vitest); now its Vitest entry`);
+    }
+    return notes;
+  },
+
   async run(root: string): Promise<string[]> {
     const notes: string[] = [
+      ...(await AutoFix.fixJestDomImport(root)),
       ...(await AutoFix.fixKebabCaseKeys(root)),
       ...(await AutoFix.addEmotionPragma(root)),
       ...(await AutoFix.clearStorageBetweenTests(root)),

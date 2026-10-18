@@ -149,6 +149,7 @@ export function practiceBrief(idea: AcademyIdea, starter = idea.starter ?? start
     ...idea.mustHave.map((item) => `- ${item}`),
     "",
     "How to build it:",
+    "- Tests as the template writes them: pages rendered to HTML with renderAt from src/lib/testing (no browser DOM, no @testing-library render or screen), imports from vitest",
     "- Every word on the site in src/content.ts, describing an invented sample business, so a customer's own details can replace it later",
     "- Every item above visible on the page: in the section it belongs to, or as a feature, an FAQ answer or a line in the team list when no section fits",
     "- The kit in src/lib (site.tsx, customize.ts, pro.tsx, hours.ts) kept as it is and used: Section, SmartForm, Header, Footer, DemoBanner, WhatsAppButton, brandStyle",
