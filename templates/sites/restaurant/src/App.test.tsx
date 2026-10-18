@@ -4,16 +4,21 @@ import App from "./App";
 import { site } from "./content";
 import { formatMoney } from "./lib/site";
 import { esc, renderAt } from "./lib/testing";
-import { checkReservation, filterMenu, tableFromRoute } from "./menu";
+import { checkReservation, filterMenu, tableFromRoute, type ReservationRules } from "./menu";
 
-const rules = site.reservations;
+// The booking rules are tested on rules of their own, not the site's: a
+// bakery open every day, or closed on Thursdays, must not fail them.
+const rules: ReservationRules = { minParty: 1, maxParty: 10, times: ["12:00", "18:00"], closedDays: [1] };
 const now = new Date(2026, 2, 10, 9, 0); // a Tuesday morning
 
 describe("menu filter", () => {
   it("keeps only dishes that meet every chosen need, and drops empty sections", () => {
     const vegan = filterMenu(site.menu, ["vegan"]);
     expect(vegan.every((section) => section.dishes.every((dish) => dish.diet?.includes("vegan")))).toBe(true);
-    expect(vegan.some((section) => section.title === "To start")).toBe(false); // no vegan starter
+    // A section stays exactly when it has a vegan dish, whatever the menu is.
+    for (const section of site.menu) {
+      expect(vegan.some((kept) => kept.title === section.title)).toBe(section.dishes.some((dish) => dish.diet?.includes("vegan")));
+    }
   });
 
   it("returns the whole menu when nothing is chosen", () => {
