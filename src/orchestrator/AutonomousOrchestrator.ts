@@ -36,6 +36,8 @@ import { fingerprint, groupErrors, parseErrors } from "../repair/ErrorFingerprin
 export interface BuildIteration {
   iteration: number;
   timestamp: Date;
+  /** The commit this pass's code was at when it was scored: where a later build carries on from, if it was the best. */
+  commit?: string;
   qualityScore: number;
   objectiveScore: number;
   improvements: string[];
@@ -249,6 +251,11 @@ export class AutonomousOrchestrator extends EventEmitter {
       await this.planArt().catch((error: any) => Logger.warn("Could not plan the game's pictures", { error: error?.message }));
       // A project carried on keeps the engine it started from, and gets back what a pass took out of it.
       await this.protectEngine().catch((error: any) => Logger.warn("Could not check the engine", { error: error?.message }));
+      // What it starts from is the floor: no pass may leave the folder worse.
+      await this.measureStartingPoint().catch((error: any) => {
+        if (error instanceof GameModeOnError) throw error;
+        Logger.warn("Could not check the starting point", { error: error?.message });
+      });
 
       // Optimize for current hardware
       if (this.config.hardwareOptimization) {
@@ -709,6 +716,7 @@ export class AutonomousOrchestrator extends EventEmitter {
 
       // Ratchet: never let the workspace end an iteration worse than its best-known state.
       const headHash = await this.workspace.getHead();
+      iteration.commit = headHash;
       if (iteration.qualityScore > this.bestObjectiveScore) {
         this.bestObjectiveScore = iteration.qualityScore;
         this.bestCommitHash = headHash;
@@ -723,8 +731,10 @@ export class AutonomousOrchestrator extends EventEmitter {
         this.think(
           iterationNum,
           "decision",
-          `Kept pass ${this.bestIteration}'s code instead`,
-          `This pass scored ${iteration.qualityScore}, below the best so far (${this.bestObjectiveScore}), so the folder went back to pass ${this.bestIteration}. Nothing is ever left worse than its best.`
+          this.bestIteration === 0 ? "Kept the code it started from instead" : `Kept pass ${this.bestIteration}'s code instead`,
+          `This pass scored ${iteration.qualityScore}, below the best so far (${this.bestObjectiveScore}), so the folder went back to ${
+            this.bestIteration === 0 ? "the code it started from" : `pass ${this.bestIteration}`
+          }. Nothing is ever left worse than its best.`
         );
       }
 
@@ -1341,6 +1351,32 @@ ${lines}
   }
 
   /** A starter build whose App.tsx is still the starter's placeholder: nothing has been built yet. */
+/**
+   * A build that starts from code that already exists (carried on, a template,
+   * a customer's previous delivery) is checked once before pass 1, and that
+   * score is the best so far. Without it the ratchet started at nothing: a
+   * habit tracker carried on at 77 rewrote itself in pass 1 to 55 (typecheck)
+   * and that was kept as "the best". Now a pass that ends worse than the
+   * starting point puts the starting code back.
+   */
+  private async measureStartingPoint(): Promise<void> {
+    if (!this.config.workingDir || (this.isStarter() && this.starterStillPlaceholder())) return;
+    const head = (await this.workspace.commitCurrentState("Starting point, as it was")) ?? (await this.workspace.getHead());
+    if (!head) return;
+    const report = await this.verifyAndReport(0, "What it starts from");
+    if (report.score <= 0) return;
+    this.bestObjectiveScore = report.score;
+    this.bestCommitHash = head;
+    this.bestIteration = 0;
+    this.emit("starting-point", { score: report.score, passed: report.passed, commit: head });
+    this.think(
+      0,
+      "decision",
+      `Starts from ${report.score}`,
+      `The code it starts from scores ${report.score}${report.passed ? " and passes every check" : ""}. No pass is kept below that: one that ends worse puts this code back.`
+    );
+  }
+
   private starterStillPlaceholder(): boolean {
     if (!this.isStarter()) return false;
     try {
