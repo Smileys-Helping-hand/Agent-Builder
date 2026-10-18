@@ -14,6 +14,7 @@
  * was running when the builder stopped comes back as "interrupted", and can be
  * continued from where it got to.
  */
+import { execFileSync } from "child_process";
 import { EventEmitter } from "events";
 import fs from "fs";
 import path from "path";
@@ -48,6 +49,8 @@ export interface CheckSummary {
 export interface IterationSummary {
   iteration: number;
   at: string;
+  /** Its code's commit in the build folder. */
+  commit?: string;
   qualityScore: number;
   objectiveScore: number;
   status: string;
@@ -111,6 +114,8 @@ export interface BuildRecord {
   passed: boolean | null;
   /** Best score any pass reached. The workspace is always left at that pass. */
   bestScore: number;
+  /** What the code it started from scored (a build carried on, or a template): the floor no pass is kept below. */
+  startScore?: { score: number; passed: boolean; commit?: string } | null;
   /** Why it ended, in a sentence. */
   outcome: string | null;
   /** What the current pass is doing, while it runs. */
@@ -228,6 +233,7 @@ const summarise = (iteration: BuildIteration): IterationSummary => {
   return {
     iteration: iteration.iteration,
     at: new Date(iteration.timestamp).toISOString(),
+    ...(iteration.commit ? { commit: iteration.commit } : {}),
     qualityScore: iteration.qualityScore,
     objectiveScore: iteration.objectiveScore,
     status: iteration.status,
@@ -448,6 +454,40 @@ const STAGE_WORDS: Record<string, string> = {
   packaging: "Packaging it"
 };
 
+/**
+ * The best code a build (or the builds it carried on from) reached, with its
+ * commit in the folder: its best pass, or the code it started from when no
+ * pass beat that.
+ */
+export const bestCode = (record: BuildRecord, depth = 0): { commit: string; score: number } | null => {
+  const pass = bestPass(record);
+  const start = record.startScore?.commit ? { commit: record.startScore.commit, score: record.startScore.score } : null;
+  const own = pass?.commit && (!start || pass.qualityScore >= start.score) ? { commit: pass.commit, score: pass.qualityScore } : start;
+  const earlier = record.continuedFrom && depth < 8 ? history.get(record.continuedFrom) : undefined;
+  const before = earlier && earlier.outputDir === record.outputDir ? bestCode(earlier, depth + 1) : null;
+  if (own && (!before || own.score >= before.score)) return own;
+  return before ?? own;
+};
+
+/**
+ * Put a build folder back to a commit. Only a folder with its own repository:
+ * builds live inside the builder's checkout, and git run in a folder without
+ * one would act on the builder itself.
+ */
+export const resetFolder = (folder: string, commit: string): boolean => {
+  if (!/^[0-9a-f]{7,40}$/.test(commit) || !fs.existsSync(path.join(folder, ".git"))) return false;
+  try {
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: folder, encoding: "utf8", windowsHide: true }).trim();
+    if (head.startsWith(commit) || commit.startsWith(head)) return false;
+    execFileSync("git", ["cat-file", "-e", `${commit}^{commit}`], { cwd: folder, windowsHide: true });
+    execFileSync("git", ["reset", "--hard", commit], { cwd: folder, windowsHide: true });
+    execFileSync("git", ["clean", "-fd"], { cwd: folder, windowsHide: true });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 /** The pass the build is best at, which is where its workspace is left. */
 const bestPass = (record: BuildRecord): IterationSummary | undefined =>
   record.iterationDetail.reduce<IterationSummary | undefined>(
@@ -569,9 +609,14 @@ export const BuildService = {
         finishedAt: now(),
         iterations: Math.max(base.iterations, orchestrator.getStatus().currentIteration ?? 0),
         // The workspace is reset to the best pass, so that is the score of what is on disk.
-        qualityScore: best?.qualityScore ?? base.qualityScore,
-        bestScore: best?.qualityScore ?? base.bestScore,
-        passed: best ? best.passed : base.passed,
+        // The folder holds the best pass, or the code it started from when no pass beat that.
+        ...(base.startScore && base.startScore.score > (best?.qualityScore ?? -1)
+          ? { qualityScore: base.startScore.score, bestScore: base.startScore.score, passed: base.startScore.passed }
+          : {
+              qualityScore: best?.qualityScore ?? base.qualityScore,
+              bestScore: best?.qualityScore ?? base.bestScore,
+              passed: best ? best.passed : base.passed
+            }),
         guidance: orchestrator.listGuidance()
       };
       remember(updated);
@@ -581,6 +626,11 @@ export const BuildService = {
     orchestrator.on("started", () => {
       Logger.log("Build started", { buildId, projectName: config.projectName, startedBy: record.startedBy });
       buildEvents.emit("started", current());
+    });
+
+    orchestrator.on("starting-point", ({ score, passed, commit }: { score: number; passed: boolean; commit?: string }) => {
+      patch(buildId, { startScore: { score, passed, ...(commit ? { commit } : {}) }, bestScore: score });
+      log(buildId, "score", `Starts from ${score}${passed ? " (every check passes)" : ""}: no pass is kept below that`);
     });
 
     orchestrator.on("iteration-started", ({ iteration }: { iteration: number }) => {
@@ -721,6 +771,14 @@ export const BuildService = {
     if (this.isRunning(buildId)) throw new Error("That build is still running.");
     if (!previous.outputDir || !fs.existsSync(previous.outputDir)) {
       throw new Error("Its folder is gone, so there is nothing to carry on from. Start a new build instead.");
+    }
+
+    // Carry on from its best code, not from wherever it stopped: a restart in
+    // the middle of a pass left half-changed files, and the next build began
+    // from those instead of the 77 it had reached.
+    const best = bestCode(previous);
+    if (best && resetFolder(previous.outputDir, best.commit)) {
+      log(previous.buildId, "stage", `The folder was put back to its best code (score ${best.score}) before carrying on`);
     }
 
     const instruction = options.instruction?.trim();
