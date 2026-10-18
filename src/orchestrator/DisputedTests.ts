@@ -109,6 +109,25 @@ export const setAside = (root: string, output: string): { files: Record<string, 
 };
 
 /**
+ * Tests written for a browser in a project whose tests have none. Our site
+ * templates test pages as HTML (renderAt from src/lib/testing, Vitest in
+ * Node); a Real Estate build rewrote its App test with @testing-library's
+ * render and screen, and every case died with "document is not defined",
+ * pass after pass. Returns how this project's tests are written, or "".
+ */
+export const noDomHint = (root: string, output: string): string => {
+  if (!/\b(?:document|window) is not defined\b/.test(plain(output))) return "";
+  const testing = ["src/lib/testing.tsx", "src/lib/testing.ts"].find((file) => fs.existsSync(path.join(root, file)));
+  if (!testing || !/export\s+(?:const|function)\s+renderAt\b/.test(fs.readFileSync(path.join(root, testing), "utf8"))) return "";
+  return (
+    `\nThis project's tests run in Node, with no browser page (no document or window), so @testing-library's render and screen cannot work here. ` +
+    `Write page tests the way its other tests are written: import { esc, renderAt } from "./lib/testing" (the path from the test's own folder), ` +
+    `const html = renderAt(<App />) (or renderAt(<App />, "#/route") for another page), then expect(html).toContain(esc("text the page shows")). ` +
+    `Do not add jsdom or change the test environment.\n`
+  );
+};
+
+/**
  * Tests that fail because they share the app's data: a logic module that keeps
  * it in a top-level `let habits = []` hands every test the habits the tests
  * before it added ("expected 2 to be 1" on a duplicate check). The habit

@@ -49,9 +49,17 @@ export const candidates = (builds: BuildView[], version: string, state: HealStat
     const seen = latest.get(key);
     if (!seen || build.startedAt > seen.startedAt) latest.set(key, build);
   }
+  // A practice build is the Template Academy's: it carries on, starts fresh on
+  // a closer starter or parks an idea itself. Self-heal carried a Real Estate
+  // practice on in the folder it began from the solar landing page for eight
+  // passes (7½ hours) after the academy had moved it to the shop template.
+  const byId = new Map(builds.map((build) => [build.buildId, build]));
+  const practice = (build: BuildView | undefined, depth = 0): boolean =>
+    Boolean(build) && (/^academy:/.test(build!.startedBy ?? "") || (depth < 8 && practice(build!.continuedFrom ? byId.get(build!.continuedFrom) : undefined, depth + 1)));
   return Array.from(latest.values())
     .filter((build) => {
       if (build.orderId || build.live) return false;
+      if (practice(build)) return false;
       // A person's Stop is final; a retry that stepped aside for someone else's build is not.
       const stoppedForSomeone = build.state === "stopped" && build.startedBy === HEALER;
       if (build.state !== "completed" && build.state !== "error" && build.state !== "interrupted" && !stoppedForSomeone) return false;
