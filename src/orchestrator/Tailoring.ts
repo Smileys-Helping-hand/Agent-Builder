@@ -82,6 +82,20 @@ export const sampleFactsLeft = (original: string, now: string, facts: CustomerFa
 };
 
 /**
+ * The template's own sample items still on the site: its dishes, products,
+ * services or team members, by name. A bakery built from the restaurant
+ * template passed every check with "Calamari" on its menu. An item the brief
+ * itself names stays (a restaurant that does serve calamari).
+ */
+export const sampleItemsLeft = (original: string, now: string, brief: string): string[] => {
+  const names = (source: string) => new Set(Array.from(source.matchAll(/\bname\s*:\s*(["'`])([^"'`\n]{3,60})\1/g)).map((m) => m[2].trim()));
+  const business = /business\s*:\s*\{[\s\S]*?\bname\s*:\s*(["'`])([^"'`]+)\1/.exec(original)?.[2];
+  const asked = brief.toLowerCase();
+  const current = names(now);
+  return [...names(original)].filter((name) => name !== business && current.has(name) && !asked.includes(name.toLowerCase()));
+};
+
+/**
  * Contact details the customer never gave, emptied. A tailored RPG for a comic
  * shop came back with an email, a WhatsApp number and a street address the
  * model made up: on a live site a made-up number rings a stranger. A value

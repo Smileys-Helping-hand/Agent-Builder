@@ -4,7 +4,7 @@ import { AutoFix } from "./AutoFix.js";
 import { TypeFixer } from "./TypeFixer.js";
 import { noDomHint, setAside, sharedStateHint } from "./DisputedTests.js";
 import { appSource, coverage, dropUnrelatedResearch, engineUse, mustShow, parseReview, relatedTo, reviewPrompt, stubs, unreachableScreens, unshownComponents, unshownItems } from "./Completeness.js";
-import { applyFacts, readFacts, applyRewording, fixDietTags, rewordPrompt, sampleFactsLeft, sampleWording, stripInventedContact } from "./Tailoring.js";
+import { applyFacts, readFacts, applyRewording, fixDietTags, rewordPrompt, sampleFactsLeft, sampleItemsLeft, sampleWording, stripInventedContact } from "./Tailoring.js";
 import { ExemplarMemory, type Exemplar } from "../learning/ExemplarMemory.js";
 import { GameModeOnError } from "../utils/GameMode.js";
 import fs from "fs";
@@ -2338,6 +2338,12 @@ for it, make the app do it. Do one or the other completely; do not change both h
       // Next pass, the wording is replaced line by line (the shape cannot break that way).
       this.rewordNext = replaced < 0.3;
       reasons.push(...sampleFactsLeft(original, now, readFacts(this.config.description)));
+      const leftovers = sampleItemsLeft(original, now, this.config.description);
+      if (leftovers.length > 0) {
+        reasons.push(
+          `the template's sample ${leftovers.length === 1 ? "item is" : "items are"} still on the site: ${leftovers.slice(0, 8).map((name) => `"${name}"`).join(", ")}; replace ${leftovers.length === 1 ? "it" : "each"} with this business's own (or remove ${leftovers.length === 1 ? "it" : "them"})`
+        );
+      }
     }
     if (/\bdemo\s*:\s*true\b/.test(now)) reasons.push(`${file} still has demo: true (the "template preview" ribbon)`);
     // Placeholders are worse than the sample: a customer could never be handed "Customer's Phone".
