@@ -50,9 +50,12 @@ describe("available times", () => {
   });
 
   it("lists only open days, in order", () => {
-    const days = openDays(site.openingHours, 5, new Date(2026, 2, 8));
+    // Its own week (Tuesday to Saturday), not the site's: any business's hours must pass.
+    const week: DayHours[] = [2, 3, 4, 5, 6].map((day) => ({ day, open: "09:00", close: "17:00" }));
+    const days = openDays(week, 5, new Date(2026, 2, 8));
     expect(days).toHaveLength(5);
     expect(days[0]).toBe("2026-03-10"); // Sunday and Monday are closed
+    expect(days[4]).toBe("2026-03-14");
     expect(isoDate(new Date(2026, 2, 8))).toBe("2026-03-08");
   });
 });
