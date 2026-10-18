@@ -20,7 +20,10 @@ const TEMPLATES = () => path.resolve(process.env.TEMPLATES_DIR ?? "templates/sit
 
 /** Words that pick a starter, checked against the name first, then the brief. */
 const STARTERS: Array<{ id: string; words: RegExp }> = [
-  { id: "booking", words: /\b(book|appointment|clinic|dental|dentist|doctor|physio|therap|salon|spa\b|barber|beauty|nail|vet|tutor|lesson|yoga|pilates|gym|fitness|trainer|consult)/i },
+  // Listings with prices, filters and a detail each: a shop's catalogue is the closest page (its cart is what goes).
+  // Before this, a real estate agency started from the solar company's landing page and went round in type errors.
+  { id: "ecommerce", words: /\b(real[- ]?estate|propert(y|ies)|estate agen|realtor|rentals?\b|lettings?\b|listings?\b|car (dealer|sales)|dealership)/i },
+  { id: "booking", words: /\b(book|appointment|clinic|dental|dentist|doctor|physio|therap|salon|spa\b|barber|beauty|nail|vet|tutor|lesson|yoga|pilates|gym|fitness|trainer|consult|law\b|lawyer|attorney|legal|accountant|accounting|bookkeep|coach|counsel)/i },
   { id: "restaurant", words: /\b(restaurant|caf[eé]|coffee|bakery|bistro|food|menu|takeaway|pizza|bar\b|pub\b|catering|braai)/i },
   { id: "ecommerce", words: /\b(shop|store|boutique|retail|products?\b|merch|cart\b)/i },
   { id: "event", words: /\b(event|wedding|conference|festival|concert|party|ticket|invitation)/i },
@@ -83,9 +86,35 @@ const templateName = (starter: string): string => {
   }
 };
 
+/**
+ * What the words list for the site to show: "show our menu with prices,
+ * opening hours, a photo gallery and an order form" → four items. Only a list
+ * after a word that introduces one (show, with, include, need…), so a sentence
+ * that names no parts adds nothing. The build's completeness check grades
+ * each one (Completeness.unshownItems).
+ */
+export function askedItems(description: string): string[] {
+  const out: string[] = [];
+  const lead = /\b(?:show(?:s|ing)?|with|includ(?:e|es|ing)|ha(?:s|ve)|need(?:s)?|featur(?:e|es|ing)|plus|offer(?:s|ing)?)\b\s*:?\s*(.+)$/i;
+  for (const sentence of description.replace(/\r?\n/g, ". ").split(/[.!?]\s+/)) {
+    const tail = lead.exec(sentence)?.[1];
+    if (!tail || !/,|\band\b|&/.test(tail)) continue;
+    for (const part of tail.split(/,|;|\band\b|&/)) {
+      const item = part
+        .trim()
+        .replace(/^(?:also|then|a|an|the|our|my|some|their)\s+/i, "")
+        .replace(/[.:]+$/, "")
+        .trim();
+      if (item.length >= 3 && item.length <= 60 && !out.includes(item)) out.push(item);
+    }
+  }
+  return out.slice(0, 10);
+}
+
 /** The brief a website built from a template is given: the person's words first, then how to tailor it. */
 export function siteBrief(description: string, starter: string, business: string | null): string {
   const was = sampleBusiness(starter);
+  const items = askedItems(description);
   return [
     `The project is our "${templateName(starter)}" site template (a ${starter} site), which already works. Tailor it into the website asked for below. Do not start again.`,
     "",
@@ -93,7 +122,8 @@ export function siteBrief(description: string, starter: string, business: string
     "What was asked for, in their words:",
     description.trim(),
     "",
-    "It must have:",
+    ...(items.length ? ["The site must show:", ...items.map((item) => `- ${item}`), ""] : []),
+    "How to build it:",
     "- Everything asked for above, visible on the page: in the section it belongs to, or as a feature, an FAQ answer or a line in a list when no section fits",
     "- Every word on the site in src/content.ts, about this business; where the words above give details (names, items, prices, hours), those exact details",
     "- Never invent contact details: a phone, WhatsApp number, email or street address not given above is left out, not made up",

@@ -25,6 +25,7 @@ import path from "path";
 import { copyForBuild } from "../ecosystem/ProjectBuilds.js";
 import { contentTokens } from "../knowledge/KnowledgeDb.js";
 import { BuildService, buildEvents, type BuildRecord } from "../orchestrator/BuildService.js";
+import { unshownItems } from "../orchestrator/Completeness.js";
 import { sampleBusiness, starterFor as pickStarter } from "../orchestrator/SiteStarters.js";
 import { Catalog } from "../orders/Catalog.js";
 import { OrderStore } from "../orders/OrderStore.js";
@@ -143,8 +144,11 @@ export function practiceBrief(idea: AcademyIdea, starter = idea.starter ?? start
     "What it is for:",
     idea.brief,
     "",
-    "It must have:",
+    // Its own heading: the build's completeness check reads this list and grades it the way graduating does.
+    "The site must show:",
     ...idea.mustHave.map((item) => `- ${item}`),
+    "",
+    "How to build it:",
     "- Every word on the site in src/content.ts, describing an invented sample business, so a customer's own details can replace it later",
     "- Every item above visible on the page: in the section it belongs to, or as a feature, an FAQ answer or a line in the team list when no section fits",
     "- The kit in src/lib (site.tsx, customize.ts, pro.tsx, hours.ts) kept as it is and used: Section, SmartForm, Header, Footer, DemoBanner, WhatsAppButton, brandStyle",
@@ -189,17 +193,11 @@ export function contractProblems(
   if (!app.includes("DemoBanner")) problems.push("App.tsx does not show the template preview ribbon (DemoBanner)");
   // What the idea must have. A score of 100 says the code is sound, not that
   // the brief was met: the first dental practice to score 100 had no medical
-  // aids, dentists or emergency contact. Half of each item's words must be on
-  // the site (matched on their first five letters, so "prices" finds "price");
-  // two thirds failed "The dentists, with their qualifications" on a page that
-  // listed its dentists as "Dr. Jane Smith, DDS".
-  const site = `${content}\n${app}`.toLowerCase();
-  for (const item of idea.mustHave ?? []) {
-    const words = [...new Set(contentTokens(item))];
-    if (words.length === 0) continue;
-    const found = words.filter((word) => site.includes(word.slice(0, 5))).length;
-    if (found < Math.ceil(words.length / 2)) problems.push(`the site does not have: ${item}`);
-  }
+  // aids, dentists or emergency contact. Graded with the rule the build's own
+  // completeness check uses (Completeness.unshownItems), so a build cannot
+  // stop at 100 with items the academy then refuses: Law Firm did twice
+  // (Blog, Newsletters) and was parked.
+  for (const item of unshownItems(`${content}\n${app}`, idea.mustHave ?? [])) problems.push(`the site does not have: ${item}`);
   return problems;
 }
 
@@ -216,7 +214,10 @@ async function startAttempt(idea: AcademyIdea): Promise<BuildRecord | null> {
   // forgotten): then carrying on fails every tick for ever, so start afresh.
   const lastBuild = [...idea.attempts].reverse().find((attempt) => attempt.buildId)?.buildId;
   const lastKnown = lastBuild ? BuildService.view(lastBuild) !== null : false;
-  const fresh = !idea.workspace || !fs.existsSync(idea.workspace) || !lastKnown || (!lastStopped && sinceFresh >= CONTINUES_PER_FRESH);
+  // A closer starter than the one it began on (the starter words grew) is a fresh start: carrying on a
+  // real estate site rebuilt from the solar landing page kept it in type errors.
+  const betterStarter = Boolean(idea.starter) && idea.starter !== starterFor(idea);
+  const fresh = !idea.workspace || !fs.existsSync(idea.workspace) || !lastKnown || betterStarter || (!lastStopped && sinceFresh >= CONTINUES_PER_FRESH);
   let build: BuildRecord;
   if (fresh) {
     const starter = starterFor(idea);

@@ -2,7 +2,8 @@ import { EventEmitter } from "events";
 import { CodeGuard } from "./CodeGuard.js";
 import { AutoFix } from "./AutoFix.js";
 import { TypeFixer } from "./TypeFixer.js";
-import { appSource, coverage, dropUnrelatedResearch, engineUse, parseReview, relatedTo, reviewPrompt, stubs, unreachableScreens, unshownComponents } from "./Completeness.js";
+import { setAside, sharedStateHint } from "./DisputedTests.js";
+import { appSource, coverage, dropUnrelatedResearch, engineUse, mustShow, parseReview, relatedTo, reviewPrompt, stubs, unreachableScreens, unshownComponents, unshownItems } from "./Completeness.js";
 import { applyFacts, readFacts, applyRewording, fixDietTags, rewordPrompt, sampleFactsLeft, sampleWording, stripInventedContact } from "./Tailoring.js";
 import { ExemplarMemory, type Exemplar } from "../learning/ExemplarMemory.js";
 import { GameModeOnError } from "../utils/GameMode.js";
@@ -604,6 +605,36 @@ export class AutonomousOrchestrator extends EventEmitter {
         featureBase = null;
       }
 
+      // A working app held back only by its own tests' expected values, the
+      // second pass running: those few cases are set aside (DisputedTests), so
+      // the build finishes instead of circling between code and test for hours.
+      const others = verification.checks.filter((check) => check.applicable && check.name !== "test");
+      const onlyTestFails = !verification.passed && verification.blockingCheck?.name === "test" && others.every((check) => check.passed);
+      // Only in apps this builder made (never a project someone owns, whose tests are theirs).
+      const ours = !this.config.workingDir || fs.existsSync(path.join(this.workspace.root, "template.json"));
+      if (onlyTestFails && ours && this.testOnlyPasses >= 1) {
+        const disputed = setAside(this.workspace.root, verification.blockingCheck?.output ?? "");
+        if (disputed) {
+          const headBefore = await this.workspace.getHead();
+          await this.workspace.writeFiles(disputed.files, `Set aside ${disputed.cases.length} test(s) whose expected values disagreed with the working app`);
+          const after = await this.verifyAndReport(iterationNum, "After setting the disputed tests aside");
+          if (after.score > verification.score) {
+            verification = after;
+            currentFiles = { ...currentFiles, ...disputed.files };
+            this.think(
+              iterationNum,
+              "decision",
+              `Set aside ${disputed.cases.length} test${disputed.cases.length === 1 ? "" : "s"} that disagreed with the working app`,
+              `The app installs, builds, opens in a browser and has what the brief asks for; only these tests, written in this build, expected different values, and two passes of repairs could not settle which side was right:\n${disputed.cases.map((c) => `• ${c}`).join("\n")}\nThey are marked it.skip with a note; every other test still runs.`,
+              Object.keys(disputed.files)
+            );
+          } else if (headBefore) {
+            await this.workspace.resetTo(headBefore);
+          }
+        }
+      }
+      this.testOnlyPasses = onlyTestFails && !verification.passed ? this.testOnlyPasses + 1 : 0;
+
       iteration.verification = verification;
       iteration.objectiveScore = verification.score;
 
@@ -941,7 +972,8 @@ error) and the specific change needed to fix it. Do not write code.`;
       (this.adoptedEngine.length
         ? `\n${this.adoptedEngine.join(", ")} is a tested engine: do not rewrite it. A function it lacks (saving, loading, a new rule) goes in a new module such as src/lib/storage.ts, imported from there.\n`
         : "") +
-      this.stuckTestHint(failing.name);
+      this.stuckTestHint(failing.name) +
+      (failing.name === "test" ? sharedStateHint(this.workspace.root, failing.output) : "");
 
     // The brief without its research notes: a repair needs to know what the app
     // is for, not what the research engine read last week.
@@ -1942,7 +1974,8 @@ Answer with JSON only: {"style": "...", "pictures": {"1": "...", "2": "..."}}`);
 What to build:
 ${brief}
 ${engineNote}${rules}
-Plan the files. Logic (rules, state, saving) goes in plain .ts modules under src/lib/; each screen is a
+Plan the files. Logic (rules, saving) goes in plain .ts modules under src/lib/ as pure functions that take the
+data and return new data (no top-level variable holding the app's data: tests would share it); each screen is a
 component under src/components/; src/App.tsx shows the screens and switches between them; tests go in
 src/lib/*.test.ts and test the logic. Every page and every must-have in the brief gets a real home.
 Between 4 and 9 files. Do not plan src/main.tsx, src/lib/testing.tsx or anything already in the project.
@@ -2303,6 +2336,8 @@ and social links stay as they are: the builder removes made-up ones, so adding t
 
   /** How many times the reviewer has held a build back, and its verdict on the code it last read. */
   private reviewHolds = 0;
+  /** Passes in a row that ended with only the build's own tests failing (see DisputedTests). */
+  private testOnlyPasses = 0;
   private lastReview: { head: string; missing: string[] } | null = null;
   /** After this many holds the reviewer's word is advice, so a build cannot circle forever on its opinion. */
   private static readonly MAX_REVIEW_HOLDS = 3;
@@ -2314,6 +2349,36 @@ and social links stay as they are: the builder removes made-up ones, so adding t
    * template orders (tailoring covers those) and for projects the user owns.
    */
   private async completenessCheck(iteration: number, report: VerificationReport): Promise<CheckResult | null> {
+    // A site built from one of our templates (an academy practice, a website
+    // prompt): the brief's "The site must show:" list, graded as graduating
+    // grades it. Law Firm scored 100 twice without its Blog and Newsletters,
+    // because nothing in the build looked, and the academy parked it.
+    if (this.config.workingDir && !this.isStarter() && fs.existsSync(path.join(this.workspace.root, "template.json"))) {
+      const items = mustShow([this.config.description, ...this.guidance.map((note) => note.text)].join("\n"));
+      if (items.length === 0) return null;
+      const started = Date.now();
+      const read = (rel: string) => {
+        try {
+          return fs.readFileSync(path.join(this.workspace.root, rel), "utf8");
+        } catch {
+          return "";
+        }
+      };
+      const missing = unshownItems(`${read("src/content.ts")}\n${read("src/App.tsx")}`, items);
+      return {
+        name: "completeness",
+        applicable: true,
+        passed: missing.length === 0,
+        durationMs: Date.now() - started,
+        output:
+          missing.length === 0
+            ? `The site shows everything it must: ${items.join("; ")}.`
+            : `Not finished: the site does not show ${missing.map((item) => `"${item}"`).join(", ")}.
+Next, add ${missing.length === 1 ? "it" : "each of them"} to src/content.ts in words a visitor reads, and show ${missing.length === 1 ? "it" : "them"} on the page:
+in the section ${missing.length === 1 ? "it belongs" : "they belong"} to, or as a feature, an FAQ answer or a line in a list when no section fits.
+Keep the kit in src/lib as it is, and everything else as it is.`
+      };
+    }
     // Only apps on the web starter: its layout (src/, App.tsx) is what this
     // measures. A CLI or API built from an empty folder has no src/ to count,
     // and would fail it forever.

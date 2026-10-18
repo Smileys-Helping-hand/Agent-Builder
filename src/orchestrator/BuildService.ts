@@ -31,6 +31,7 @@ import {
 import { Logger } from "../utils/Logger.js";
 import type { AuditFinding } from "./SiteAudit.js";
 import { isWebsiteRequest, prepareSite } from "./SiteStarters.js";
+import { BuildGate, buildGateEvents, type BuildLane } from "../utils/BuildGate.js";
 import { buildActivity, buildScope, type BuildScope } from "../utils/BuildContext.js";
 
 export type BuildState = "running" | "paused" | "completed" | "stopped" | "error" | "interrupted";
@@ -413,9 +414,25 @@ const patch = (buildId: string, change: Partial<BuildRecord> | ((record: BuildRe
   return updated;
 };
 
+/**
+ * Background work: the Template Academy practising, and self-heal carrying one
+ * of its builds on. Everything else (a person, Jarvis, an order) is foreground.
+ */
+const laneOf = (startedBy: string | undefined, continuedFrom: string | null | undefined, depth = 0): BuildLane => {
+  if (/^academy:/.test(startedBy ?? "")) return "background";
+  const previous = continuedFrom ? history.get(continuedFrom) : undefined;
+  return previous && depth < 8 ? laneOf(previous.startedBy, previous.continuedFrom, depth + 1) : "foreground";
+};
+
 const log = (buildId: string, kind: BuildEventEntry["kind"], message: string): void => {
   patch(buildId, (record) => ({ events: [...record.events, { at: now(), kind, message }].slice(-EVENT_LIMIT) }));
 };
+
+// Said once when a build starts and stops being held at the gate, so its page says why it is quiet.
+buildGateEvents.on("waiting", ({ buildId, why }: { buildId: string; why: "paused" | "yielding" | null }) => {
+  if (why === "yielding") log(buildId, "stage", "Waiting: a build someone asked for has the graphics card; practice carries on after it");
+  else if (why === null && history.get(buildId)?.state === "running") log(buildId, "stage", "Has the graphics card again");
+});
 
 const STAGE_WORDS: Record<string, string> = {
   running: "Writing code",
@@ -534,6 +551,7 @@ export const BuildService = {
 
     const settle = (state: BuildState, extra: Partial<BuildRecord> = {}): BuildRecord => {
       writing.delete(buildId);
+      BuildGate.release(buildId);
       const base = current();
       const best = bestPass(base);
       const updated: BuildRecord = {
@@ -674,6 +692,8 @@ export const BuildService = {
     // the failure; this only covers a rejection that happens without one.
     // Inside the build's scope, so the model router can say which build its
     // streaming answer belongs to (see LiveWriting).
+    // Who gets the graphics card first: practice yields to anything someone asked for.
+    BuildGate.register(buildId, laneOf(options.startedBy, options.continuedFrom));
     buildScope.run(scope, () => orchestrator.start()).catch((error: unknown) => {
       if (current().state === "error") return;
       Logger.error("Build failed to run", { buildId, error: errorMessage(error) });
@@ -805,7 +825,12 @@ export const BuildService = {
     const orchestrator = orchestrators.get(buildId);
     if (!orchestrator) return false;
     orchestrator[action]();
-    if (action === "stop") orchestrators.delete(buildId);
+    // Held at its next model call, not only between passes (BuildGate).
+    if (action === "stop") {
+      BuildGate.release(buildId);
+      orchestrators.delete(buildId);
+    } else BuildGate.setPaused(buildId, action === "pause");
+    if (action !== "stop") patch(buildId, { stage: action === "pause" ? "paused" : "running", stageSince: now() });
     return true;
   },
 
