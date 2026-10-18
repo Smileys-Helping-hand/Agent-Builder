@@ -13,6 +13,8 @@
 import fs from "fs";
 import path from "path";
 
+import { contentTokens } from "../knowledge/KnowledgeDb.js";
+
 export interface Requirement {
   /** As the brief puts it: "Progression", "Save". */
   label: string;
@@ -371,4 +373,46 @@ export const parseReview = (reply: string): string[] | null => {
     }
   }
   return null;
+};
+
+// ── Sites built from a template ─────────────────────────────────────────────
+
+/** The heading a site's must-show list goes under (the Template Academy's must-haves, a website prompt's). */
+const MUST_SHOW = /^the site must show\s*:\s*$/i;
+
+/** The lines under "The site must show:", each one item as written. */
+export const mustShow = (brief: string): string[] => {
+  const out: string[] = [];
+  let inList = false;
+  for (const raw of brief.replace(/\r\n/g, "\n").split("\n")) {
+    const line = raw.trim();
+    if (MUST_SHOW.test(line)) {
+      inList = true;
+      continue;
+    }
+    if (!inList) continue;
+    if (!/^[-*•]\s+/.test(line)) {
+      if (line) inList = false;
+      continue;
+    }
+    const item = line.replace(/^[-*•]\s+/, "").trim();
+    if (item) out.push(item);
+  }
+  return out;
+};
+
+/**
+ * The items a site's words do not show. Half of each item's words must be in
+ * the text, matched on their first five letters (so "prices" finds "price"):
+ * two thirds failed "The dentists, with their qualifications" on a page that
+ * listed them as "Dr. Jane Smith, DDS". The Template Academy grades a graduate
+ * with this same rule, so a build that passes it is one the academy accepts.
+ */
+export const unshownItems = (siteText: string, items: string[]): string[] => {
+  const site = siteText.toLowerCase();
+  return items.filter((item) => {
+    const words = [...new Set(contentTokens(item))];
+    if (words.length === 0) return false;
+    return words.filter((word) => site.includes(word.slice(0, 5))).length < Math.ceil(words.length / 2);
+  });
 };

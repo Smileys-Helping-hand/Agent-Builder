@@ -25,6 +25,8 @@ import path from "path";
 import { copyForBuild } from "../ecosystem/ProjectBuilds.js";
 import { contentTokens } from "../knowledge/KnowledgeDb.js";
 import { BuildService, buildEvents, type BuildRecord } from "../orchestrator/BuildService.js";
+import { unshownItems } from "../orchestrator/Completeness.js";
+import { sampleBusiness, starterFor as pickStarter } from "../orchestrator/SiteStarters.js";
 import { Catalog } from "../orders/Catalog.js";
 import { OrderStore } from "../orders/OrderStore.js";
 import { ModelRouter } from "../tools/ModelRouter.js";
@@ -127,33 +129,11 @@ const update = (id: string, change: (idea: AcademyIdea) => void): AcademyIdea | 
  * changed; started from the solar company's landing page it needed the whole
  * page rebuilt, and the build model went round in type errors for hours.
  * Name and category decide first, the brief only when they say nothing.
+ * (Shared with builds from a prompt: orchestrator/SiteStarters.ts.)
  */
-const STARTERS: Array<{ id: string; words: RegExp }> = [
-  { id: "booking", words: /\b(book|appointment|clinic|dental|dentist|doctor|physio|therap|salon|spa\b|barber|beauty|nail|vet|tutor|lesson|yoga|pilates|gym|fitness|trainer|consult)/i },
-  { id: "restaurant", words: /\b(restaurant|caf[eé]|coffee|bakery|bistro|food|menu|takeaway|pizza|bar\b|pub\b|catering|braai)/i },
-  { id: "ecommerce", words: /\b(shop|store|boutique|retail|products?\b|merch|cart\b)/i },
-  { id: "event", words: /\b(event|wedding|conference|festival|concert|party|ticket|invitation)/i },
-  { id: "portfolio", words: /\b(portfolio|photograph|designer|artist|architect|creative|freelanc)/i },
-  { id: "saas", words: /\b(saas|software|platform|startup|subscription|dashboard)/i },
-  { id: "blog", words: /\b(blog|magazine|news|journal|writer|publication|podcast)/i }
-];
-
 export function starterFor(idea: Pick<AcademyIdea, "name" | "category" | "brief">): string {
-  const named = `${idea.name} ${idea.category}`;
-  const pick = STARTERS.find((starter) => starter.words.test(named)) ?? STARTERS.find((starter) => starter.words.test(idea.brief));
-  const id = pick?.id ?? "landing";
-  return fs.existsSync(path.join(TEMPLATES(), id, "src", "content.ts")) ? id : "landing";
+  return pickStarter(idea);
 }
-
-/** The invented business a starter template is written for ("Studio Nova Hair"). */
-const sampleBusiness = (starter: string): string | null => {
-  try {
-    const content = fs.readFileSync(path.join(TEMPLATES(), starter, "src", "content.ts"), "utf8");
-    return content.match(/^\s+name:\s*"([^"]+)"/m)?.[1] ?? null;
-  } catch {
-    return null;
-  }
-};
 
 /** The brief a practice build is given. */
 export function practiceBrief(idea: AcademyIdea, starter = idea.starter ?? starterFor(idea)): string {
@@ -164,8 +144,11 @@ export function practiceBrief(idea: AcademyIdea, starter = idea.starter ?? start
     "What it is for:",
     idea.brief,
     "",
-    "It must have:",
+    // Its own heading: the build's completeness check reads this list and grades it the way graduating does.
+    "The site must show:",
     ...idea.mustHave.map((item) => `- ${item}`),
+    "",
+    "How to build it:",
     "- Every word on the site in src/content.ts, describing an invented sample business, so a customer's own details can replace it later",
     "- Every item above visible on the page: in the section it belongs to, or as a feature, an FAQ answer or a line in the team list when no section fits",
     "- The kit in src/lib (site.tsx, customize.ts, pro.tsx, hours.ts) kept as it is and used: Section, SmartForm, Header, Footer, DemoBanner, WhatsAppButton, brandStyle",
@@ -210,17 +193,11 @@ export function contractProblems(
   if (!app.includes("DemoBanner")) problems.push("App.tsx does not show the template preview ribbon (DemoBanner)");
   // What the idea must have. A score of 100 says the code is sound, not that
   // the brief was met: the first dental practice to score 100 had no medical
-  // aids, dentists or emergency contact. Half of each item's words must be on
-  // the site (matched on their first five letters, so "prices" finds "price");
-  // two thirds failed "The dentists, with their qualifications" on a page that
-  // listed its dentists as "Dr. Jane Smith, DDS".
-  const site = `${content}\n${app}`.toLowerCase();
-  for (const item of idea.mustHave ?? []) {
-    const words = [...new Set(contentTokens(item))];
-    if (words.length === 0) continue;
-    const found = words.filter((word) => site.includes(word.slice(0, 5))).length;
-    if (found < Math.ceil(words.length / 2)) problems.push(`the site does not have: ${item}`);
-  }
+  // aids, dentists or emergency contact. Graded with the rule the build's own
+  // completeness check uses (Completeness.unshownItems), so a build cannot
+  // stop at 100 with items the academy then refuses: Law Firm did twice
+  // (Blog, Newsletters) and was parked.
+  for (const item of unshownItems(`${content}\n${app}`, idea.mustHave ?? [])) problems.push(`the site does not have: ${item}`);
   return problems;
 }
 
@@ -237,7 +214,10 @@ async function startAttempt(idea: AcademyIdea): Promise<BuildRecord | null> {
   // forgotten): then carrying on fails every tick for ever, so start afresh.
   const lastBuild = [...idea.attempts].reverse().find((attempt) => attempt.buildId)?.buildId;
   const lastKnown = lastBuild ? BuildService.view(lastBuild) !== null : false;
-  const fresh = !idea.workspace || !fs.existsSync(idea.workspace) || !lastKnown || (!lastStopped && sinceFresh >= CONTINUES_PER_FRESH);
+  // A closer starter than the one it began on (the starter words grew) is a fresh start: carrying on a
+  // real estate site rebuilt from the solar landing page kept it in type errors.
+  const betterStarter = Boolean(idea.starter) && idea.starter !== starterFor(idea);
+  const fresh = !idea.workspace || !fs.existsSync(idea.workspace) || !lastKnown || betterStarter || (!lastStopped && sinceFresh >= CONTINUES_PER_FRESH);
   let build: BuildRecord;
   if (fresh) {
     const starter = starterFor(idea);

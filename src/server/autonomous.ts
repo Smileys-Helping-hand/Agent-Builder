@@ -179,7 +179,7 @@ export const registerAutonomousRoutes = (app: Express) => {
         maxIterations: clampNumber(body.maxIterations, 1, 200),
         patience: clampNumber(body.patience, 1, 50),
         autoPackaging: body.autoPackaging === false ? false : undefined,
-        starter: body.starter === "web" || body.starter === "none" ? body.starter : "auto",
+        starter: body.starter === "site" || body.starter === "web" || body.starter === "none" ? body.starter : "auto",
         // prompt / engine / template; anything else is the Settings choice.
         headStart: typeof body.headStart === "string" && (HEAD_STARTS as readonly string[]).includes(body.headStart) ? (body.headStart as HeadStart) : undefined,
         startedBy: (req as AgentRequest).actor ?? "unknown"

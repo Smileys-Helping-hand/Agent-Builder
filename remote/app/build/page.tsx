@@ -28,7 +28,8 @@ const EXAMPLES = [
 
 /** Where a new build starts: see StarterChoice on the builder. */
 const STARTERS: Array<{ id: StarterChoice; label: string; hint: string }> = [
-  { id: "auto", label: "Auto", hint: "A working React app for anything that runs in a browser; an empty folder for Python, bots, servers and the like." },
+  { id: "auto", label: "Auto", hint: "A website starts as our closest finished site, tailored to your words; an app or game as a working React app; Python, bots and servers in an empty folder." },
+  { id: "site", label: "Site template", hint: "Always start from our closest finished website template and tailor it: the surest route to a polished, working site." },
   { id: "web", label: "Starter app", hint: "Always start from the working React + TypeScript app. Fastest route to something that builds and passes its checks." },
   { id: "none", label: "Empty folder", hint: "Let the model choose everything, from the language up. Slower, and more likely to need repairs." }
 ];

@@ -1,6 +1,7 @@
 import { Agent, fetch as undiciFetch } from "undici";
 import { OpenAIClient } from "./OpenAIClient.js";
 import { AnthropicClient } from "./AnthropicClient.js";
+import { BuildGate } from "../utils/BuildGate.js";
 import { gpuLock } from "../utils/GpuLock.js";
 import { ModelPerfLog } from "./ModelPerfLog.js";
 import { buildActivity, currentBuild } from "../utils/BuildContext.js";
@@ -241,6 +242,8 @@ export class ModelRouter {
     // Game mode: the GPU belongs to the person at the keyboard.
     if (isLocalProvider && GameMode.isOn()) throw new GameModeOnError();
 
+    // A paused build, or practice while someone's build runs, waits here (BuildGate).
+    if (isLocalProvider) await BuildGate.wait(currentBuild()?.buildId);
     const startedAt = Date.now();
     const response = isLocalProvider
       ? await ModelRouter.waitingOut(() => gpuLock.run(() => dispatch(provider, prompt, options.model)))

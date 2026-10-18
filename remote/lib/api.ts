@@ -402,7 +402,7 @@ export interface BridgeAction {
 }
 
 /** Where a new build starts: a working React app, an empty folder, or whichever fits. */
-export type StarterChoice = "auto" | "web" | "none";
+export type StarterChoice = "auto" | "site" | "web" | "none";
 
 /** What the model is writing right now, streamed from the builder. */
 export interface LiveWriting {
