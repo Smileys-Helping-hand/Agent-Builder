@@ -21,6 +21,7 @@ import os from "os";
 import path from "path";
 
 import { GameMode } from "../utils/GameMode.js";
+import { gpuLock } from "../utils/GpuLock.js";
 import { Logger } from "../utils/Logger.js";
 
 /** Where the image engine's app is installed (Comfy Desktop runs ComfyUI on :8188), for starting it. */
@@ -383,10 +384,21 @@ export const ArtStudio = {
     }
   },
 
-  /** Free the graphics card for drawing: the coding model goes (it reloads on its next call). */
+  /**
+   * Free the graphics card for drawing: every language model loaded goes (each
+   * reloads on its next call). Only OLLAMA_MODEL used to go, so a build writing
+   * with the 7B (or a repair, or research) kept 5 GB of the 8 GB card while
+   * FLUX drew, and a site's photos took ~45 minutes each instead of under one.
+   */
   async clearCardForArt(): Promise<void> {
-    const model = process.env.OLLAMA_MODEL ?? "qwen2.5-coder:7b";
-    await fetch(`${OLLAMA()}/api/generate`, { method: "POST", body: JSON.stringify({ model, keep_alive: 0 }), signal: AbortSignal.timeout(30_000) }).catch(() => undefined);
+    const loaded = await fetch(`${OLLAMA()}/api/ps`, { signal: AbortSignal.timeout(10_000) })
+      .then((res) => res.json() as Promise<{ models?: Array<{ name?: string; model?: string }> }>)
+      .then((body) => (body.models ?? []).map((m) => m.model ?? m.name).filter((name): name is string => Boolean(name)))
+      .catch(() => [] as string[]);
+    const models = loaded.length > 0 ? loaded : [process.env.OLLAMA_MODEL ?? "qwen2.5-coder:7b"];
+    for (const model of models) {
+      await fetch(`${OLLAMA()}/api/generate`, { method: "POST", body: JSON.stringify({ model, keep_alive: 0 }), signal: AbortSignal.timeout(30_000) }).catch(() => undefined);
+    }
   },
 
   /** Hand the card back: ComfyUI unloads its models. */
@@ -416,6 +428,16 @@ export const ArtStudio = {
    * for a live view; without the socket it still finishes, just silently.
    */
   async render(workflow: Record<string, unknown>, live: { onProgress?: (value: number, max: number) => void; onPreview?: (jpeg: Buffer) => void } = {}): Promise<Buffer> {
+    // The card is held for the whole picture: a model call in between (a repair,
+    // research, the next build step) waits instead of loading a model beside it.
+    return gpuLock.run(async () => {
+      await ArtStudio.clearCardForArt();
+      return ArtStudio.renderOnCard(workflow, live);
+    });
+  },
+
+  /** One drawing, with the card already clear (render holds it). */
+  async renderOnCard(workflow: Record<string, unknown>, live: { onProgress?: (value: number, max: number) => void; onPreview?: (jpeg: Buffer) => void } = {}): Promise<Buffer> {
     const clientId = `agentbuilder-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
     let socket: WebSocket | null = null;
     let promptId: string | null = null;
