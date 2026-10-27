@@ -9,6 +9,7 @@
  * works — Thompson sampling, so it keeps exploring while it is unsure. Every
  * rewarded answer is kept as training data for fine-tuning the model itself.
  */
+import Link from "next/link";
 import { useState } from "react";
 
 import { api, type KnowledgeSearchResult } from "@/lib/api";
@@ -120,7 +121,8 @@ export default function Training() {
         <div className="section-title">How the agents are learning</div>
         <p className="muted small" style={{ marginTop: 0 }}>
           Each agent tries a few ways of working and is rewarded by what actually happened. It keeps trying the others while it is unsure,
-          and settles on what works. Rate answers and lessons to teach them faster.
+          and settles on what works. Rate answers and lessons to teach them faster. Agent Builder's own level, new abilities and practice
+          are on its <Link href="/agent">agent page</Link>.
         </p>
         {!stats.data ? (
           stats.error ? <Banner kind="error">{stats.error}</Banner> : <Skeleton rows={3} />

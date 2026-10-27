@@ -5,6 +5,7 @@
  * with it, its training ground, and continuous improvement with approvals.
  * Everything shown is counted from what it has really done.
  */
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { api, type AgentMessage, type ChatPending, type ImproveCandidate } from "@/lib/api";
@@ -109,6 +110,9 @@ function Growth({ profile }: { profile: ReturnType<typeof useRemote<Awaited<Retu
           </div>
         ))}
       </div>
+      <p className="muted small">
+        Every way of working it is learning, with the training data for fine-tuning the model itself: <Link href="/training">Training</Link>
+      </p>
 
       {growth.length ? (
         <>
