@@ -337,6 +337,7 @@ if (Test-Endpoint "http://127.0.0.1:4000/api/update/check") {
     Write-Step "Starting the builder..."
     Set-LauncherStep "Starting the builder"
     $started.api = Start-Api
+    $apiStartedAt = Get-Date
     if (Wait-For "http://127.0.0.1:4000/api/update/check" 90 "The builder") {
         Write-Good "Builder ready on http://127.0.0.1:4000"
         if ($restartRemoteDeskPath -and (Test-Path $restartRemoteDeskPath)) {
@@ -549,6 +550,12 @@ $ollamaExe = @(
 $backoff = @(5, 15, 30, 60, 120, 300)
 $apiFailures = 0
 $apiMisses = 0
+# A builder still booting is not a hung one: on a disk another program is
+# hammering, loading it can take minutes, and restarting it then only starts
+# the load again (it looped like that). So one this launcher started gets up to
+# 10 minutes to answer for the first time while its process is alive.
+$apiEverUp = $false
+if (-not $apiStartedAt) { $apiStartedAt = Get-Date }
 $ollamaMisses = 0
 $jarvisMisses = 0
 $healthySince = Get-Date
@@ -568,9 +575,10 @@ try {
             # slows it; restarting it then only adds a boot to the load).
             $apiAlive = $started.api -and (Get-Process -Id $started.api -ErrorAction SilentlyContinue)
             $apiAnswers = Test-Endpoint "http://127.0.0.1:4000/api/update/check" 5
-            if ($apiAnswers) { $apiMisses = 0 } else { $apiMisses++ }
+            if ($apiAnswers) { $apiMisses = 0; $apiEverUp = $true } else { $apiMisses++ }
+            $apiBooting = $apiAlive -and -not $apiEverUp -and ((Get-Date) - $apiStartedAt).TotalMinutes -lt 10
 
-            if (-not $apiAnswers -and (-not $apiAlive -or $apiMisses -ge 8)) {
+            if (-not $apiAnswers -and -not $apiBooting -and (-not $apiAlive -or $apiMisses -ge 8)) {
                 $wait = $backoff[[Math]::Min($apiFailures, $backoff.Count - 1)]
                 $why = if ($apiAlive) { "stopped answering" } else { "exited" }
                 Write-LauncherLog "Builder $why; restarting in ${wait}s (restart $($apiFailures + 1))"
@@ -579,6 +587,8 @@ try {
                 Stop-ApiProcesses
                 Start-Sleep -Seconds $wait
                 $started.api = Start-Api
+                $apiStartedAt = Get-Date
+                $apiEverUp = $false
                 $apiFailures++
                 $apiMisses = 0
                 $healthySince = Get-Date
