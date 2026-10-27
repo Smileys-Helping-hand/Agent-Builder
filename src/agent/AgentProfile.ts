@@ -229,7 +229,7 @@ export const AgentProfile = {
   },
 
   /** What it is busy with right now, in one line and in parts. */
-  doing(): { line: string; busy: boolean; parts: string[] } {
+  doing(): { line: string; busy: boolean; parts: string[]; waiting: number } {
     const parts: string[] = [];
     for (const build of BuildService.active().slice(0, 3)) parts.push(`Building ${build.projectName}`);
     for (const name of extra.continuousRunning()) parts.push(`Improving ${name} continuously`);
@@ -241,7 +241,7 @@ export const AgentProfile = {
     if (waiting) parts.push(`${waiting} improvement${waiting === 1 ? "" : "s"} waiting for your approval`);
     const researching = ResearchStore.listTopics().filter((t) => t.status === "running").length;
     if (researching) parts.push(`Researching ${researching} topic${researching === 1 ? "" : "s"}`);
-    return { line: parts[0] ?? "Ready for work", busy: parts.length > 0 && !parts[0].startsWith("Researching") && !/waiting for your approval/.test(parts[0]), parts };
+    return { line: parts[0] ?? "Ready for work", busy: parts.length > 0 && !parts[0].startsWith("Researching") && !/waiting for your approval/.test(parts[0]), parts, waiting };
   },
 
   /** Everything at once: what the app's agent page and Jarvis's town show. */
