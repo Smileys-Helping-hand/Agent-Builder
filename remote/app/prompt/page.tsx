@@ -44,7 +44,20 @@ interface Draft {
   avoid: string;
   notes: string;
   profile: BuildProfile;
+  /** The database platform they plan to use ("" = no saved data); the build gets a data layer and a keys panel for it. */
+  database?: string;
 }
+
+/** Where the app keeps its data: the platforms DbKit sets a build up for. */
+const DATABASES: Array<{ id: string; label: string; hint: string }> = [
+  { id: "", label: "Nothing to save", hint: "" },
+  { id: "local", label: "Decide later", hint: "Saves in the browser now; connect any database later from the app's own panel." },
+  { id: "supabase", label: "Supabase", hint: "Postgres with sign-in, free to start. The best all-round choice." },
+  { id: "firebase", label: "Firebase", hint: "Google's database with sign-in." },
+  { id: "pocketbase", label: "PocketBase", hint: "One small file you run yourself — free forever." },
+  { id: "appwrite", label: "Appwrite", hint: "Open-source backend (data only)." },
+  { id: "rest", label: "My own API", hint: "Your own server: the safe way to use MySQL, SQL Server or MongoDB." }
+];
 
 const EMPTY: Draft = {
   name: "",
@@ -157,7 +170,13 @@ export default function PromptBuilder() {
   const build = async () => {
     setBusy(true);
     try {
-      const { buildId } = await api.startBuild({ projectName: draft.name.trim(), description: prompt, profile: draft.profile, starter: "auto" });
+      const { buildId } = await api.startBuild({
+        projectName: draft.name.trim(),
+        description: prompt,
+        profile: draft.profile,
+        starter: "auto",
+        ...(draft.database ? { database: draft.database } : {})
+      });
       setStarted((current) => [buildId, ...current.filter((id) => id !== buildId)].slice(0, 8));
       toast("Building. Follow it below or on the Build tab.", "ok");
       await activity.refresh();
@@ -270,6 +289,20 @@ export default function PromptBuilder() {
                 </button>
               ))}
             </div>
+            <small className="pb-hint">Where it saves data</small>
+            <div className="chips">
+              {DATABASES.map((d) => (
+                <button key={d.id || "none"} className={`chip ${(draft.database ?? "") === d.id ? "accent" : ""}`} onClick={() => set("database", d.id)} title={d.hint}>
+                  {d.label}
+                </button>
+              ))}
+            </div>
+            {draft.database ? (
+              <small className="pb-hint">
+                {DATABASES.find((d) => d.id === draft.database)?.hint} The app comes with its data code ready and a simple panel to paste your keys — Agent
+                Builder never holds your data.
+              </small>
+            ) : null}
             <small className="pb-hint">Quality bar</small>
             <div className="chips">
               {QUALITY.map((s) => (

@@ -507,6 +507,95 @@ export interface ApplyResult {
 
 export type TemplateKind = "website" | "app" | "template";
 
+export interface GameVersionBranch {
+  gameId: string;
+  name: string;
+  engine: "web" | "unity";
+  liveVersion: string;
+  stagedVersion: string | null;
+  /** Last judged checkup / 10; null until one has run. */
+  funRating: number | null;
+  liveOutputDir: string;
+  stagedOutputDir: string | null;
+  previewImage?: string;
+  history: Array<{
+    version: string;
+    date: string;
+    summary: string;
+    score: number | null;
+  }>;
+}
+
+export interface UnityLevelJob {
+  id: string;
+  prompt: string;
+  target: "none" | "windows" | "webgl";
+  status: "planning" | "creating-project" | "blender" | "unity" | "done" | "failed";
+  startedAt: string;
+  finishedAt?: string;
+  plan?: { name: string; title: string; story: string; biome: string; timeOfDay: string; plannedBy: "model" | "rules"; assets: Array<{ id: string; kind: string }> };
+  project: string;
+  scene?: string;
+  previews: string[];
+  player?: string;
+  blender: "built" | "skipped" | "failed";
+  steps: string[];
+  error?: string;
+}
+
+export interface UnityStudioStatus {
+  unity: { installed: boolean; exe: string | null; version: string | null; webgl: boolean; template: string | null };
+  blender: { installed: boolean; path: string | null };
+  project: string;
+  projectExists: boolean;
+  projectOpenInEditor: boolean;
+  kitPresent: boolean;
+  recipes: string[];
+}
+
+/** An image on the builder, fetched with the key, as an object URL for <img src>. */
+export const machineImage = async (pathOnMachine: string): Promise<string> => {
+  const connection = loadConnection();
+  if (!connection) throw new ApiError("Not connected to a machine yet.", 0);
+  const response = await fetch(`${connection.address}${pathOnMachine}`, {
+    headers: { "x-agent-key": connection.key },
+    signal: AbortSignal.timeout(45000)
+  });
+  if (!response.ok) throw new ApiError(`Image failed (${response.status})`, response.status);
+  return URL.createObjectURL(await response.blob());
+};
+
+export interface GameCheckupScorecard {
+  gameName: string;
+  overallScore: number;
+  assessedBy: "model" | "heuristic";
+  note?: string;
+  storyAndPlot: {
+    score: number;
+    loreFound: boolean;
+    suggestions: string[];
+  };
+  gameplayAndMechanics: {
+    score: number;
+    varietyRating: string;
+    powerupCount: number;
+    bossVariety: string;
+    suggestions: string[];
+  };
+  visualAndAudio: {
+    score: number;
+    has3D: boolean;
+    hasVFX: boolean;
+    hasProceduralAudio: boolean;
+    suggestions: string[];
+  };
+  nextEvolutionPlan: {
+    title: string;
+    description: string;
+    keyUpgrades: string[];
+  };
+}
+
 export interface Template {
   id: string;
   name: string;
@@ -826,6 +915,135 @@ export interface TopicFinding {
   supportCount: number;
   status: "open" | "corroborated" | "contested";
   createdAt: string;
+  /** What kind of evidence its source is: academic, reference, news, community, speculative or fiction. */
+  evidence?: Evidence;
+}
+
+export type EvidenceTier = "academic" | "reference" | "news" | "community" | "speculative" | "fiction";
+export interface Evidence {
+  tier: EvidenceTier;
+  label: string;
+  /** Whether it may be stated as fact about the real world. */
+  factual: boolean;
+}
+
+export interface DbPlatform {
+  id: string;
+  name: string;
+  pitch: string;
+  auth: boolean;
+  fields: Array<{ key: string; env: string; label: string; optional?: boolean }>;
+}
+
+/** A build's database: the platform and which keys are saved (never their values). */
+export interface BuildDbState {
+  installed: boolean;
+  platform: string | null;
+  set: string[];
+  missing: string[];
+}
+
+export interface RlPolicyStats {
+  id: string;
+  label: string;
+  agent: string;
+  reward: string;
+  episodes: number;
+  rewarded: number;
+  buckets: string[];
+  arms: Array<{ id: string; label: string; tries: number; rewarded: number; averageReward: number | null; posteriorMean: number; chanceBest: number }>;
+}
+
+export interface RlEpisode {
+  id: number;
+  policy: string;
+  bucket: string;
+  arm: string;
+  agent: string;
+  ref: string | null;
+  reward: number | null;
+  rewards: Array<{ source: string; value: number; note?: string; at: string }>;
+  createdAt: string;
+}
+
+export interface KnowledgeSearchResult {
+  local: Array<{ kind: string; refId: string; topicId: string | null; title: string; snippet: string; score: number }>;
+  jarvis: {
+    ok: boolean;
+    detail?: string;
+    memories: Array<{ kind: string; content: string; createdAt: string }>;
+    documents: Array<{ title: string; source: string; passage: string; updatedAt: string }>;
+  };
+}
+
+export type StudyLevel = "beginner" | "intermediate" | "advanced";
+
+export interface StudyCourse {
+  topicId: string;
+  title: string;
+  level: StudyLevel;
+  status: "planning" | "ready" | "failed";
+  error: string | null;
+  syllabus: Array<{ index: number; title: string; goal: string; keyIdeas: string[]; findingIds: number[] }>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StudyLessonSource {
+  n: number;
+  title: string;
+  url: string;
+  tier: EvidenceTier;
+  label: string;
+  excerpt: string | null;
+}
+
+export interface StudyLesson {
+  topicId: string;
+  index: number;
+  title: string;
+  goal: string;
+  status: "planned" | "queued" | "writing" | "ready" | "failed";
+  markdown: string | null;
+  /** The questions without their answers: the PC marks them. */
+  quiz: Array<{ question: string; options: string[] }>;
+  sources: StudyLessonSource[];
+  error: string | null;
+  writtenAt: string | null;
+}
+
+export interface CourseOverview {
+  course: StudyCourse;
+  lessons: Array<Omit<StudyLesson, "markdown" | "quiz"> & { quizSize: number }>;
+  progress: Array<{ index: number; openedAt: string | null; completedAt: string | null; bestScore: number | null; attempts: number }>;
+  cards: { total: number; due: number };
+  writing: string | null;
+}
+
+export interface QuizResult {
+  lesson: number;
+  score: number;
+  passed: boolean;
+  results: Array<{ question: string; yourAnswer: string | null; rightAnswer: string; correct: boolean; why: string }>;
+  next: { index: number; title: string } | null;
+}
+
+export interface StudyCard {
+  id: number;
+  topicId: string;
+  index: number;
+  front: string;
+  back: string;
+  box: number;
+  dueAt: string;
+}
+
+/** An answer being written: its text so far, and how many model calls are ahead of it. */
+export interface ChatPending {
+  questionId: number;
+  seconds: number;
+  partial: string;
+  queueAhead: number;
 }
 
 export interface TopicQuestion {
@@ -872,6 +1090,11 @@ export interface ResearchChatMessage {
   /** The answer says its research does not cover this yet. */
   gap: boolean;
   createdAt: string;
+  /** An answer: the question it answers. */
+  answers?: number | null;
+  episodeId?: number | null;
+  /** 1 👍, -1 👎, 0 not rated. */
+  feedback?: number;
 }
 
 export interface TopicDetail {
@@ -1192,7 +1415,22 @@ export const api = {
     maxIterations?: number;
     starter?: StarterChoice;
     headStart?: HeadStart;
+    /** The database platform the app will use (DbKit): local, supabase, firebase, pocketbase, appwrite or rest. */
+    database?: string;
   }) => request<{ buildId: string }>("/api/autonomous/start", { method: "POST", body: JSON.stringify(config) }, 60000),
+  dbPlatforms: () => request<{ platforms: DbPlatform[] }>("/api/databases/platforms"),
+  buildDatabase: (id: string) => request<{ state: BuildDbState; platforms: DbPlatform[] }>(`/api/autonomous/${encodeURIComponent(id)}/database`),
+  saveBuildDatabase: (id: string, platform: string, values: Record<string, string>) =>
+    request<{ state: BuildDbState; rebuilt: { ok: boolean; detail: string } | null; note?: string }>(
+      `/api/autonomous/${encodeURIComponent(id)}/database`,
+      { method: "POST", body: JSON.stringify({ platform, values }) },
+      600000
+    ),
+  testBuildDatabase: (id: string, platform: string, values: Record<string, string>) =>
+    request<{ ok: boolean; detail: string }>(`/api/autonomous/${encodeURIComponent(id)}/database/test`, {
+      method: "POST",
+      body: JSON.stringify({ platform, values })
+    }),
   /** Add an instruction to a build that is already running. */
   guideBuild: (id: string, text: string) =>
     request<{ note: BuildGuidance; guidance: BuildGuidance[] }>(
@@ -1205,6 +1443,54 @@ export const api = {
       { method: "POST", body: JSON.stringify(options) },
       60000
     ),
+  autoConfirmFindings: (id: string) =>
+    request<{ success: boolean; action: string; message: string; instruction?: string; buildId?: string }>(
+      `/api/autonomous/${encodeURIComponent(id)}/findings/auto-confirm`,
+      { method: "POST" }
+    ),
+  superBuild: (prompt: string, projectName?: string) =>
+    request<{ success: boolean; buildId: string; message: string; build: Build }>("/api/autonomous/super-build", {
+      method: "POST",
+      body: JSON.stringify({ prompt, projectName })
+    }),
+  gamemakerStatus: () =>
+    request<{
+      installed: boolean;
+      path: string;
+      hasUnityBridge: boolean;
+      unityEditor: { version: string | null; exe: string | null; webgl: boolean } | null;
+      levelProject: string;
+    }>("/api/autonomous/gamemaker/status"),
+  unityStatus: () => request<UnityStudioStatus>("/api/autonomous/unity/status"),
+  startUnityLevel: (prompt: string, target: "none" | "windows" | "webgl" = "none") =>
+    request<{ success: boolean; job: UnityLevelJob }>("/api/autonomous/unity/levels", {
+      method: "POST",
+      body: JSON.stringify({ prompt, target })
+    }),
+  unityLevels: () => request<{ jobs: UnityLevelJob[] }>("/api/autonomous/unity/levels"),
+  unityLevel: (id: string) => request<{ job: UnityLevelJob }>(`/api/autonomous/unity/levels/${encodeURIComponent(id)}`),
+  games: () =>
+    request<{ count: number; games: GameVersionBranch[] }>("/api/autonomous/games"),
+  runGameCheckup: (gameDir: string, gameName?: string, gameId?: string) =>
+    request<{ success: boolean; scorecard: GameCheckupScorecard }>("/api/autonomous/games/checkup", {
+      method: "POST",
+      body: JSON.stringify({ gameDir, gameName, gameId })
+    }, 60000),
+  promoteGame: (gameId: string) =>
+    request<{ success: boolean; liveVersion: string; message: string }>("/api/autonomous/games/promote", {
+      method: "POST",
+      body: JSON.stringify({ gameId })
+    }),
+  deconstructApp: (projectPath: string) =>
+    request<{ success: boolean; report: any }>("/api/autonomous/deconstruct", {
+      method: "POST",
+      body: JSON.stringify({ projectPath })
+    }, 60000),
+  rebuildApp: (projectPath: string, projectName?: string, elevate3D?: boolean) =>
+    request<{ success: boolean; buildId: string; message: string; report: any; build: Build }>("/api/autonomous/rebuild", {
+      method: "POST",
+      body: JSON.stringify({ projectPath, projectName, elevate3D })
+    }, 60000),
   gameMode: () => request<GameModeStatus>("/api/game-mode"),
   setGameMode: (on: boolean) => request<GameModeStatus>("/api/game-mode", { method: "POST", body: JSON.stringify({ on }) }, 150000),
   builderVersion: (refresh = false) => request<BuilderVersion>(`/api/power/version${refresh ? "?refresh=1" : ""}`, {}, 120000),
@@ -1479,14 +1765,44 @@ export const api = {
     request<{ topic: Topic }>(`/api/research/topics/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   runTopicNow: (id: string) => request<unknown>(`/api/research/topics/${id}/run`, { method: "POST" }),
   deleteTopic: (id: string) => request<unknown>(`/api/research/topics/${id}`, { method: "DELETE" }),
-  topicChat: (id: string) => request<{ messages: ResearchChatMessage[] }>(`/api/research/topics/${id}/chat`),
+  topicChat: (id: string) => request<{ messages: ResearchChatMessage[]; pending: ChatPending | null }>(`/api/research/topics/${id}/chat`),
+  /** Starts the answer and returns at once; poll topicChat for pending.partial, then the saved answer. */
   talkToTopic: (id: string, message: string) =>
-    request<{ question: ResearchChatMessage; answer: ResearchChatMessage; findings: TopicFinding[] }>(
-      `/api/research/topics/${id}/chat`,
-      { method: "POST", body: JSON.stringify({ message }) },
-      300000
-    ),
+    request<{ question: ResearchChatMessage; pending: ChatPending | null }>(`/api/research/topics/${id}/chat`, {
+      method: "POST",
+      body: JSON.stringify({ message })
+    }),
   clearTopicChat: (id: string) => request<{ cleared: number }>(`/api/research/topics/${id}/chat`, { method: "DELETE" }),
+  /** Answer a question again in another style; poll topicChat as for a new question. */
+  answerAgain: (id: string, questionId: number) =>
+    request<{ question: ResearchChatMessage; pending: ChatPending | null }>(`/api/research/topics/${id}/chat/${questionId}/again`, { method: "POST" }),
+  rateAnswer: (id: string, messageId: number, good: boolean) =>
+    request<{ message: ResearchChatMessage }>(`/api/research/topics/${id}/chat/${messageId}/feedback`, { method: "POST", body: JSON.stringify({ good }) }),
+  rateLesson: (topicId: string, index: number, good: boolean) =>
+    request<{ ok: boolean }>(`/api/learn/${encodeURIComponent(topicId)}/lessons/${index}/feedback`, { method: "POST", body: JSON.stringify({ good }) }),
+  rlStats: () => request<{ policies: RlPolicyStats[]; recent: RlEpisode[] }>("/api/rl/stats"),
+  rlExport: () => request<{ dir: string; sft: number; dpo: number }>("/api/rl/export", { method: "POST", body: JSON.stringify({}) }),
+  knowledgeSearch: (q: string) =>
+    request<KnowledgeSearchResult>(`/api/knowledge/search?q=${encodeURIComponent(q)}`, {}, 30000),
+  knowledgeStatus: () =>
+    request<{ enabled: boolean; host: string | null; reachable: boolean; queue: { pending: number; retrying: number; synced: number }; lastSyncAt: string | null; warnings: string[] }>(
+      "/api/knowledge/status"
+    ),
+  courses: () => request<{ courses: Array<StudyCourse & { completed: number; total: number }>; due: number }>("/api/learn"),
+  course: (topicId: string) => request<CourseOverview>(`/api/learn/${encodeURIComponent(topicId)}`),
+  planCourse: (topicId: string, level: StudyLevel = "beginner") =>
+    request<{ course: StudyCourse }>(`/api/learn/${encodeURIComponent(topicId)}/plan`, { method: "POST", body: JSON.stringify({ level }) }),
+  lesson: (topicId: string, index: number) => request<{ lesson: StudyLesson }>(`/api/learn/${encodeURIComponent(topicId)}/lessons/${index}`),
+  answerQuiz: (topicId: string, index: number, answers: number[]) =>
+    request<QuizResult>(`/api/learn/${encodeURIComponent(topicId)}/lessons/${index}/quiz`, { method: "POST", body: JSON.stringify({ answers }) }),
+  lessonDone: (topicId: string, index: number) =>
+    request<{ ok: boolean }>(`/api/learn/${encodeURIComponent(topicId)}/lessons/${index}/done`, { method: "POST" }),
+  dueCards: (topicId: string) => request<{ cards: StudyCard[] }>(`/api/learn/${encodeURIComponent(topicId)}/cards/due`),
+  reviewCard: (cardId: number, knew: boolean) =>
+    request<{ card: StudyCard }>(`/api/learn/cards/${cardId}/review`, { method: "POST", body: JSON.stringify({ knew }) }),
+  studyPack: (topicId: string) => request<{ markdown: string }>(`/api/learn/${encodeURIComponent(topicId)}/pack`),
+  courseToJarvis: (topicId: string) =>
+    request<{ ok: boolean; detail: string }>(`/api/learn/${encodeURIComponent(topicId)}/jarvis`, { method: "POST" }, 60000),
   askTopic: (id: string, text: string) =>
     request<unknown>(`/api/research/topics/${id}/questions`, { method: "POST", body: JSON.stringify({ text }) }),
   dropQuestion: (id: string, questionId: number) =>

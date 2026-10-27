@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import type { Build, BuildCheck, BuildIterationDetail } from "@/lib/api";
 import { isLive } from "../activity";
 import { Icon, Meter, ago, duration } from "../ui";
+import { GamifiedBuildProgress } from "./GamifiedBuildProgress";
 
 /** What the current pass is doing, in words. */
 export const STAGE_LABEL: Record<string, string> = {
@@ -63,50 +64,7 @@ const elapsed = (since: string | null | undefined, now: number): string => {
  * used, and how close it is to the quality it is aiming for.
  */
 export const BuildProgress = ({ build, compact = false }: { build: Build; compact?: boolean }) => {
-  const now = useNow();
-  const stage = build.stage ?? "starting";
-  const inPass = (STAGE_PROGRESS[stage] ?? 0.1) * 100;
-  const max = build.maxIterations ?? 0;
-  const passes = max ? Math.min(100, ((Math.max(1, build.iterations) - 1 + inPass / 100) / max) * 100) : 0;
-  const target = build.qualityThreshold ?? 90;
-  const paused = build.state === "paused";
-
-  return (
-    <div className={`progress ${compact ? "compact" : ""}`}>
-      <div className="progress-row">
-        <div className="progress-label">
-          <strong>{paused ? "Paused" : STAGE_LABEL[stage] ?? stage}</strong>
-          <span>
-            {stage === "repairing" && build.repairAttempt ? `attempt ${build.repairAttempt} · ` : ""}
-            {paused ? "waiting for you" : elapsed(build.stageSince, now)}
-          </span>
-        </div>
-        <div className={`bar ${paused ? "paused" : "active"}`} role="progressbar" aria-label="This pass" aria-valuenow={Math.round(inPass)} aria-valuemin={0} aria-valuemax={100}>
-          <i style={{ width: `${inPass}%` }} />
-        </div>
-      </div>
-      {!compact && max ? (
-        <div className="progress-row">
-          <div className="progress-label">
-            <strong>Pass {Math.max(1, build.iterations)} of up to {max}</strong>
-            <span>{build.passSince ? `this pass ${elapsed(build.passSince, now)}` : ""}</span>
-          </div>
-          <div className="bar passes" role="progressbar" aria-label="Passes used" aria-valuenow={Math.round(passes)} aria-valuemin={0} aria-valuemax={100}>
-            <i style={{ width: `${passes}%` }} />
-          </div>
-        </div>
-      ) : null}
-      {!compact ? (
-        <div className="progress-row">
-          <div className="progress-label">
-            <strong>Quality {Math.round(build.qualityScore)}</strong>
-            <span>target {target}</span>
-          </div>
-          <Meter value={build.qualityScore} target={target} />
-        </div>
-      ) : null}
-    </div>
-  );
+  return <GamifiedBuildProgress build={build} compact={compact} />;
 };
 
 export const CHECK_LABEL: Record<string, string> = {

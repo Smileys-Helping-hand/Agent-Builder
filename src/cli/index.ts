@@ -19,6 +19,17 @@ const readFlag = (name: string): string | undefined => {
   return value;
 };
 
+const hasBoolFlag = (name: string): boolean => {
+  const index = argv.indexOf(`--${name}`);
+  if (index === -1) return false;
+  argv.splice(index, 1);
+  return true;
+};
+
+const isSuper = hasBoolFlag("super");
+const isMultiAgent = hasBoolFlag("multi-agent") || isSuper;
+const isBlender = hasBoolFlag("blender") || isSuper;
+
 const profile = (readFlag("profile") ?? "balanced") as BuildProfile;
 const iterations = Number(readFlag("iterations") ?? 3);
 const name = readFlag("name") ?? "cli-build";
@@ -26,7 +37,7 @@ const description = argv.join(" ").trim();
 
 if (!description) {
   console.error(
-    'Usage: npm run cli -- [--profile fast|balanced|deep] [--iterations N] [--name NAME] "<what to build>"'
+    'Usage: npm run cli -- [--super] [--multi-agent] [--blender] [--profile fast|balanced|deep] [--iterations N] [--name NAME] "<what to build>"'
   );
   process.exit(1);
 }
@@ -44,7 +55,10 @@ if (!description) {
     enableContinuousLearning: false,
     hardwareOptimization: true,
     autoPackaging: false,
-    profile
+    profile,
+    multiAgent: isMultiAgent,
+    superPrompt: isSuper,
+    blender3d: isBlender
   });
 
   orchestrator.on("iteration-status", (info) => {

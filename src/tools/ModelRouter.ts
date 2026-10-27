@@ -1,22 +1,29 @@
 import { Agent, fetch as undiciFetch } from "undici";
 import { OpenAIClient } from "./OpenAIClient.js";
 import { AnthropicClient } from "./AnthropicClient.js";
+import { GeminiClient, geminiConfigured } from "./GeminiClient.js";
 import { BuildGate } from "../utils/BuildGate.js";
-import { gpuLock } from "../utils/GpuLock.js";
+import { gpuLock, type GpuPriority } from "../utils/GpuLock.js";
 import { ModelPerfLog } from "./ModelPerfLog.js";
 import { buildActivity, currentBuild } from "../utils/BuildContext.js";
 import { GameMode, GameModeOnError } from "../utils/GameMode.js";
 
-export type ModelProvider = "openai" | "ollama" | "lmstudio" | "anthropic";
+export type ModelProvider = "openai" | "ollama" | "lmstudio" | "anthropic" | "gemini";
+export type ModelRole = "code" | "visual" | "animation" | "3d" | "prompter" | "qa" | "general";
 
-type GenerateOptions = {
+export type GenerateOptions = {
   provider?: ModelProvider;
   model?: string;
+  role?: ModelRole;
+  /** "interactive" when a person is waiting on the answer: it goes ahead of background work on the GPU. */
+  priority?: GpuPriority;
+  /** The answer so far, as it is written (local models; other providers call it once at the end). */
+  onText?: (textSoFar: string) => void;
 };
 
 const asProvider = (value: string | undefined): ModelProvider | null => {
   const provider = (value ?? "").toLowerCase();
-  return provider === "ollama" || provider === "lmstudio" || provider === "openai" || provider === "anthropic" ? provider : null;
+  return provider === "ollama" || provider === "lmstudio" || provider === "openai" || provider === "anthropic" || provider === "gemini" ? provider : null;
 };
 
 /**
@@ -82,7 +89,7 @@ export const ollamaOptions = (model?: string) => ({
  */
 const ollamaAgent = new Agent({ headersTimeout: 30 * 60_000, bodyTimeout: 30 * 60_000, connectTimeout: 30_000 });
 
-const generateWithOllama = async (prompt: string, model?: string): Promise<string> => {
+const generateWithOllama = async (prompt: string, model?: string, onText?: (textSoFar: string) => void): Promise<string> => {
   const baseUrl = process.env.OLLAMA_BASE_URL ?? process.env.OLLAMA_URL ?? "http://localhost:11434";
   // A build can write with its own model (a site tailored from a template: SITE_BUILD_MODEL); a call that names one keeps it.
   const targetModel = model ?? currentBuild()?.model ?? process.env.OLLAMA_MODEL ?? process.env.MODEL ?? "qwen2.5-coder:7b";
@@ -119,6 +126,7 @@ const generateWithOllama = async (prompt: string, model?: string): Promise<strin
   let tokens = 0;
   let pending = "";
   let lastShared = 0;
+  let lastTextAt = 0;
   const share = (done: boolean) => {
     if (!scope) return;
     const seconds = Math.max((Date.now() - started) / 1000, 0.001);
@@ -155,7 +163,12 @@ const generateWithOllama = async (prompt: string, model?: string): Promise<strin
         tokens += 1;
       }
     }
+    // share() only records the time inside a build, so the answer-so-far keeps its own clock.
     if (Date.now() - lastShared > THINKING_EVERY_MS) share(false);
+    if (onText && Date.now() - lastTextAt > THINKING_EVERY_MS) {
+      lastTextAt = Date.now();
+      onText(text);
+    }
   }
   if (pending.trim()) {
     const chunk = JSON.parse(pending) as { response?: string };
@@ -191,17 +204,76 @@ const generateWithLMStudio = async (prompt: string, model?: string): Promise<str
   return data.choices?.[0]?.message?.content ?? "";
 };
 
-const dispatch = (provider: ModelProvider, prompt: string, model?: string): Promise<string> => {
+const dispatch = (provider: ModelProvider, prompt: string, model?: string, onText?: (textSoFar: string) => void): Promise<string> => {
   switch (provider) {
     case "ollama":
-      return generateWithOllama(prompt, model);
+      return generateWithOllama(prompt, model, onText);
     case "lmstudio":
       return generateWithLMStudio(prompt, model);
     case "anthropic":
       return AnthropicClient.generate(prompt, model);
+    case "gemini":
+      return GeminiClient.generate(prompt, model);
     case "openai":
     default:
       return OpenAIClient.generate(prompt, model);
+  }
+};
+
+/**
+ * The model server for a specialist role in the multi-agent swarm.
+ *
+ * MODEL_PROVIDER_<ROLE> (+ MODEL_NAME_<ROLE>) picks one outright. Otherwise a
+ * Gemini key is used for the visual, animation, 3D and prompt roles — adding
+ * GEMINI_API_KEY is the opt-in. Anthropic/OpenAI keys are often in .env for
+ * other things (embeddings), so they take over a role only with
+ * ROLE_CLOUD_FALLBACK=true; without it every other role stays on the provider
+ * Settings chose (MODEL_PROVIDER), and a local build never bills a cloud API.
+ */
+export const getProviderForRole = (role: ModelRole): { provider: ModelProvider; model?: string } => {
+  const env = process.env;
+  const cloudFallback = (env.ROLE_CLOUD_FALLBACK ?? "").toLowerCase() === "true";
+  const cloud = (): { provider: ModelProvider; model?: string } | null => {
+    if (!cloudFallback) return null;
+    if (env.ANTHROPIC_API_KEY) return { provider: "anthropic", model: env.ANTHROPIC_MODEL };
+    if (env.OPENAI_API_KEY) return { provider: "openai", model: env.OPENAI_MODEL };
+    return null;
+  };
+  const gemini = (): { provider: ModelProvider; model?: string } | null =>
+    geminiConfigured() ? { provider: "gemini", model: env.GEMINI_MODEL } : null;
+  const settings = (): { provider: ModelProvider; model?: string } => ({ provider: getProviderFromEnv() });
+
+  switch (role) {
+    case "visual":
+    case "animation": {
+      const explicit = asProvider(env.MODEL_PROVIDER_VISUAL ?? env.MODEL_PROVIDER_ANIMATION);
+      if (explicit) return { provider: explicit, model: env.MODEL_NAME_VISUAL ?? env.MODEL_NAME_ANIMATION };
+      return gemini() ?? cloud() ?? settings();
+    }
+    case "3d": {
+      const explicit = asProvider(env.MODEL_PROVIDER_3D);
+      if (explicit) return { provider: explicit, model: env.MODEL_NAME_3D };
+      return gemini() ?? cloud() ?? settings();
+    }
+    case "prompter": {
+      const explicit = asProvider(env.MODEL_PROVIDER_PROMPTER ?? env.PROMPT_MODEL_PROVIDER);
+      if (explicit) return { provider: explicit, model: env.MODEL_NAME_PROMPTER };
+      return gemini() ?? cloud() ?? settings();
+    }
+    case "code": {
+      // A customer order's ORDER_MODEL_PROVIDER is applied by settings() (getProviderFromEnv), only for orders.
+      const explicit = asProvider(env.MODEL_PROVIDER_CODE);
+      if (explicit) return { provider: explicit, model: env.MODEL_NAME_CODE };
+      return cloud() ?? settings();
+    }
+    case "qa": {
+      const explicit = asProvider(env.MODEL_PROVIDER_QA ?? env.REVIEW_MODEL_PROVIDER);
+      if (explicit) return { provider: explicit, model: env.MODEL_NAME_QA };
+      return cloud() ?? settings();
+    }
+    case "general":
+    default:
+      return settings();
   }
 };
 
@@ -247,8 +319,9 @@ export class ModelRouter {
     if (isLocalProvider) await BuildGate.wait(currentBuild()?.buildId);
     const startedAt = Date.now();
     const response = isLocalProvider
-      ? await ModelRouter.waitingOut(() => gpuLock.run(() => dispatch(provider, prompt, options.model)))
-      : await dispatch(provider, prompt, options.model);
+      ? await ModelRouter.waitingOut(() => gpuLock.run(() => dispatch(provider, prompt, options.model, options.onText), options.priority))
+      : await dispatch(provider, prompt, options.model, options.onText);
+    options.onText?.(response);
 
     void ModelPerfLog.record({
       timestamp: new Date().toISOString(),
@@ -260,5 +333,16 @@ export class ModelRouter {
     });
 
     return response;
+  }
+
+  /**
+   * Generates output using the specialized model/provider assigned to this role
+   * (e.g. code specialist vs visual/animation specialist vs 3D asset specialist).
+   */
+  static async generateForRole(role: ModelRole, prompt: string, options: GenerateOptions = {}): Promise<string> {
+    const resolved = getProviderForRole(role);
+    const provider = options.provider ?? resolved.provider;
+    const model = options.model ?? resolved.model;
+    return ModelRouter.generate(prompt, { ...options, provider, model, role });
   }
 }

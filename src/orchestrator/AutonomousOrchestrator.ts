@@ -32,6 +32,11 @@ import { ensureOllama } from "../utils/Ollama.js";
 import { StuckDoctor } from "../repair/StuckDoctor.js";
 import { FixPlaybook } from "../repair/FixPlaybook.js";
 import { fingerprint, groupErrors, parseErrors } from "../repair/ErrorFingerprint.js";
+import { SuperModelSynthesizer } from "../agents/builder/SuperModelSynthesizer.js";
+import { DbKit, type DbPlatformId } from "../database/DbKit.js";
+import { SharedKnowledge } from "../knowledge/SharedKnowledge.js";
+import { Reinforcement } from "../learning/Reinforcement.js";
+import { SuperPrompter } from "../media/SuperPrompter.js";
 
 export interface BuildIteration {
   iteration: number;
@@ -135,6 +140,17 @@ export interface AutonomousConfig {
    * clearly matches a game starts as that whole game. Unset: BUILD_HEAD_START.
    */
   headStart?: HeadStart;
+  /** Whether to run the Multi-Agent Builder swarm (Architect, Code, Visual, Blender 3D, Sound, QA). */
+  multiAgent?: boolean;
+  /** Whether to expand single prompts with SuperPrompter. */
+  superPrompt?: boolean;
+  /** Whether to generate Blender 3D assets & scripts. */
+  blender3d?: boolean;
+  /**
+   * The database the person plans to use (DbKit): the build gets src/lib/db for
+   * it and keeps its data there. Unset: no data layer is added.
+   */
+  database?: DbPlatformId;
 }
 
 export type HeadStart = "prompt" | "engine" | "template";
@@ -1064,7 +1080,40 @@ import to its last export: never a fragment or a single changed line. No other p
         : "") +
       this.researchPreamble(context.iteration) +
       this.exemplarPreamble(context.iteration) +
-      this.artPreamble();
+      this.artPreamble() +
+      (this.config.workingDir ? DbKit.preamble(this.workspace.root) : "") +
+      // What Jarvis knows about the person this is for (cached; nothing when Jarvis is off).
+      (await SharedKnowledge.ownerContext(`${this.config.projectName} ${this.config.description}`.slice(0, 800))) +
+      this.approachPreamble();
+
+    // Multi-Agent Super-Model Swarm: when multiAgent/superPrompt is requested or single-prompt build
+    const wantsSuperModel =
+      Boolean(this.config.multiAgent || this.config.superPrompt || this.config.blender3d || process.env.MULTI_AGENT_BUILD === "true");
+
+    if (this.config.workingDir && this.isStarter() && this.starterStillPlaceholder() && wantsSuperModel) {
+      this.think(
+        context.iteration,
+        "plan",
+        "Multi-Agent Super-Model Swarm Activated",
+        "Orchestrating specialized models: Code Engineer, Visual/Animation Specialist, 3D Blender Specialist, Sound Synthesizer, and QA Critic."
+      );
+      try {
+        const result = await SuperModelSynthesizer.synthesizeFromSinglePrompt(
+          this.workspace.root,
+          this.config.description,
+          this.config.projectName,
+          (kind, title, text) => this.think(context.iteration, kind as any, title, text),
+          true
+        );
+        return {
+          files: result.files,
+          artifacts: [...Object.keys(result.files), ...result.blender3D.filesCreated]
+        };
+      } catch (err: any) {
+        Logger.warn("SuperModel synthesis encountered error, falling back to planned generation", { error: err?.message });
+        this.think(context.iteration, "decision", "Swarm handed over to the planner", `${err?.message ?? err}. Planning the app file by file from the prompt instead.`);
+      }
+    }
 
     // A new app is planned, then written one file at a time (see generatePlanned).
     if (this.config.workingDir && this.isStarter() && this.starterStillPlaceholder()) {
@@ -1840,6 +1889,27 @@ Answer with JSON only: {"style": "...", "pictures": [{"name": "hero", "subject":
   }
 
   /** Every pass of a game with planned pictures is told their names and how to load them. */
+  /**
+   * How this new build approaches its first pass: the build.approach policy
+   * picks it once per build (per kind of app), every pass keeps to it, and the
+   * build's final score rewards it (RewardWiring). Changes and repairs of an
+   * existing app are not part of the experiment.
+   */
+  private approach: { episodeId: number; instruction: string } | null = null;
+  private approachDecided = false;
+  private approachPreamble(): string {
+    if (!this.approachDecided) {
+      this.approachDecided = true;
+      if (this.config.workingDir && this.isStarter() && this.starterStillPlaceholder()) {
+        const kind = SuperPrompter.detectKind(`${this.config.projectName} ${this.config.description}`);
+        const choice = Reinforcement.choose("build.approach", { bucket: kind, agent: "builder", ref: `build:${this.buildId}`, prompt: this.config.description });
+        this.approach = { episodeId: choice.episodeId, instruction: choice.arm.instruction };
+        if (choice.arm.instruction) this.think(1, "decision", `Approach: ${choice.arm.label}`, "Chosen by what has earned the best scores on builds like this one.");
+      }
+    }
+    return this.approach?.instruction ?? "";
+  }
+
   private artPreamble(): string {
     if (!this.config.workingDir || this.adoptedEngine.length > 0) return "";
     const root = this.workspace.root;

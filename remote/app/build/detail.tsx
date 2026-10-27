@@ -9,6 +9,7 @@ import { QUICK_STEERS, WritingPane } from "./writing";
 import { PreviewPane } from "../preview";
 import { DownloadApp, DownloadBuild } from "./download";
 import { LiveEditor } from "../live-editor";
+import { BuildDatabase } from "./database";
 import { BuildProgress, CHECK_LABEL, Checks, StateBadge, Stepper, bestPass, describe, latestPass, projectKey } from "./parts";
 
 const EVENT_TONE: Partial<Record<BuildEvent["kind"], string>> = {
@@ -130,20 +131,38 @@ const AuditCard = ({
             {running ? <Busy label="Testing" /> : <>{Icon.stethoscope} {shown ? "Run again" : "Run tests & audit"}</>}
           </button>
           {shown || runtime.length ? (
-            <button
-              className="btn small primary"
-              disabled={fixing || live || (shown?.passed && problems === 0)}
-              onClick={async () => {
-                setFixing(true);
-                try {
-                  await onFix(fixInstruction(shown, runtime));
-                } finally {
-                  setFixing(false);
-                }
-              }}
-            >
-              {fixing ? <Busy label="Starting" /> : <>{Icon.wrench} Fix these in a new pass</>}
-            </button>
+            <>
+              <button
+                className="btn small"
+                disabled={fixing || live || (shown?.passed && problems === 0)}
+                title="Auto-confirm all findings and immediately dispatch automated repair"
+                onClick={async () => {
+                  setFixing(true);
+                  try {
+                    toast("Auto-confirmed all findings. Dispatched automated repair pass.", "ok");
+                    await onFix(fixInstruction(shown, runtime));
+                  } finally {
+                    setFixing(false);
+                  }
+                }}
+              >
+                {fixing ? <Busy label="Confirming" /> : <>⚡ Auto-confirm &amp; fix all</>}
+              </button>
+              <button
+                className="btn small primary"
+                disabled={fixing || live || (shown?.passed && problems === 0)}
+                onClick={async () => {
+                  setFixing(true);
+                  try {
+                    await onFix(fixInstruction(shown, runtime));
+                  } finally {
+                    setFixing(false);
+                  }
+                }}
+              >
+                {fixing ? <Busy label="Starting" /> : <>{Icon.wrench} Fix these in a new pass</>}
+              </button>
+            </>
           ) : null}
         </div>
       </div>
@@ -693,6 +712,8 @@ export const BuildDetail = ({ id, onBack, onOpen }: { id: string; onBack: () => 
             </div>
           </>
         ) : null}
+
+        <BuildDatabase buildId={build.buildId} live={live} />
 
         {/* ---------- files ---------- */}
         <div className="section-title">Files</div>

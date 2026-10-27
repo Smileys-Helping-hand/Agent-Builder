@@ -30,6 +30,7 @@ import {
   type BuildThought
 } from "./AutonomousOrchestrator.js";
 import { Logger } from "../utils/Logger.js";
+import { DbKit, isPlatform } from "../database/DbKit.js";
 import type { AuditFinding } from "./SiteAudit.js";
 import { isWebsiteRequest, prepareSite } from "./SiteStarters.js";
 import { BuildGate, buildGateEvents, type BuildLane } from "../utils/BuildGate.js";
@@ -528,6 +529,15 @@ export const BuildService = {
     const workingDir =
       options.workingDir ?? site?.dir ?? (wantsWeb ? prepareStarter(options.projectName, options.description, choice === "site" ? "auto" : choice) ?? undefined : undefined);
     const description = site?.brief ?? options.description;
+    // The database they plan to use: its data layer goes in before the first pass is written.
+    const database = isPlatform(options.database) ? options.database : undefined;
+    if (database && workingDir) {
+      try {
+        DbKit.install(workingDir, database);
+      } catch (error) {
+        Logger.warn("Could not add the database kit", { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
 
     const config: AutonomousConfig = {
       projectName: options.projectName,
@@ -542,7 +552,11 @@ export const BuildService = {
       maxRepairAttempts: options.maxRepairAttempts,
       patience: options.patience,
       workingDir,
-      headStart: options.headStart && HEAD_STARTS.includes(options.headStart) ? options.headStart : undefined
+      headStart: options.headStart && HEAD_STARTS.includes(options.headStart) ? options.headStart : undefined,
+      multiAgent: options.multiAgent,
+      superPrompt: options.superPrompt,
+      blender3d: options.blender3d,
+      database
     };
 
     const orchestrator = new AutonomousOrchestrator(config);
