@@ -144,14 +144,18 @@ const slugify = (projectPath: string): string =>
     .replace(/^-+|-+$/g, "")
     .toLowerCase();
 
-/** Directories containing a .git folder, at most MAX_DEPTH below each root. */
-export const findRepositories = (roots: string[] = projectRoots()): string[] => {
+/**
+ * Directories containing a .git folder, at most MAX_DEPTH below each root.
+ * Read without blocking: on a hard drive busy with a build, walking the project
+ * folders synchronously froze the builder for up to half a minute per sweep.
+ */
+export const findRepositories = async (roots: string[] = projectRoots()): Promise<string[]> => {
   const found: string[] = [];
-  const walk = (directory: string, depth: number) => {
+  const walk = async (directory: string, depth: number): Promise<void> => {
     if (depth > MAX_DEPTH) return;
     let entries: fs.Dirent[];
     try {
-      entries = fs.readdirSync(directory, { withFileTypes: true });
+      entries = await fs.promises.readdir(directory, { withFileTypes: true });
     } catch {
       return;
     }
@@ -161,10 +165,10 @@ export const findRepositories = (roots: string[] = projectRoots()): string[] => 
     }
     for (const entry of entries) {
       if (!entry.isDirectory() || SKIP_DIRECTORIES.has(entry.name) || entry.name.startsWith(".")) continue;
-      walk(path.join(directory, entry.name), depth + 1);
+      await walk(path.join(directory, entry.name), depth + 1);
     }
   };
-  for (const root of roots) walk(root, 0);
+  for (const root of roots) await walk(root, 0);
   return found;
 };
 
@@ -217,7 +221,7 @@ export const ProjectScanner = {
   async scanAll(): Promise<ScanResult> {
     const started = Date.now();
     const roots = projectRoots();
-    const repositories = findRepositories(roots);
+    const repositories = await findRepositories(roots);
     const keptPaths: string[] = [];
 
     const scanned: Array<Omit<EcosystemProject, "scannedAt">> = [];

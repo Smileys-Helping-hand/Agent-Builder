@@ -17,21 +17,29 @@ import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
 const HOST_URL = () => (process.env.HOST_MANAGER_URL?.trim() || `http://127.0.0.1:${process.env.HOST_MANAGER_PORT || 4100}`).replace(/\/+$/, "");
 const HOST_KEY = () => process.env.HOST_MANAGER_KEY?.trim() ?? "";
 
-const relay = async (res: Response, path: string, init: RequestInit = {}) => {
-  if (!HOST_KEY()) {
-    res.status(503).json({ error: "The Host Manager has not started on this PC yet (it makes HOST_MANAGER_KEY on first start). Restart Agent Builder once." });
-    return;
-  }
+/** One request to the Host Manager. Throws when it has no key yet or does not answer. */
+export const callHost = async (path: string, init: RequestInit = {}): Promise<{ status: number; body: Record<string, unknown> }> => {
+  if (!HOST_KEY()) throw Object.assign(new Error("The Host Manager has not started on this PC yet (it makes HOST_MANAGER_KEY on first start). Restart Agent Builder once."), { status: 503 });
+  let upstream: globalThis.Response;
   try {
-    const upstream = await fetch(`${HOST_URL()}${path}`, {
+    upstream = await fetch(`${HOST_URL()}${path}`, {
       ...init,
       headers: { "x-host-key": HOST_KEY(), "Content-Type": "application/json", ...(init.headers ?? {}) },
       signal: AbortSignal.timeout(120_000)
     });
-    const body = await upstream.json().catch(() => ({ error: `The Host Manager answered ${upstream.status}.` }));
-    res.status(upstream.status).json(body);
   } catch {
-    res.status(502).json({ error: "The Host Manager is not answering on this PC. Restart Agent Builder (it starts the Host Manager), or run scripts/host-manager/host-manager.mjs." });
+    throw Object.assign(new Error("The Host Manager is not answering on this PC. Restart Agent Builder (it starts the Host Manager), or run scripts/host-manager/host-manager.mjs."), { status: 502 });
+  }
+  const body = (await upstream.json().catch(() => ({ error: `The Host Manager answered ${upstream.status}.` }))) as Record<string, unknown>;
+  return { status: upstream.status, body };
+};
+
+const relay = async (res: Response, path: string, init: RequestInit = {}) => {
+  try {
+    const { status, body } = await callHost(path, init);
+    res.status(status).json(body);
+  } catch (error) {
+    res.status((error as { status?: number }).status ?? 502).json({ error: (error as Error).message });
   }
 };
 

@@ -20,10 +20,12 @@ export interface GameModeState {
   /** What switching on paused, so switching off resumes exactly that. */
   pausedBuilds: string[];
   pausedTopics: string[];
+  /** Other services on the PC the pause stopped (Host Manager ids), started again on resume. */
+  stoppedServices: string[];
 }
 
 const FILE = path.resolve(process.env.GAME_MODE_PATH ?? "./data/game-mode.json");
-const OFF: GameModeState = { on: false, since: null, pausedBuilds: [], pausedTopics: [] };
+const OFF: GameModeState = { on: false, since: null, pausedBuilds: [], pausedTopics: [], stoppedServices: [] };
 
 let cache: GameModeState | null = null;
 

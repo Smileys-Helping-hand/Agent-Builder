@@ -26,6 +26,7 @@ import { ResearchStore } from "../research/ResearchStore.js";
 import { StudyCourse } from "../research/StudyCourse.js";
 import { Reinforcement } from "../learning/Reinforcement.js";
 import { LessonMemory } from "../learning/LessonMemory.js";
+import { GameMode } from "../utils/GameMode.js";
 import { UnityLevelStudio } from "../media/UnityLevelStudio.js";
 import { BlenderStudio } from "../media/BlenderStudio.js";
 import { geminiConfigured } from "../tools/GeminiClient.js";
@@ -231,6 +232,7 @@ export const AgentProfile = {
   /** What it is busy with right now, in one line and in parts. */
   doing(): { line: string; busy: boolean; parts: string[]; waiting: number } {
     const parts: string[] = [];
+    if (GameMode.isOn()) return { line: "Paused: the PC is yours for now", busy: false, parts: ["Paused: the PC is yours for now"], waiting: extra.waitingApprovals() };
     for (const build of BuildService.active().slice(0, 3)) parts.push(`Building ${build.projectName}`);
     for (const name of extra.continuousRunning()) parts.push(`Improving ${name} continuously`);
     const practice = extra.practising();

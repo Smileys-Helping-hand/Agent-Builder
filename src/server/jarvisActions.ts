@@ -444,7 +444,7 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
   { name: "service.toggle", area: "machine", label: "Start or stop one service (ollama, comfy)", scope: "execute", params: { service: "ollama | comfy", "action?": "start | stop" }, call: (p) => ["POST", "/api/services/toggle", pick(p, "service", "action")] },
   { name: "troubleshoot", area: "machine", label: "What is wrong on the machine, with fixes", scope: "read", params: {}, call: () => ["GET", "/api/services/troubleshoot"] },
   { name: "hardware", area: "machine", label: "CPU, RAM and GPU now", scope: "read", params: {}, call: () => ["GET", "/api/hardware/metrics"] },
-  { name: "game-mode", area: "machine", label: "Game mode on or off (frees the GPU for games)", scope: "execute", params: { on: "true | false" }, call: (p) => ["POST", "/api/game-mode", { on: p.on === true || p.on === "true" }] },
+  { name: "game-mode", area: "machine", label: "Pause everything on the PC for games, or start it all again (game mode: builds, research, the model server, Jarvis on the PC, the image engine, SaveState)", scope: "execute", params: { on: "true | false" }, call: (p) => ["POST", "/api/game-mode", { on: p.on === true || p.on === "true" }] },
   { name: "log", area: "machine", label: "The builder's log", scope: "read", params: { "lines?": "how many", "level?": "error | warn" }, call: (p) => ["GET", `/api/power/log${query(p, "lines", "level")}`] }
 ];
 

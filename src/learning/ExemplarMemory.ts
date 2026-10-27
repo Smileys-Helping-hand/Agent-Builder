@@ -232,7 +232,13 @@ const outlineOf = (files: Record<string, string>): string =>
 const upsert = (origin: string, title: string, brief: string, outline: string, sample: string, score: number): number => {
   const key = toKey(`${origin} ${briefCore(brief)}`);
   const now = nowIso();
-  const existing = db().prepare("SELECT id FROM build_exemplars WHERE brief_key = ?").get(key) as { id: number } | undefined;
+  const existing = db().prepare("SELECT id, title, brief, outline, sample, score FROM build_exemplars WHERE brief_key = ?").get(key) as
+    | { id: number; title: string; brief: string; outline: string; sample: string; score: number }
+    | undefined;
+  // Seeded on every boot: an unchanged example is left alone (no writes, no re-index).
+  if (existing && existing.title === title && existing.brief === briefCore(brief) && existing.outline === outline && existing.sample === sample && existing.score === score) {
+    return existing.id;
+  }
   if (existing) {
     db()
       .prepare("UPDATE build_exemplars SET title = ?, brief = ?, outline = ?, sample = ?, score = ?, updated_at = ? WHERE id = ?")

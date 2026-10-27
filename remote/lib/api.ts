@@ -883,7 +883,12 @@ export interface GameModeStatus {
   since: string | null;
   pausedBuilds: string[];
   pausedTopics: string[];
+  /** The PC's other services the pause stopped (Host Manager ids). */
+  stoppedServices?: string[];
   modelServer?: "up" | "down" | "degraded";
+  /** A switch going on in the background, and how the last one ended. */
+  switching?: { to: "on" | "off"; since: string } | null;
+  error?: string | null;
 }
 
 export interface Topic {
@@ -1603,7 +1608,7 @@ export const api = {
       body: JSON.stringify({ projectPath, projectName, elevate3D })
     }, 60000),
   gameMode: () => request<GameModeStatus>("/api/game-mode"),
-  setGameMode: (on: boolean) => request<GameModeStatus>("/api/game-mode", { method: "POST", body: JSON.stringify({ on }) }, 150000),
+  setGameMode: (on: boolean) => request<GameModeStatus>("/api/game-mode", { method: "POST", body: JSON.stringify({ on }) }, 60000),
   builderVersion: (refresh = false) => request<BuilderVersion>(`/api/power/version${refresh ? "?refresh=1" : ""}`, {}, 120000),
   updateStatus: () => request<{ job: UpdateJob | null }>("/api/power/update", {}, 10000),
   updateBuilder: (force = false) =>

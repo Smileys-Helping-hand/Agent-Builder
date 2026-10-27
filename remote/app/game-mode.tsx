@@ -1,10 +1,13 @@
 "use client";
 
 /**
- * Game mode in the app: one switch that frees the PC's graphics card for
- * games (builds and research pause, the model server shuts down) and gives it
- * back. The state is polled for every screen, a strip under the header says
- * when it is on, and Home has the switch.
+ * Game mode in the app: one switch that pauses everything on the PC for games
+ * (builds, research, continuous improvement and practice pause; the model
+ * server, Jarvis's copy on the PC, the image engine and SaveState hosting
+ * stop) and starts it all again. Agent Builder stays on, idle, so this switch
+ * can reach it. The switch runs on the PC in the background; while it does,
+ * the state is polled every few seconds. A strip under the header says when it
+ * is on, and Home and Control have the switch.
  *
  * Kept free of ./ui imports so the shared Header can show the strip.
  */
@@ -41,19 +44,20 @@ export const GameModeProvider = ({ children }: { children: React.ReactNode }) =>
     }
   }, []);
 
+  // Every 20 s, and every 3 s while a switch is under way on the PC.
+  const switching = Boolean(status?.switching);
   useEffect(() => {
     void refresh();
-    const timer = setInterval(() => void refresh(), 20_000);
+    const timer = setInterval(() => void refresh(), switching ? 3_000 : 20_000);
     return () => clearInterval(timer);
-  }, [refresh]);
+  }, [refresh, switching]);
 
   const set = useCallback(
     async (on: boolean) => {
       setBusy(true);
       setError(null);
       try {
-        await api.setGameMode(on);
-        await refresh();
+        setStatus(await api.setGameMode(on));
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -63,7 +67,8 @@ export const GameModeProvider = ({ children }: { children: React.ReactNode }) =>
     [refresh]
   );
 
-  return <GameModeContext.Provider value={{ status, unsupported, busy, error, set }}>{children}</GameModeContext.Provider>;
+  const value = { status, unsupported, busy: busy || switching, error: error ?? status?.error ?? null, set };
+  return <GameModeContext.Provider value={value}>{children}</GameModeContext.Provider>;
 };
 
 /** One line under every header while game mode is on. */
@@ -73,13 +78,15 @@ export const GameModeStrip = () => {
   return (
     <div className="game-strip" role="status">
       <span aria-hidden="true">🎮</span>
-      <span className="game-strip-text">Game mode: your graphics card is free. Builds and research are paused.</span>
+      <span className="game-strip-text">Everything is paused: the PC is yours.</span>
       <button className="btn small primary" disabled={busy} onClick={() => void set(false)}>
         {busy ? "Starting…" : "Back to work"}
       </button>
     </div>
   );
 };
+
+const SERVICE_NAMES: Record<string, string> = { jarvis: "Jarvis on the PC", "image-engine": "the image engine", savestate: "SaveState hosting" };
 
 const since = (iso: string | null): string => {
   if (!iso) return "";
@@ -93,6 +100,8 @@ export const GameModeCard = () => {
   if (unsupported) return null;
   const on = Boolean(status?.on);
   const paused = (status?.pausedBuilds.length ?? 0) + (status?.pausedTopics.length ?? 0);
+  const stopped = (status?.stoppedServices ?? []).map((id) => SERVICE_NAMES[id] ?? id);
+  const goingTo = status?.switching?.to ?? null;
 
   return (
     <section className={`card game-card ${on ? "on" : ""}`}>
@@ -101,16 +110,22 @@ export const GameModeCard = () => {
           🎮
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <strong>Game mode</strong>
+          <strong>Pause everything</strong>
           <small>
             {on
-              ? `On since ${since(status?.since ?? null)}. ${paused ? `${paused} paused (${status?.pausedBuilds.length ?? 0} builds, ${status?.pausedTopics.length ?? 0} research). ` : ""}Model server ${status?.modelServer === "down" ? "off" : "still stopping"}.`
-              : "Pause every build and research topic and switch the model server off, so the graphics card is all yours. New orders wait in the queue."}
+              ? `Paused since ${since(status?.since ?? null)}. ${paused ? `${paused} paused (${status?.pausedBuilds.length ?? 0} builds, ${status?.pausedTopics.length ?? 0} research). ` : ""}Model server ${status?.modelServer === "down" ? "off" : "still stopping"}${stopped.length ? `; stopped ${stopped.join(", ")}` : ""}.`
+              : "Frees the PC for games: builds, research, continuous improvement and practice pause, and the model server, Jarvis on the PC, the image engine and SaveState hosting stop. Agent Builder stays on quietly so you can resume from here. New orders wait in the queue."}
           </small>
         </div>
       </div>
       <button className={`power ${on ? "all-good" : "game-go"}`} disabled={busy || !status} onClick={() => void set(!on)}>
-        {busy ? (on ? "Starting everything again…" : "Pausing and freeing the GPU… (up to a minute)") : on ? "Back to work: resume everything" : "Pause everything for gaming"}
+        {busy
+          ? goingTo === "off" || (!goingTo && on)
+            ? "Starting everything again…"
+            : "Pausing everything… (a minute or two)"
+          : on
+            ? "Back to work: resume everything"
+            : "Pause everything"}
       </button>
       {error ? <p className="card-error">{error}</p> : null}
     </section>
