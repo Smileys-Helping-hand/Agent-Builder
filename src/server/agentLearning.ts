@@ -13,6 +13,7 @@ import type { Express, Request, Response } from "express";
 import { SecondBrainClient } from "../integrations/SecondBrainClient.js";
 import { SharedKnowledge } from "../knowledge/SharedKnowledge.js";
 import { Reinforcement } from "../learning/Reinforcement.js";
+import { FineTune } from "../learning/FineTune.js";
 import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
 
 export const registerAgentLearningRoutes = (app: Express) => {
@@ -38,6 +39,20 @@ export const registerAgentLearningRoutes = (app: Express) => {
   app.post("/api/rl/export", authenticateAgent("execute"), (req: Request, res: Response) => {
     const minReward = typeof req.body?.minReward === "number" ? req.body.minReward : 0.8;
     res.json(Reinforcement.exportDataset(minReward));
+  });
+
+  /** Fine-tuning the local model's weights on the rewarded work (FineTune). */
+  app.get("/api/rl/finetune", authenticateAgent("read"), (_req: Request, res: Response) => {
+    res.json(FineTune.status());
+  });
+
+  /** { check?: true } — check runs a few real steps on a tiny model to prove the stack trains. */
+  app.post("/api/rl/finetune", authenticateAgent("execute"), (req: Request, res: Response) => {
+    try {
+      res.status(202).json({ job: FineTune.start(req.body?.check === true) });
+    } catch (error) {
+      res.status(409).json({ error: error instanceof Error ? error.message : String(error) });
+    }
   });
 
   app.get("/api/knowledge/search", authenticateAgent("read"), async (req: Request, res: Response) => {

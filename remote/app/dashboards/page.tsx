@@ -27,6 +27,7 @@ const SCREENS: Tile[] = [
   { href: "/studio/", label: "Media Studio", hint: "Draw sprites, icons, backgrounds; MediaGen", icon: Icon.image },
   { href: "/orders/", label: "Orders", hint: "Customer orders, from arriving to handed over", icon: Icon.list },
   { href: "/research/", label: "Research", hint: "Topics, findings and what was learned", icon: Icon.flask },
+  { href: "/agent/", label: "Agent Builder", hint: "Its level and abilities, talk with it, its training ground, continuous improvement and approvals", icon: Icon.sparkle },
   { href: "/training/", label: "Training", hint: "How the agents learn; knowledge shared with Jarvis", icon: Icon.sparkle },
   { href: "/jarvis/", label: "Jarvis", hint: "The link both ways, his access, his log", icon: Icon.plug },
   { href: "/control/", label: "Control", hint: "The model's GPU/RAM split, services, power", icon: Icon.gear },

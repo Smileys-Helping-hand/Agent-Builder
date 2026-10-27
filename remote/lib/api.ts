@@ -943,6 +943,98 @@ export interface BuildDbState {
   missing: string[];
 }
 
+export interface AgentAbility {
+  id: string;
+  label: string;
+  area: "build" | "learn" | "create" | "teach" | "connect";
+  since: string | null;
+  isNew: boolean;
+  ready: boolean;
+  note?: string;
+  uses: number | null;
+}
+
+export interface AgentProfileView {
+  name: string;
+  xp: number;
+  level: number;
+  title: string;
+  levelXp: number;
+  nextLevelXp: number;
+  sources: Array<{ label: string; count: number; each: number; xp: number }>;
+  doing: { line: string; busy: boolean; parts: string[] };
+  strength: {
+    builds: { recent: number; passRate: number | null; passRateBefore: number | null; averageScore: number | null; averageScoreBefore: number | null };
+    policies: Array<{ id: string; label: string; rewarded: number; leader: string | null; confidence: number | null }>;
+  };
+  abilities: AgentAbility[];
+  newAbilities: string[];
+  growth: Array<{ at: string; xp: number; level: number }>;
+}
+
+export interface AgentMessage {
+  id: number;
+  role: "you" | "agent";
+  text: string;
+  action: { action: string; params: Record<string, unknown>; label: string } | null;
+  result: { status: number; summary: string } | null;
+  from: string;
+  createdAt: string;
+}
+
+export interface GroundState {
+  enabled: boolean;
+  dailyLimit: number;
+  today: number;
+  running: { challengeId: string; buildId: string; startedAt: string } | null;
+  challenges: Array<{ id: string; title: string; level: number; brief: string; source: string; tries: number; wins: number; best: number | null; lastScore: number | null }>;
+  runs: Array<{ id: string; challengeId: string; buildId: string; startedAt: string; finishedAt: string | null; state: string; score: number | null }>;
+}
+
+export interface ImproveSession {
+  id: string;
+  projectId: string;
+  projectName: string;
+  liveBranch: string | null;
+  focus: string;
+  state: "running" | "waiting" | "stopped";
+  phase: string;
+  startedAt: string;
+  stoppedAt: string | null;
+  cycles: number;
+  currentBuildId: string | null;
+  lastError: string | null;
+}
+
+export interface ImproveCandidate {
+  id: string;
+  sessionId: string;
+  projectId: string;
+  projectName: string;
+  buildId: string;
+  title: string;
+  why: string;
+  kind: string;
+  state: "building" | "testing" | "awaiting" | "approved" | "rejected" | "failed" | "conflict";
+  createdAt: string;
+  decidedAt: string | null;
+  files: string[];
+  test: { passed: boolean; score: number | null; failing: string[] } | null;
+  commit: { hash: string; branch: string } | null;
+  note: string | null;
+}
+
+export interface FineTuneJob {
+  id: string;
+  check: boolean;
+  state: "running" | "done" | "failed" | "not-enough-data";
+  startedAt: string;
+  finishedAt: string | null;
+  events: Array<Record<string, unknown>>;
+  out: string | null;
+  error: string | null;
+}
+
 export interface RlPolicyStats {
   id: string;
   label: string;
@@ -1299,6 +1391,25 @@ export const api = {
     }),
 
   projects: () => request<{ projects: Project[] }>("/api/ecosystem/projects"),
+  agentProfile: () => request<AgentProfileView>("/api/agent/profile", {}, 30000),
+  agentChat: () => request<{ messages: AgentMessage[]; pending: ChatPending | null }>("/api/agent/chat"),
+  agentSay: (message: string) =>
+    request<{ question: AgentMessage; pending: ChatPending | null }>("/api/agent/chat", { method: "POST", body: JSON.stringify({ message }) }),
+  agentAct: (messageId: number) =>
+    request<{ ok: boolean; action: string; summary: string }>(`/api/agent/chat/${messageId}/act`, { method: "POST" }, 120000),
+  agentClear: () => request<{ cleared: number }>("/api/agent/chat", { method: "DELETE" }),
+  ground: () => request<GroundState>("/api/agent/ground"),
+  groundPractise: (challengeId?: string) => request<{ run: unknown }>("/api/agent/ground/practise", { method: "POST", body: JSON.stringify({ challengeId }) }),
+  groundEnabled: (enabled: boolean) => request<GroundState>("/api/agent/ground/enabled", { method: "POST", body: JSON.stringify({ enabled }) }),
+  groundHarder: () => request<{ added: unknown[] }>("/api/agent/ground/harder", { method: "POST" }, 600000),
+  continuous: () => request<{ sessions: ImproveSession[]; candidates: ImproveCandidate[] }>("/api/agent/continuous"),
+  continuousStart: (projectId: string, focus: string) =>
+    request<{ session: ImproveSession }>("/api/agent/continuous/start", { method: "POST", body: JSON.stringify({ projectId, focus }) }),
+  continuousStop: (id: string) => request<{ session: ImproveSession }>(`/api/agent/continuous/${encodeURIComponent(id)}/stop`, { method: "POST" }),
+  approvalDiff: (id: string) => request<{ diff: string }>(`/api/agent/approvals/${encodeURIComponent(id)}/diff`),
+  approve: (id: string) => request<{ candidate: ImproveCandidate }>(`/api/agent/approvals/${encodeURIComponent(id)}/approve`, { method: "POST" }, 120000),
+  reject: (id: string, note?: string) =>
+    request<{ candidate: ImproveCandidate }>(`/api/agent/approvals/${encodeURIComponent(id)}/reject`, { method: "POST", body: JSON.stringify({ note }) }),
   projectContext: (id: string) => request<{ markdown: string }>(`/api/ecosystem/projects/${id}/context?github=0`, {}, 45000),
   handoff: () => request<{ markdown: string }>("/api/ecosystem/handoff"),
   diagnose: (id: string) =>
@@ -1782,6 +1893,14 @@ export const api = {
     request<{ ok: boolean }>(`/api/learn/${encodeURIComponent(topicId)}/lessons/${index}/feedback`, { method: "POST", body: JSON.stringify({ good }) }),
   rlStats: () => request<{ policies: RlPolicyStats[]; recent: RlEpisode[] }>("/api/rl/stats"),
   rlExport: () => request<{ dir: string; sft: number; dpo: number }>("/api/rl/export", { method: "POST", body: JSON.stringify({}) }),
+  fineTune: () =>
+    request<{
+      ready: boolean;
+      detail: string;
+      running: FineTuneJob | null;
+      jobs: FineTuneJob[];
+    }>("/api/rl/finetune"),
+  startFineTune: (check: boolean) => request<{ job: FineTuneJob }>("/api/rl/finetune", { method: "POST", body: JSON.stringify({ check }) }),
   knowledgeSearch: (q: string) =>
     request<KnowledgeSearchResult>(`/api/knowledge/search?q=${encodeURIComponent(q)}`, {}, 30000),
   knowledgeStatus: () =>

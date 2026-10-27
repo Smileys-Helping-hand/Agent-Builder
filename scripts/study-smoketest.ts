@@ -143,6 +143,18 @@ const main = async () => {
     if (ResearchChat.pending(topic.id) || last?.role !== "research") fail("the answer (or its failure) was not saved");
     console.log("[PASS] chat: returns at once, one question at a time, the answer (here: the model being down) is saved");
   } else {
+    // Distinct findings, as a topic that has researched a while would have.
+    for (const claim of [
+      "Kaluza-Klein theory unifies gravity and electromagnetism by adding a fifth, curled-up spatial dimension.",
+      "String theory requires ten spacetime dimensions, six of them compactified on Calabi-Yau manifolds.",
+      "Experiments at the Large Hadron Collider have found no evidence of large extra dimensions at TeV energies.",
+      "Torsion-balance tests of Newton's inverse-square law constrain extra dimensions to below about 50 micrometres.",
+      "The ADD model proposes large extra dimensions to explain why gravity is so much weaker than other forces.",
+      "In the Randall-Sundrum model a warped extra dimension separates two branes.",
+      "A tesseract is the four-dimensional analogue of a cube, used to visualise a fourth spatial dimension."
+    ]) {
+      ResearchStore.addOrReinforceFinding(topic.id, { claim, sourceId: paper.id, confidence: 0.85 }, 2);
+    }
     console.log("Live: planning a course with the real model…");
     StudyCourse.plan(topic.id, "beginner");
     for (let i = 0; i < 900 && StudyCourse.get(topic.id)?.status === "planning"; i++) await new Promise((r) => setTimeout(r, 2000));

@@ -57,6 +57,7 @@ import { registerJarvisLibraryRoutes } from "./jarvisLibrary.js";
 import { registerBuilderAskRoutes } from "./builderAsk.js";
 import { registerStudyRoutes } from "./study.js";
 import { registerAgentLearningRoutes } from "./agentLearning.js";
+import { registerAgentRoutes } from "./agent.js";
 import { RewardWiring } from "../learning/RewardWiring.js";
 import { registerScreenRoutes } from "./screens.js";
 import { registerHostRoutes } from "./host.js";
@@ -279,6 +280,8 @@ registerStudyRoutes(app);
 // Reinforcement learning (policies, rewards, datasets) and the knowledge shared with Jarvis.
 registerAgentLearningRoutes(app);
 RewardWiring.start();
+// Agent Builder as an agent: profile and growth, conversation, training ground, continuous improvement.
+registerAgentRoutes(app);
 registerEcosystemRoutes(app);
 registerServiceRoutes(app);
 registerJarvisRoutes(app);

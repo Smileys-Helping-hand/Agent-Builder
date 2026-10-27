@@ -22,6 +22,53 @@ const SOURCE: Record<string, string> = {
   unusable: "unusable output"
 };
 
+/** Training the model's own weights (QLoRA SFT, then DPO) on what was rewarded. */
+function FineTunePanel() {
+  const toast = useToast();
+  const status = useRemote(() => api.fineTune(), 10000, "finetune");
+  const [busy, setBusy] = useState(false);
+  const s = status.data;
+  const start = async (check: boolean) => {
+    setBusy(true);
+    try {
+      await api.startFineTune(check);
+      toast(check ? "Checking the training stack: a few real steps on a small model." : "Training started. Builds and research wait while it has the graphics card.", "ok");
+      await status.refresh();
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const last = s?.running ?? s?.jobs[0] ?? null;
+  const loss = last?.events.find((e) => e.event === "sft-done") as { loss_first?: number; loss_last?: number } | undefined;
+  return (
+    <div className="card">
+      <p className="small" style={{ marginTop: 0 }}>
+        Trains a LoRA adapter for the local model on the rewarded answers (supervised), then on your preferences (DPO). It needs 50
+        rewarded answers to be worth it, and the whole graphics card while it runs. {s ? s.detail : ""}
+      </p>
+      <div className="learn-plan">
+        <button className="btn" disabled={busy || !s?.ready || Boolean(s?.running)} onClick={() => void start(true)}>
+          Check the training stack
+        </button>
+        <button className="btn primary" disabled={busy || !s?.ready || Boolean(s?.running)} onClick={() => void start(false)}>
+          Fine-tune now
+        </button>
+      </div>
+      {last ? (
+        <p className="small">
+          {last.check ? "Stack check" : "Training"} {ago(last.startedAt)}: <b>{last.state}</b>
+          {loss?.loss_first !== undefined ? ` · loss ${loss.loss_first.toFixed(3)} → ${loss.loss_last?.toFixed(3)}` : ""}
+          {last.state === "not-enough-data" ? " · not enough rewarded answers yet" : ""}
+          {last.error ? <span className="bad-text"> · {last.error.slice(0, 300)}</span> : null}
+          {last.out ? <span className="muted"> · adapter in {last.out}</span> : null}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export default function Training() {
   const connected = useConnected();
   const toast = useToast();
@@ -147,6 +194,10 @@ export default function Training() {
             {exporting ? <Busy label="Exporting…" /> : "Export training data"}
           </button>
         </div>
+
+        <div className="section-title">Fine-tune the model</div>
+        <FineTunePanel />
+
 
         <div className="section-title">Knowledge shared with Jarvis</div>
         <div className="card">

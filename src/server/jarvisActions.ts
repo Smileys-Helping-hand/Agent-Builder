@@ -342,6 +342,32 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
   },
   { name: "research.report", area: "research", label: "A topic's reports (summary, study guide, full report) to read", scope: "read", params: { topicId: "the topic" }, call: (p) => ["GET", `/api/research/topics/${enc(str(p.topicId))}`] },
 
+  // ── Agent Builder itself: conversation, growth, practice, continuous improvement ──
+  {
+    name: "agent.chat",
+    area: "agent",
+    label: "Talk with Agent Builder itself — what it is doing, what it has learned, how it is growing, what it thinks; it may propose an action (waits for its answer)",
+    scope: "write",
+    params: { message: "what to say to it" },
+    call: (p) => ["POST", "/api/agent/chat?wait=1", { message: str(p.message) || str(p.text), source: "jarvis" }]
+  },
+  { name: "agent.act", area: "agent", label: "Do what Agent Builder just proposed in conversation (\"do it\", \"go ahead\")", scope: "write", params: {}, call: () => ["POST", "/api/agent/chat/latest/act", {}] },
+  { name: "agent.profile", area: "agent", label: "Agent Builder's level, XP, abilities (new ones flagged), whether it is getting stronger, and what it is doing", scope: "read", params: {}, call: () => ["GET", "/api/agent/profile"] },
+  { name: "ground.state", area: "agent", label: "Its training ground: practice challenges and how it scores on each", scope: "read", params: {}, call: () => ["GET", "/api/agent/ground"] },
+  { name: "ground.practise", area: "agent", label: "Have it practise a challenge now (its weakest when none is named)", scope: "execute", params: { "challengeId?": "a challenge" }, call: (p) => ["POST", "/api/agent/ground/practise", pick(p, "challengeId")] },
+  { name: "continuous.list", area: "agent", label: "Continuous improvement: projects being improved, and improvements waiting for approval", scope: "read", params: {}, call: () => ["GET", "/api/agent/continuous"] },
+  {
+    name: "continuous.start",
+    area: "agent",
+    label: "Improve a project continuously (24/7 until stopped): each change is built and tested on a copy and waits for approval",
+    scope: "execute",
+    params: { projectId: "the project", "focus?": "what to concentrate on" },
+    call: (p) => ["POST", "/api/agent/continuous/start", pick(p, "projectId", "focus")]
+  },
+  { name: "continuous.stop", area: "agent", label: "Stop improving a project", scope: "execute", params: { sessionId: "the session" }, call: (p) => ["POST", `/api/agent/continuous/${enc(str(p.sessionId))}/stop`, {}] },
+  { name: "approvals.approve", area: "agent", label: "Approve an improvement: apply it to the project and commit it on its live branch", scope: "execute", params: { candidateId: "the improvement" }, call: (p) => ["POST", `/api/agent/approvals/${enc(str(p.candidateId))}/approve`, {}] },
+  { name: "approvals.reject", area: "agent", label: "Reject an improvement", scope: "execute", params: { candidateId: "the improvement", "note?": "why" }, call: (p) => ["POST", `/api/agent/approvals/${enc(str(p.candidateId))}/reject`, pick(p, "note")] },
+
   // ── Knowledge shared with Jarvis, and how the agents learn ────────────────
   {
     name: "knowledge.search",

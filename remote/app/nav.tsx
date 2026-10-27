@@ -13,6 +13,7 @@ const items = [
   { href: "/", label: "Home", icon: Icon.power },
   { href: "/build", label: "Build", icon: Icon.sparkle },
   { href: "/gamemaker", label: "Games", icon: Icon.game },
+  { href: "/agent", label: "Agent", icon: Icon.sparkle },
   { href: "/try", label: "Try it", icon: Icon.play },
   { href: "/dashboards", label: "All", icon: Icon.expand },
   { href: "/orders", label: "Orders", icon: Icon.list },
