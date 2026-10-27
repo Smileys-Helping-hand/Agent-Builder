@@ -27,6 +27,7 @@ import { ContextPack } from "../ecosystem/ContextPack.js";
 import { EcosystemStore } from "../ecosystem/EcosystemStore.js";
 import { ProjectBuilds } from "../ecosystem/ProjectBuilds.js";
 import { BuildService } from "../orchestrator/BuildService.js";
+import { Reinforcement } from "../learning/Reinforcement.js";
 import { ModelRouter } from "../tools/ModelRouter.js";
 import { GameMode } from "../utils/GameMode.js";
 import { Logger } from "../utils/Logger.js";
@@ -70,6 +71,8 @@ export interface Candidate {
   test: { passed: boolean; score: number | null; failing: string[] } | null;
   commit: { hash: string; branch: string } | null;
   note: string | null;
+  /** The improve.kind episode it was proposed under: approval rewards it. */
+  episodeId?: number;
 }
 
 interface Store {
@@ -115,7 +118,7 @@ const extractJson = (text: string): Record<string, unknown> | null => {
   }
 };
 
-const think = async (session: ImproveSession, tried: Candidate[]): Promise<{ title: string; why: string; kind: string; instruction: string }> => {
+const think = async (session: ImproveSession, tried: Candidate[], preference: string): Promise<{ title: string; why: string; kind: string; instruction: string }> => {
   const context = await ContextPack.forProject(session.projectId).catch(() => null);
   const lastFailed = tried.filter((c) => c.state === "failed" && c.test && !c.test.passed).slice(-1)[0];
   const answer = await ModelRouter.generate(
@@ -127,9 +130,9 @@ ${(context?.markdown ?? "(no briefing could be read)").slice(0, 9000)}
 Already tried (do not repeat these; build on what was approved):
 ${tried.slice(-25).map((c) => `- [${c.state}] ${c.title}`).join("\n") || "- nothing yet"}
 ${lastFailed ? `\nThe last attempt failed its checks (${lastFailed.test?.failing.join(", ")}): consider fixing what that revealed.\n` : ""}
-Pick ONE improvement that makes the app better or stronger and can be finished and verified in one go: fix a bug or a
-failing check first; then reliability and error handling, missing tests, accessibility and UX, performance, then a
-small feature that clearly fits. Be specific to this code — name the screen, file or behaviour.
+Pick ONE improvement that makes the app better or stronger and can be finished and verified in one go. A failing check
+or a real bug always comes first. Otherwise: ${preference} (that is the kind of change the owner has been approving).
+Be specific to this code — name the screen, file or behaviour.
 
 Answer with JSON only:
 {"title": "<short commit-style title>", "why": "<one sentence: the problem or gain>", "kind": "fix|reliability|tests|ux|performance|feature|docs",
@@ -188,7 +191,9 @@ async function loop(id: string) {
       let candidateId: string | null = null;
       try {
         patchSession(id, { phase: "Reading the project and choosing the next improvement" });
-        const idea = await think(session, mine);
+        // What kind of change to look for is learned from what the owner approves, per project.
+        const kind = Reinforcement.choose("improve.kind", { bucket: session.projectId, agent: "continuous-improver", ref: `session:${id}:${Date.now()}` });
+        const idea = await think(session, mine, kind.arm.instruction.replace(/^Prefer:\s*/, ""));
         if (read().sessions.find((s) => s.id === id)?.state === "stopped") return;
 
         patchSession(id, { phase: `Building: ${idea.title}` });
@@ -201,6 +206,7 @@ async function loop(id: string) {
           buildId: record.buildId,
           ...idea,
           state: "building",
+          episodeId: kind.episodeId,
           createdAt: new Date().toISOString(),
           decidedAt: null,
           files: [],
@@ -230,6 +236,7 @@ async function loop(id: string) {
           const failing = (test?.checks ?? []).filter((c) => c.applicable && !c.passed).map((c) => c.name);
           const summary = { passed: Boolean(test?.passed), score: test?.score ?? null, failing };
           patchCandidate(candidate.id, test?.passed ? { state: "awaiting", test: summary } : { state: "failed", test: summary, note: test?.error ?? `Checks failed: ${failing.join(", ") || "unknown"}` });
+          if (!test?.passed) Reinforcement.reward(kind.episodeId, 0.2, "checks-failed");
         }
         failures = 0;
         patchSession(id, { cycles: (read().sessions.find((s) => s.id === id)?.cycles ?? 0) + 1, currentBuildId: null, lastError: null });
@@ -343,6 +350,7 @@ export const ContinuousImprover = {
       note = `Applied, not committed: ${(error as Error)?.message}`;
     }
     patchCandidate(candidateId, { state: "approved", decidedAt: new Date().toISOString(), commit, note });
+    if (candidate.episodeId) Reinforcement.reward(candidate.episodeId, 1, "owner-decision");
     EcosystemStore.recordEvent(candidate.projectId, "build", `Approved improvement: ${candidate.title}`);
     return read().candidates.find((c) => c.id === candidateId)!;
   },
@@ -351,6 +359,7 @@ export const ContinuousImprover = {
     const candidate = read().candidates.find((c) => c.id === candidateId);
     if (!candidate) throw new Error("Unknown improvement.");
     patchCandidate(candidateId, { state: "rejected", decidedAt: new Date().toISOString(), note: note.slice(0, 300) || null });
+    if (candidate.episodeId) Reinforcement.reward(candidate.episodeId, 0, "owner-decision", note);
     return read().candidates.find((c) => c.id === candidateId)!;
   },
 

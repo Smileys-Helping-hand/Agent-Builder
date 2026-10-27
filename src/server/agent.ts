@@ -38,6 +38,7 @@ export const registerAgentRoutes = (app: Express) => {
   );
   registerProfileSources({
     approvedImprovements: () => ContinuousImprover.approvedCount(),
+    waitingApprovals: () => ContinuousImprover.list().candidates.filter((c) => c.state === "awaiting" || c.state === "conflict").length,
     practiceWins: () => TrainingGround.wins(),
     continuousRunning: () => ContinuousImprover.running(),
     practising: () => TrainingGround.practising()
@@ -57,7 +58,8 @@ export const registerAgentRoutes = (app: Express) => {
   app.post("/api/agent/chat", authenticateAgent("write"), async (req: Request, res: Response) => {
     if (GameMode.isOn()) return res.status(409).json({ error: "Game mode is on: the graphics card is yours. Switch it off to talk." });
     const text = typeof req.body?.message === "string" ? req.body.message : "";
-    const source = typeof req.body?.source === "string" ? req.body.source.slice(0, 20) : (req as AgentRequest).agent?.name ?? "app";
+    // Jarvis says so himself (his bridge action sends source "jarvis"); everything else is the owner in the app.
+    const source = req.body?.source === "jarvis" ? "jarvis" : "app";
     try {
       if (req.query.wait === "1") return res.json(await AgentChat.ask(text, source));
       const { question } = AgentChat.start(text, source);

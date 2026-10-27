@@ -240,6 +240,9 @@ export default function GameMakerStudio() {
                 </h4>
                 <span className="tag info">{deconstructReport.totalFiles} Source Files Analyzed</span>
               </div>
+              {deconstructReport.analysedBy === "scan" && deconstructReport.note ? (
+                <p className="small" style={{ color: "#fbbf24", margin: "6px 0" }}>{deconstructReport.note}</p>
+              ) : null}
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div>

@@ -70,6 +70,19 @@ export const POLICIES: Policy[] = [
     ]
   },
   {
+    id: "improve.kind",
+    agent: "continuous-improver",
+    label: "What kind of improvement it proposes (per project)",
+    reward: "your decision: approved 1, rejected 0 (a change that failed its checks: 0.2)",
+    arms: [
+      { id: "fixes", label: "Fixes and reliability", instruction: "Prefer: a bug fix, error handling or a reliability problem." },
+      { id: "tests", label: "Tests and quality", instruction: "Prefer: missing tests, types or code quality that guards behaviour." },
+      { id: "ux", label: "User experience", instruction: "Prefer: something the user sees — clearer screens, accessibility, feedback, mobile layout." },
+      { id: "performance", label: "Performance", instruction: "Prefer: something slow — load time, rendering, data fetching, bundle size." },
+      { id: "features", label: "Small features", instruction: "Prefer: a small feature that clearly fits what the app is for." }
+    ]
+  },
+  {
     id: "build.approach",
     agent: "builder",
     label: "How a new build plans its first pass",

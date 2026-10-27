@@ -257,7 +257,7 @@ function Talk() {
                 </button>
               )
             ) : null}
-            {m.from !== "app" && m.role === "you" ? <small className="muted">via {m.from}</small> : null}
+            {m.from === "jarvis" && m.role === "you" ? <small className="muted">via Jarvis</small> : null}
           </div>
         ))}
         {sending ? (

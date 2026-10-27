@@ -52,7 +52,8 @@
     "test:unity-level": "tsx scripts/unity-level-smoketest.ts",
     "test:db-kit": "tsx scripts/db-kit-smoketest.ts",
     "test:study": "tsx scripts/study-smoketest.ts",
-    "test:rl": "tsx scripts/rl-smoketest.ts"
+    "test:rl": "tsx scripts/rl-smoketest.ts",
+    "test:continuous": "tsx scripts/continuous-smoketest.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",

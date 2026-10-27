@@ -41,6 +41,9 @@ export interface AppDeconstructionReport {
   components: DissectedComponent[];
   stateStores: string[];
   flawsDetected: string[];
+  /** "model": the code model analysed it. "scan": only what scanning the files found (the model did not answer in time). */
+  analysedBy?: "model" | "scan";
+  note?: string;
   upgradeOpportunities: string[];
   rebuildBlueprint: {
     title: string;
@@ -219,7 +222,8 @@ JSON only:`;
     try {
       const modelResp = await Promise.race([
         ModelRouter.generateForRole("code", analysisPrompt),
-        new Promise<string>((_, reject) => setTimeout(() => reject(new Error("Timeout")), 25_000))
+        // The app waits on this request (and the tunnel cuts it at 100 s): give the model what it can have.
+        new Promise<string>((_, reject) => setTimeout(() => reject(new Error("no answer in time")), Number(process.env.DECONSTRUCT_TIMEOUT_MS ?? 55_000)))
       ]);
       const jsonMatch = /\{[\s\S]*\}/.exec(modelResp);
       if (jsonMatch) {
@@ -234,6 +238,7 @@ JSON only:`;
             components,
             stateStores,
             flawsDetected,
+            analysedBy: "model",
             upgradeOpportunities: parsed.upgradeOpportunities || [
               "Migrate to strict TypeScript with zero 'any' types",
               "Integrate 3D spatial models and Blender asset pipeline",
@@ -267,22 +272,20 @@ JSON only:`;
       components,
       stateStores,
       flawsDetected,
+      analysedBy: "scan",
+      note: "The code model did not answer in time, so this is only what scanning the files found. Run it again when the PC is less busy for a judged analysis.",
+      // Only what the scan actually found — no generic advice dressed up as analysis.
       upgradeOpportunities: [
-        "Modernize UI with glassmorphism styling and 60fps animations",
-        "Add procedural Web Audio API feedback for interactive controls",
-        "Extract deterministic logic functions covered by passing Vitest unit tests"
+        ...(flawsDetected.some((flaw) => /Stub|Placeholder/i.test(flaw)) ? ["Finish the stubbed and placeholder code the scan found"] : []),
+        ...(flawsDetected.some((flaw) => /any/.test(flaw)) ? ["Replace the loose 'any' types the scan found with real types"] : []),
+        ...(stateStores.length === 0 && components.length > 5 ? ["Pull shared state out of components into one store"] : [])
       ],
       rebuildBlueprint: {
-        title: `Rebuilt & Supercharged ${projectName}`,
-        description: `Complete clean-slate rebuild of ${projectName} retaining all core workflows while adding modern UI, full type safety, and procedural sound.`,
-        suggestedPlatforms: ["web", "windows", "android"],
-        modernizedStack: "React + TypeScript + Vite + Tailwind",
-        fileManifest: [
-          { path: "src/App.tsx", purpose: "Polished responsive application container" },
-          { path: "src/store/state.ts", purpose: "Central state management and reducers" },
-          { path: "src/store/state.test.ts", purpose: "Automated unit tests" },
-          { path: "src/styles.css", purpose: "High polish styling tokens and animation transitions" }
-        ]
+        title: `Rebuild of ${projectName}`,
+        description: `A rebuild of ${projectName} (${framework}) keeping its ${features.length} detected features and fixing the ${flawsDetected.length} problems the scan found.`,
+        suggestedPlatforms: ["web"],
+        modernizedStack: framework,
+        fileManifest: []
       }
     };
 

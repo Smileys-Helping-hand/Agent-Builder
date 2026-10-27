@@ -127,9 +127,16 @@ const main = async () => {
   console.log("All reinforcement-learning checks passed.");
 };
 
+// Exit once open sockets have closed: process.exit() while a socket is still
+// closing trips a libuv assertion on Windows (exit 127) about one run in three.
+const finish = (code: number) => {
+  process.exitCode = code;
+  setTimeout(() => process.exit(code), 1500).unref();
+};
+
 main()
-  .then(() => process.exit(0))
+  .then(() => finish(0))
   .catch((error) => {
     console.error("RL smoketest failed:", error?.message ?? error);
-    process.exit(1);
+    finish(1);
   });

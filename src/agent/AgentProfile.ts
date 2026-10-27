@@ -15,9 +15,10 @@
  * A snapshot is appended to data/agent/growth.jsonl every few hours so the
  * app can draw its growth over time. Jarvis's town shows the same profile.
  */
-import { execFileSync } from "child_process";
+import { execFile } from "child_process";
 import fs from "fs";
 import path from "path";
+import { promisify } from "util";
 
 import { getKnowledgeDb } from "../knowledge/KnowledgeDb.js";
 import { BuildService } from "../orchestrator/BuildService.js";
@@ -67,24 +68,29 @@ const ABILITY_DEFS: Array<Omit<Ability, "since" | "isNew" | "ready" | "uses" | "
 ];
 
 const NEW_DAYS = 14;
-let sinceCache: Map<string, string | null> | null = null;
+const sinceCache = new Map<string, string | null>();
+let datesRead = false;
+const run = promisify(execFile);
 
-/** When each ability's file first entered the repository (git), read once per process. */
-const firstCommitDates = (): Map<string, string | null> => {
-  if (sinceCache) return sinceCache;
-  sinceCache = new Map();
+/**
+ * When each ability's file first entered the repository (git), read once in
+ * the background: nineteen `git log --follow` runs would freeze the server if
+ * they ran inside a request (Jarvis's bridge asks for the profile every beat).
+ * Until they are in, abilities show without dates.
+ */
+const readCommitDates = async () => {
+  if (datesRead) return;
+  datesRead = true;
   for (const def of ABILITY_DEFS) {
-    let since: string | null = null;
     try {
-      const out = execFileSync("git", ["log", "--diff-filter=A", "--follow", "--format=%aI", "--", def.file], { encoding: "utf8", timeout: 10_000, windowsHide: true }).trim();
-      since = out.split("\n").filter(Boolean).pop() ?? null;
+      const { stdout } = await run("git", ["log", "--diff-filter=A", "--follow", "--format=%aI", "--", def.file], { encoding: "utf8", timeout: 20_000, windowsHide: true });
+      sinceCache.set(def.id, stdout.trim().split("\n").filter(Boolean).pop() ?? null);
     } catch {
-      since = null;
+      sinceCache.set(def.id, null);
     }
-    sinceCache.set(def.id, since);
   }
-  return sinceCache;
 };
+const firstCommitDates = (): Map<string, string | null> => sinceCache;
 
 const TITLES: Array<[number, string]> = [
   [1, "Apprentice"],
@@ -109,8 +115,14 @@ const count = (sql: string, ...args: unknown[]): number => {
 };
 
 /** Late-bound, so this module does not import the agents that import it. */
-type Extra = { approvedImprovements: () => number; practiceWins: () => number; continuousRunning: () => string[]; practising: () => string | null };
-let extra: Extra = { approvedImprovements: () => 0, practiceWins: () => 0, continuousRunning: () => [], practising: () => null };
+type Extra = {
+  approvedImprovements: () => number;
+  waitingApprovals: () => number;
+  practiceWins: () => number;
+  continuousRunning: () => string[];
+  practising: () => string | null;
+};
+let extra: Extra = { approvedImprovements: () => 0, waitingApprovals: () => 0, practiceWins: () => 0, continuousRunning: () => [], practising: () => null };
 export const registerProfileSources = (sources: Partial<Extra>) => {
   extra = { ...extra, ...sources };
 };
@@ -143,13 +155,15 @@ export const AgentProfile = {
     };
     const now = Date.now();
     return ABILITY_DEFS.map((def) => {
+      // Until the background read is in, nothing is called new (or every ability would be).
+      const known = dates.has(def.id);
       const since = dates.get(def.id) ?? null;
       return {
         id: def.id,
         label: def.label,
         area: def.area,
         since,
-        isNew: since === null || now - Date.parse(since) < NEW_DAYS * 86_400_000,
+        isNew: known && (since === null || now - Date.parse(since) < NEW_DAYS * 86_400_000),
         ready: readiness[def.id]?.ready ?? true,
         note: readiness[def.id]?.note,
         uses: uses[def.id] ?? null
@@ -223,9 +237,11 @@ export const AgentProfile = {
     if (practice) parts.push(`Practising: ${practice}`);
     const unity = UnityLevelStudio.listJobs().find((j) => !["done", "failed"].includes(j.status));
     if (unity) parts.push(`Designing a Unity level`);
+    const waiting = extra.waitingApprovals();
+    if (waiting) parts.push(`${waiting} improvement${waiting === 1 ? "" : "s"} waiting for your approval`);
     const researching = ResearchStore.listTopics().filter((t) => t.status === "running").length;
     if (researching) parts.push(`Researching ${researching} topic${researching === 1 ? "" : "s"}`);
-    return { line: parts[0] ?? "Ready for work", busy: parts.length > 0 && !parts[0].startsWith("Researching"), parts };
+    return { line: parts[0] ?? "Ready for work", busy: parts.length > 0 && !parts[0].startsWith("Researching") && !/waiting for your approval/.test(parts[0]), parts };
   },
 
   /** Everything at once: what the app's agent page and Jarvis's town show. */
@@ -271,6 +287,7 @@ export const AgentProfile = {
   },
 
   start() {
+    void readCommitDates();
     AgentProfile.recordGrowth();
     setInterval(() => AgentProfile.recordGrowth(), 3_600_000).unref?.();
   }

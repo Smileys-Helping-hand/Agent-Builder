@@ -10,8 +10,10 @@
  * Returns both a JSON object and a markdown briefing; models do better with the
  * prose, tools do better with the fields.
  */
+import { execFile } from "child_process";
 import fs from "fs";
 import path from "path";
+import { promisify } from "util";
 
 import { EcosystemStore, type EcosystemIssue, type EcosystemProject } from "./EcosystemStore.js";
 import { GitHubClient, repoFromRemote, type GitHubRepoStatus } from "./GitHubClient.js";
@@ -34,20 +36,18 @@ export interface ProjectContext {
   markdown: string;
 }
 
-const listUncommitted = (projectPath: string): string[] => {
+// `require` does not exist in this ES module: the old version always threw,
+// was caught, and every project read as having nothing uncommitted.
+const listUncommitted = async (projectPath: string): Promise<string[]> => {
   try {
-    const { execFileSync } = require("child_process") as typeof import("child_process");
-    const output = execFileSync("git", ["status", "--porcelain"], {
-      cwd: projectPath,
-      encoding: "utf8",
-      timeout: 10_000,
-      windowsHide: true
-    });
-    return output.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 40);
+    const { stdout } = await runFile("git", ["status", "--porcelain"], { cwd: projectPath, encoding: "utf8", timeout: 10_000, windowsHide: true });
+    return stdout.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 40);
   } catch {
     return [];
   }
 };
+
+const runFile = promisify(execFile);
 
 const readProjectNotes = (projectPath: string): string | null => {
   for (const name of ["CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md"]) {
@@ -217,7 +217,7 @@ export const ContextPack = {
       GitLog.commits(project.path, 10),
       Promise.resolve(AiSessions.forProject(id, 6))
     ]);
-    const uncommitted = listUncommitted(project.path);
+    const uncommitted = await listUncommitted(project.path);
     const notes = readProjectNotes(project.path);
     const recentActivity = EcosystemStore.listEvents(10, id).map((event) => ({
       kind: event.kind,
