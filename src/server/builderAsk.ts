@@ -20,6 +20,7 @@ import type { Express, Request, Response } from "express";
 import { TemplateAcademy } from "../academy/TemplateAcademy.js";
 import { BuildService } from "../orchestrator/BuildService.js";
 import { ResearchStore } from "../research/ResearchStore.js";
+import { StudyCourse } from "../research/StudyCourse.js";
 import { AgentActivity } from "../state/AgentActivity.js";
 import { JarvisLibrary } from "../state/JarvisLibrary.js";
 import { ModelRouter } from "../tools/ModelRouter.js";
@@ -44,6 +45,19 @@ export const ASKABLE = [
   "research.start",
   "research.ask",
   "research.topics",
+  "research.chat",
+  "research.report",
+  "learn.courses",
+  "learn.plan",
+  "learn.course",
+  "learn.next",
+  "learn.lesson",
+  "learn.answer",
+  "learn.cards",
+  "learn.pack",
+  "knowledge.search",
+  "rl.feedback",
+  "rl.stats",
   "academy",
   "academy.add",
   "academy.propose",
@@ -97,10 +111,13 @@ const contextLines = (): string => {
   const topics = ResearchStore.listTopics()
     .slice(0, 8)
     .map((topic) => `- topic ${topic.id}: "${topic.title}"`);
+  const courses = StudyCourse.list()
+    .slice(0, 8)
+    .map((course) => `- course on topic ${course.topicId}: "${course.title}", ${course.status}, ${course.completed}/${course.total} lessons done`);
   const ideas = TemplateAcademy.list()
     .slice(0, 8)
     .map((idea) => `- template idea ${idea.id}: "${idea.name}", ${idea.status}`);
-  return [...builds, ...topics, ...ideas].join("\n") || "- nothing yet";
+  return [...builds, ...topics, ...courses, ...ideas].join("\n") || "- nothing yet";
 };
 
 export const planPrompt = (text: string): string =>
@@ -118,6 +135,8 @@ export const planPrompt = (text: string): string =>
     "- Keep the request's own words in the brief: build.message, art.draw.subject, media.generate.prompt, research.start.question.",
     "- A website, app, game or tool to make is \"build\" with a short title and the whole request as message.",
     "- A picture, sprite, icon or background is \"art.draw\"; a photo-like image or a video is \"media.generate\" (type image_fast, image_hd or video_short).",
+    '- Teaching: "teach me / explain / next lesson / I want to learn / study" about a topic that has a course is learn.next; a topic without a course is learn.plan (research.start first when no topic covers it). "Quiz me" is learn.next (its quiz). Answers to a quiz ("quiz answers: b, a, d, c") are learn.answer with answers as said. "My flashcards" is learn.cards. A question about what a topic found is research.chat with the question as message. "Teach me about X" with no topic on X is research.start (title X), so there is research to teach from.',
+    '- A verdict on the last answer or lesson ("that was great / helpful / confusing / wrong", "good lesson") is rl.feedback with good true or false and his words as note. "What do you know about X" across everything is knowledge.search.',
     "- Use an id only from the list above; when the request names a build, topic or idea that is not listed, use the action that lists them.",
     '- If no action fits, answer {"action": "none", "params": {}, "say": "<why, in one sentence>"}.',
     "",
@@ -132,7 +151,8 @@ export const registerBuilderAskRoutes = (app: Express) => {
 
     let plan: Plan | null = null;
     try {
-      plan = parsePlan(await ModelRouter.generate(planPrompt(text)));
+      // Jarvis is waiting on this: ahead of research and builds on the GPU.
+      plan = parsePlan(await ModelRouter.generate(planPrompt(text), { priority: "interactive" }));
     } catch (error) {
       return res.status(503).json({ ok: false, error: `The builder's model could not read the request: ${error instanceof Error ? error.message : String(error)}` });
     }

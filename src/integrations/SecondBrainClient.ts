@@ -93,7 +93,46 @@ const timedFetch = async (url: string, init: RequestInit = {}): Promise<Response
 
 const backoffMs = (attempts: number): number => Math.min(MAX_BACKOFF_MS, 60_000 * 2 ** Math.max(0, attempts - 1));
 
+export interface JarvisKnowledge {
+  /** The owner's own facts and preferences, as Jarvis learned them. */
+  memories: Array<{ kind: string; content: string; createdAt: string }>;
+  /** Documents other apps shared with Jarvis (not the ones this builder sent). */
+  documents: Array<{ title: string; source: string; passage: string; updatedAt: string }>;
+}
+
 export const SecondBrainClient = {
+  /**
+   * What Jarvis knows about a subject: the owner's facts and preferences, and
+   * what other apps shared with him (POST /api/ecosystem/knowledge/search).
+   * Never throws: empty when Jarvis is off, slow (4 s) or older than this route.
+   */
+  async search(query: string, limit = 6): Promise<JarvisKnowledge & { ok: boolean; detail?: string }> {
+    const { host, apiKey, enabled } = readConfig();
+    const empty = { memories: [], documents: [] };
+    if (!enabled || !host || !apiKey) return { ...empty, ok: false, detail: "Jarvis is not connected (SECOND_BRAIN_HOST / API key)." };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    try {
+      const response = await fetch(`${host}/api/ecosystem/knowledge/search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Jarvis-Api-Key": apiKey },
+        body: JSON.stringify({ query: query.slice(0, 1000), limit, source: "agent-builder" }),
+        signal: controller.signal
+      });
+      if (!response.ok) return { ...empty, ok: false, detail: `Jarvis answered ${response.status}${response.status === 404 ? " (update Jarvis: knowledge search is new)" : ""}.` };
+      const body = (await response.json()) as Partial<JarvisKnowledge>;
+      return {
+        ok: true,
+        memories: Array.isArray(body.memories) ? body.memories.slice(0, limit) : [],
+        documents: Array.isArray(body.documents) ? body.documents.slice(0, limit) : []
+      };
+    } catch (error) {
+      return { ...empty, ok: false, detail: `Jarvis did not answer (${(error as Error)?.name === "AbortError" ? "timed out" : (error as Error)?.message}).` };
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+
   /** Queue (or re-queue with fresh content) a document. The same externalId always updates the same Second-Brain document. */
   enqueueDocument(externalId: string, title: string, content: string): void {
     const now = nowIso();
@@ -236,7 +275,9 @@ export const SecondBrainClient = {
     let identityVerified = false;
     if (host) {
       try {
-        const response = await timedFetch(`${host}/api/health`, { headers: { Accept: "application/json" } });
+        let response = await timedFetch(`${host}/api/health`, { headers: { Accept: "application/json" } });
+        // Jarvis keeps /api/health behind sign-in; his public status route says who he is.
+        if (!response.ok) response = await timedFetch(`${host}/api/jarvis/status`, { headers: { Accept: "application/json" } });
         reachable = true;
         identityVerified = response.ok && (response.headers.get("content-type") ?? "").includes("application/json");
         if (!identityVerified) {

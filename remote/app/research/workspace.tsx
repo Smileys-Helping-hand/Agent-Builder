@@ -12,11 +12,13 @@ import { createPortal } from "react-dom";
 import { api, type TopicDetail, type TopicFinding } from "@/lib/api";
 import { Banner, Busy, Icon, Skeleton, ago, useRemote, useToast } from "../ui";
 import { Talk } from "./talk";
+import { Learn } from "./learn";
 
-type Tab = "live" | "talk" | "findings" | "questions" | "sources" | "documents" | "settings";
+type Tab = "live" | "learn" | "talk" | "findings" | "questions" | "sources" | "documents" | "settings";
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: "live", label: "Live" },
+  { id: "learn", label: "Learn" },
   { id: "talk", label: "Talk" },
   { id: "findings", label: "Findings" },
   { id: "questions", label: "Questions" },
@@ -103,6 +105,7 @@ export function TopicWorkspace({
       </div>
       <div className="ws-body fade-in" key={tab}>
         {tab === "live" ? <LiveFeed data={data} /> : null}
+        {tab === "learn" ? <Learn data={data} /> : null}
         {tab === "talk" ? <Talk data={data} onResearchThis={() => void detail.refresh()} /> : null}
         {tab === "findings" ? <Findings data={data} busy={busy} act={act} /> : null}
         {tab === "questions" ? <Questions data={data} busy={busy} act={act} /> : null}
@@ -448,7 +451,11 @@ function Settings({ data, busy, act, onDeleted }: { data: TopicDetail; busy: boo
   );
 }
 
-/** Just enough Markdown for the research documents: headings, lists, bold, links, paragraphs. */
+/**
+ * Just enough Markdown for the research documents and lessons: headings,
+ * lists (with a quoted excerpt under an item), quotes, tables, rules, bold,
+ * italics, code and links.
+ */
 export function Markdown({ text }: { text: string }) {
   const blocks = text.replace(/\r\n/g, "\n").split(/\n{2,}/);
   return (
@@ -461,23 +468,66 @@ export function Markdown({ text }: { text: string }) {
           const content = inline(heading[2]);
           return level <= 1 ? <h2 key={index}>{content}</h2> : level === 2 ? <h3 key={index}>{content}</h3> : <h4 key={index}>{content}</h4>;
         }
-        // Text and list lines can share a block ("Still open:" then its items): keep each run as what it is.
-        const runs: Array<{ list: boolean; lines: string[] }> = [];
+        if (/^\s*(-{3,}|\*{3,})\s*$/.test(block)) return <hr key={index} />;
+        if (lines.every((line) => /^\s*\|/.test(line))) {
+          const rows = lines.filter((line) => !/^\s*\|[\s:|-]+\|\s*$/.test(line)).map((line) => line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim()));
+          return (
+            <div key={index} className="md-table">
+              <table>
+                <thead>
+                  <tr>{rows[0]?.map((cell, i) => <th key={i}>{inline(cell)}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {rows.slice(1).map((row, r) => (
+                    <tr key={r}>{row.map((cell, i) => <td key={i}>{inline(cell)}</td>)}</tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
+        // Text, list and quote lines can share a block ("Still open:" then its items): keep each run as what it is.
+        type Kind = "ul" | "ol" | "quote" | "text";
+        const kindOf = (line: string): Kind =>
+          /^\s{2,}>\s?/.test(line) ? "quote" : /^\s*>\s?/.test(line) ? "quote" : /^\s*\d+\.\s+/.test(line) ? "ol" : /^\s*[-*]\s+/.test(line) ? "ul" : "text";
+        const runs: Array<{ kind: Kind; lines: string[]; quotes: Record<number, string[]> }> = [];
         for (const line of lines) {
-          const list = /^\s*([-*]|\d+\.)\s+/.test(line);
-          if (runs.length && runs[runs.length - 1].list === list) runs[runs.length - 1].lines.push(line);
-          else runs.push({ list, lines: [line] });
+          const kind = kindOf(line);
+          const last = runs[runs.length - 1];
+          // An indented quote under a list item belongs to that item (a source's own words).
+          if (kind === "quote" && /^\s{2,}>/.test(line) && last && (last.kind === "ul" || last.kind === "ol")) {
+            (last.quotes[last.lines.length - 1] ??= []).push(line.replace(/^\s*>\s?/, ""));
+            continue;
+          }
+          if (last && last.kind === kind) last.lines.push(line);
+          else runs.push({ kind, lines: [line], quotes: {} });
         }
         return (
           <div key={index} className="md-block">
-            {runs.map((run, r) =>
-              run.list ? (
-                <ul key={r}>
-                  {run.lines.map((line, i) => (
-                    <li key={i}>{inline(line.replace(/^\s*([-*]|\d+\.)\s+/, ""))}</li>
-                  ))}
-                </ul>
-              ) : (
+            {runs.map((run, r) => {
+              if (run.kind === "quote") {
+                return (
+                  <blockquote key={r}>
+                    {run.lines.map((line, i) => (
+                      <span key={i}>
+                        {i > 0 ? <br /> : null}
+                        {inline(line.replace(/^\s*>\s?/, ""))}
+                      </span>
+                    ))}
+                  </blockquote>
+                );
+              }
+              if (run.kind === "ul" || run.kind === "ol") {
+                const items = run.lines.map((line, i) => (
+                  <li key={i}>
+                    {inline(line.replace(/^\s*([-*]|\d+\.)\s+/, ""))}
+                    {run.quotes[i] ? <blockquote>{inline(run.quotes[i].join(" "))}</blockquote> : null}
+                  </li>
+                ));
+                const start = run.kind === "ol" ? Number(run.lines[0].match(/^\s*(\d+)\./)?.[1] ?? 1) : undefined;
+                return run.kind === "ol" ? <ol key={r} start={start}>{items}</ol> : <ul key={r}>{items}</ul>;
+              }
+              return (
                 <p key={r}>
                   {run.lines.map((line, i) => (
                     <span key={i}>
@@ -486,8 +536,8 @@ export function Markdown({ text }: { text: string }) {
                     </span>
                   ))}
                 </p>
-              )
-            )}
+              );
+            })}
           </div>
         );
       })}

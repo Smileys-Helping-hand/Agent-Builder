@@ -8,6 +8,7 @@ import { LessonMemory, type LessonScope } from "../learning/LessonMemory.js";
 import { ExemplarMemory } from "../learning/ExemplarMemory.js";
 import { LearningReports } from "../research/LearningReport.js";
 import { ResearchChat } from "../research/ResearchChat.js";
+import { classifySource } from "../research/SourceCredibility.js";
 import { SecondBrainClient } from "../integrations/SecondBrainClient.js";
 import { Logger } from "../utils/Logger.js";
 import { GameMode } from "../utils/GameMode.js";
@@ -63,7 +64,7 @@ export const registerResearchRoutes = (app: Express) => {
     if (!topic) return res.status(404).json({ error: "Research topic not found." });
     return res.json({
       topic: { ...topic, cycleRunning: engine.isCycleRunning(topic.id), generatingDocuments: engine.isGeneratingDocuments(topic.id) },
-      findings: ResearchStore.listFindings(topic.id, 100, "recent"),
+      findings: ResearchStore.listFindings(topic.id, 100, "recent").map((finding) => ({ ...finding, evidence: classifySource(finding.sourceUrl, finding.sourceTitle) })),
       openQuestions: ResearchStore.listQuestions(topic.id, 40, "open"),
       exploredQuestions: ResearchStore.listQuestions(topic.id, 40, "explored"),
       sources: ResearchStore.listSources(topic.id, 60),
@@ -191,23 +192,55 @@ export const registerResearchRoutes = (app: Express) => {
   /** GET — the conversation with this topic so far. */
   app.get("/api/research/topics/:id/chat", authenticateAgent("read"), (req: Request, res: Response) => {
     if (!ResearchStore.getTopic(req.params.id)) return res.status(404).json({ error: "Research topic not found." });
-    return res.json({ messages: ResearchChat.history(req.params.id) });
+    return res.json({ messages: ResearchChat.history(req.params.id), pending: ResearchChat.pending(req.params.id) });
   });
 
-  /** POST { message } — ask it something; it answers from its findings and cites them. */
+  /**
+   * POST { message } — ask it something; it answers from its findings and cites them.
+   * Answers in the background (202): poll GET …/chat for `pending.partial` and then the saved answer.
+   * Add ?wait=1 to hold the request until the answer is in (loopback callers only — a tunnel cuts it off).
+   */
   app.post("/api/research/topics/:id/chat", authenticateAgent("write"), async (req: Request, res: Response) => {
     if (GameMode.isOn()) return res.status(409).json({ error: "Game mode is on: switch it off to talk to your research." });
     const message = typeof req.body?.message === "string" ? req.body.message : "";
     try {
-      return res.json(await ResearchChat.ask(req.params.id, message));
+      if (req.query.wait === "1") return res.json(await ResearchChat.ask(req.params.id, message));
+      const { question } = ResearchChat.start(req.params.id, message);
+      return res.status(202).json({ question, pending: ResearchChat.pending(req.params.id) });
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error);
-      return res.status(/not found/i.test(text) ? 404 : /Ask something/.test(text) ? 400 : 500).json({ error: text });
+      return res.status(/not found/i.test(text) ? 404 : /Ask something/.test(text) ? 400 : /Still answering/.test(text) ? 409 : 500).json({ error: text });
+    }
+  });
+
+  /** POST — answer this question again, in a different style (the pair trains the chat's style policy). */
+  app.post("/api/research/topics/:id/chat/:questionId/again", authenticateAgent("write"), (req: Request, res: Response) => {
+    if (GameMode.isOn()) return res.status(409).json({ error: "Game mode is on: switch it off to talk to your research." });
+    try {
+      const { question } = ResearchChat.regenerate(req.params.id, Number(req.params.questionId));
+      return res.status(202).json({ question, pending: ResearchChat.pending(req.params.id) });
+    } catch (error) {
+      return res.status(/Still answering/.test(errorMessage(error)) ? 409 : 404).json({ error: errorMessage(error) });
+    }
+  });
+
+  /** POST { good } — 👍/👎 on an answer: a reward for the way it was explained. */
+  app.post("/api/research/topics/:id/chat/:messageId/feedback", authenticateAgent("write"), (req: Request, res: Response) => {
+    try {
+      const good = req.body?.good === true || req.body?.good === "true";
+      const source = typeof req.body?.source === "string" ? req.body.source.slice(0, 40) : "app";
+      return res.json({ message: ResearchChat.feedback(req.params.id, Number(req.params.messageId), good, source) });
+    } catch (error) {
+      return res.status(404).json({ error: errorMessage(error) });
     }
   });
 
   app.delete("/api/research/topics/:id/chat", authenticateAgent("write"), (req: Request, res: Response) => {
-    return res.json({ cleared: ResearchChat.clear(req.params.id) });
+    try {
+      return res.json({ cleared: ResearchChat.clear(req.params.id) });
+    } catch (error) {
+      return res.status(409).json({ error: errorMessage(error) });
+    }
   });
 
   app.get("/api/research/search", authenticateAgent("read"), (req: Request, res: Response) => {

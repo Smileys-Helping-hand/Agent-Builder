@@ -55,6 +55,9 @@ import { registerArtRoutes } from "./art.js";
 import { registerAcademyRoutes } from "./academy.js";
 import { registerJarvisLibraryRoutes } from "./jarvisLibrary.js";
 import { registerBuilderAskRoutes } from "./builderAsk.js";
+import { registerStudyRoutes } from "./study.js";
+import { registerAgentLearningRoutes } from "./agentLearning.js";
+import { RewardWiring } from "../learning/RewardWiring.js";
 import { registerScreenRoutes } from "./screens.js";
 import { registerHostRoutes } from "./host.js";
 import { registerPlaybookRoutes } from "./playbook.js";
@@ -81,6 +84,8 @@ const warnIfNoAccountsExist = () => {
 };
 
 import { JarvisBridge } from "../integrations/JarvisBridge.js";
+import { InviteStudio } from "../integrations/InviteStudio.js";
+import { registerInvitesRoutes } from "./invites.js";
 
 // The storyworld/NPC/Roblox subsystem is a separate product bolted onto the
 // app builder. It's off by default so a plain "build me an app" boot doesn't
@@ -265,7 +270,15 @@ registerHostRoutes(app);
 registerPlaybookRoutes(app);
 // Practises new templates when the PC is idle (ACADEMY=off to stop).
 TemplateAcademy.start();
+// Designs invitation templates and artwork for ARP Invites when it asks (INVITES_STUDIO=off to stop).
+registerInvitesRoutes(app);
+InviteStudio.start();
 registerResearchRoutes(app);
+// Courses, lessons, quizzes and flashcards from the research (StudyCourse).
+registerStudyRoutes(app);
+// Reinforcement learning (policies, rewards, datasets) and the knowledge shared with Jarvis.
+registerAgentLearningRoutes(app);
+RewardWiring.start();
 registerEcosystemRoutes(app);
 registerServiceRoutes(app);
 registerJarvisRoutes(app);

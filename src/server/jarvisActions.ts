@@ -20,7 +20,7 @@ type Call = [method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: Rec
 
 export interface BridgeAction {
   name: string;
-  /** Group in the catalogue: builds, apps, art, media, projects, research, orders, academy, library, model, machine. */
+  /** Group in the catalogue: builds, apps, art, invites, media, projects, research, orders, academy, library, model, machine. */
   area: string;
   label: string;
   scope: AgentScope;
@@ -53,7 +53,8 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
       "targetPlatforms?": "[web, android, windows]: android/windows also make the phone or PC app once it passes",
       "headStart?": "prompt (written from the brief) | engine | template",
       "qualityThreshold?": "40-100, the score it stops at",
-      "maxIterations?": "passes at most"
+      "maxIterations?": "passes at most",
+      "database?": "the database the app will use: local (decide later) | supabase | firebase | pocketbase | appwrite | rest (own API); the app gets a ready data layer and a keys panel"
     },
     call: (p) => [
       "POST",
@@ -61,7 +62,7 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
       {
         projectName: str(p.projectName) || str(p.title) || "Jarvis request",
         description: str(p.description) || str(p.message),
-        ...pick(p, "profile", "targetPlatforms", "headStart", "qualityThreshold", "maxIterations", "patience")
+        ...pick(p, "profile", "targetPlatforms", "headStart", "qualityThreshold", "maxIterations", "patience", "database")
       }
     ]
   },
@@ -97,9 +98,48 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
     params: { buildId: "the build", path: "e.g. src/App.tsx" },
     call: (p) => ["GET", `/api/autonomous/${enc(str(p.buildId))}/file${query(p, "path")}`]
   },
+  { name: "build.database", area: "builds", label: "A build's database: the platform it uses and which keys are in", scope: "read", params: { buildId: "the build" }, call: (p) => ["GET", `/api/autonomous/${enc(str(p.buildId))}/database`] },
   { name: "build.preview", area: "builds", label: "A link to try the build in a browser", scope: "read", params: { buildId: "the build" }, call: (p) => ["POST", `/api/autonomous/${enc(str(p.buildId))}/preview-link`] },
   { name: "build.download", area: "builds", label: "A download link for the built site", scope: "read", params: { buildId: "the build" }, call: (p) => ["POST", `/api/autonomous/${enc(str(p.buildId))}/download-link`] },
   { name: "build.audit", area: "builds", label: "Check the built site in a browser: broken links, console errors", scope: "execute", params: { buildId: "the build" }, call: (p) => ["POST", `/api/autonomous/${enc(str(p.buildId))}/audit`] },
+  {
+    name: "findings.autoConfirm",
+    area: "builds",
+    label: "Auto-confirm all audit findings and runtime errors for a build and dispatch repair pass",
+    scope: "execute",
+    params: { buildId: "the build" },
+    call: (p) => ["POST", `/api/autonomous/${enc(str(p.buildId))}/findings/auto-confirm`]
+  },
+  {
+    name: "super.build",
+    area: "builds",
+    label: "Super-build from a single prompt with 10-point blueprint, 3D assets, audio, and multi-agent synthesis",
+    scope: "execute",
+    params: { prompt: "the brief or game idea", "projectName?": "what to call it" },
+    call: (p) => [
+      "POST",
+      "/api/autonomous/super-build",
+      {
+        prompt: str(p.prompt) || str(p.description) || str(p.message),
+        projectName: str(p.projectName) || str(p.title) || undefined
+      }
+    ]
+  },
+  {
+    name: "super.expand",
+    area: "builds",
+    label: "Expand a single prompt into an exhaustive 10-point production blueprint",
+    scope: "read",
+    params: { prompt: "the brief or game idea", "projectName?": "what to call it" },
+    call: (p) => [
+      "POST",
+      "/api/autonomous/super-prompt/expand",
+      {
+        prompt: str(p.prompt) || str(p.description) || str(p.message),
+        projectName: str(p.projectName) || str(p.title) || undefined
+      }
+    ]
+  },
 
   // ── Phone and PC apps ─────────────────────────────────────────────────────
   {
@@ -112,6 +152,70 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
   },
   { name: "app.status", area: "apps", label: "Whether the app is being made, made, or failed", scope: "read", params: { buildId: "the build", platform: "android | windows" }, call: (p) => ["GET", `/api/autonomous/${enc(str(p.buildId))}/app/${enc(str(p.platform))}`] },
   { name: "app.link", area: "apps", label: "A download link for the APK or .exe", scope: "read", params: { buildId: "the build", platform: "android | windows" }, call: (p) => ["POST", `/api/autonomous/${enc(str(p.buildId))}/app/${enc(str(p.platform))}/link`] },
+  {
+    name: "app.deconstruct",
+    area: "apps",
+    label: "Tear down an existing codebase to dissect features, components, state, flaws, and generate a rebuild blueprint",
+    scope: "read",
+    params: { projectPath: "path to the project folder" },
+    call: (p) => ["POST", "/api/autonomous/deconstruct", pick(p, "projectPath")]
+  },
+  {
+    name: "app.rebuild",
+    area: "apps",
+    label: "Rebuild and elevate an existing project using modern architecture, zero stubs, and optional 3D/audio",
+    scope: "execute",
+    params: { projectPath: "path to the project folder", "projectName?": "new project name", "elevate3D?": "boolean" },
+    call: (p) => ["POST", "/api/autonomous/rebuild", pick(p, "projectPath", "projectName", "elevate3D")]
+  },
+  {
+    name: "gamemaker.status",
+    area: "apps",
+    label: "Check KingdomForge Unity AI Builder status and integration",
+    scope: "read",
+    params: {},
+    call: () => ["GET", "/api/autonomous/gamemaker/status"]
+  },
+  {
+    name: "gamemaker.checkup",
+    area: "apps",
+    label: "Run a full Game Studio checkup: story, mechanics, VFX, audio polish, and next evolution plan",
+    scope: "read",
+    params: { gameDir: "directory of the game to inspect", "gameName?": "optional game name" },
+    call: (p) => ["POST", "/api/autonomous/games/checkup", pick(p, "gameDir", "gameName", "gameId")]
+  },
+  {
+    name: "gamemaker.promote",
+    area: "apps",
+    label: "Promote a game's staged version to live",
+    scope: "execute",
+    params: { gameId: "the game identifier" },
+    call: (p) => ["POST", "/api/autonomous/games/promote", pick(p, "gameId")]
+  },
+  {
+    name: "unity.status",
+    area: "apps",
+    label: "Unity Level Studio: the Unity editor, Blender and the level project on this PC",
+    scope: "read",
+    params: {},
+    call: () => ["GET", "/api/autonomous/unity/status"]
+  },
+  {
+    name: "unity.level",
+    area: "apps",
+    label: "Design and build a full playable 3D Unity level from a prompt (terrain, assets, enemies, goal); minutes",
+    scope: "execute",
+    params: { prompt: "the level to build", "target?": "none | windows | webgl (also build a player)" },
+    call: (p) => ["POST", "/api/autonomous/unity/levels", { prompt: str(p.prompt) || str(p.description) || str(p.message), target: str(p.target) || "none" }]
+  },
+  {
+    name: "unity.levels",
+    area: "apps",
+    label: "Unity Level Studio jobs and their progress",
+    scope: "read",
+    params: { "jobId?": "one job" },
+    call: (p) => ["GET", str(p.jobId) ? `/api/autonomous/unity/levels/${enc(str(p.jobId))}` : "/api/autonomous/unity/levels"]
+  },
 
   // ── Art: sprites, icons, backgrounds drawn on this PC ─────────────────────
   { name: "art.status", area: "art", label: "Whether the image engine (ComfyUI) and MediaGen are up", scope: "read", params: {}, call: () => ["GET", "/api/art/status"] },
@@ -153,6 +257,18 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
   { name: "art.pack", area: "art", label: "A zip of pictures (a sprite pack)", scope: "read", params: { ids: "[picture ids]" }, call: (p) => ["POST", "/api/art/pack", pick(p, "ids")] },
   { name: "art.delete", area: "art", label: "Remove a picture from the library", scope: "write", params: { id: "the picture" }, call: (p) => ["DELETE", `/api/art/${enc(str(p.id))}`] },
 
+  // ── Invites: the invitation platform and its design studio ────────────────
+  { name: "invites.status", area: "invites", label: "Whether the invites design studio is connected and what it last did", scope: "read", params: {}, call: () => ["GET", "/api/invites/status"] },
+  { name: "invites.briefing", area: "invites", label: "How the invitations are going: upcoming celebrations, replies, who has not answered, systems", scope: "read", params: { "format?": "json | markdown" }, call: (p) => ["GET", `/api/invites/platform${query(p, "format")}`] },
+  {
+    name: "invites.templates",
+    area: "invites",
+    label: "Design new invitation templates from a brief (they wait for review in the invites admin)",
+    scope: "execute",
+    params: { brief: "the look and occasion, e.g. sage and gold garden nikkah", "eventTypes?": "[wedding, nikkah, birthday, …]", "culture?": "islamic, indian, xhosa…", "variants?": "how many, 1-4" },
+    call: (p) => ["POST", "/api/invites/templates", pick(p, "brief", "eventTypes", "culture", "variants")]
+  },
+
   // ── Media: MediaGen images and short videos ───────────────────────────────
   {
     name: "media.generate",
@@ -165,6 +281,22 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
   { name: "media.job", area: "media", label: "A MediaGen job", scope: "read", params: { id: "the job" }, call: (p) => ["GET", `/api/art/mediagen/jobs/${enc(str(p.id))}`] },
   { name: "media.gallery", area: "media", label: "What MediaGen has made", scope: "read", params: {}, call: () => ["GET", "/api/art/mediagen/gallery"] },
   { name: "media.import", area: "media", label: "Bring a finished MediaGen result into the library", scope: "write", params: { jobId: "the job" }, call: (p) => ["POST", "/api/art/mediagen/import", pick(p, "jobId")] },
+  {
+    name: "blender.status",
+    area: "media",
+    label: "Check Blender 3D environment status and executable path",
+    scope: "read",
+    params: {},
+    call: () => ["GET", "/api/autonomous/blender/status"]
+  },
+  {
+    name: "blender.generate",
+    area: "media",
+    label: "Generate 3D Blender Python script and Three.js runtime bridge for a project",
+    scope: "execute",
+    params: { projectName: "the project name", description: "description of the 3D scene" },
+    call: (p) => ["POST", "/api/autonomous/blender/generate", pick(p, "projectName", "description")]
+  },
 
   // ── Projects on this PC: read, diagnose, repair, change ───────────────────
   { name: "projects", area: "projects", label: "Every project the builder knows", scope: "read", params: {}, call: () => ["GET", "/api/ecosystem/projects"] },
@@ -200,6 +332,75 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
   { name: "research.topics", area: "research", label: "Research topics", scope: "read", params: {}, call: () => ["GET", "/api/research/topics"] },
   { name: "research.start", area: "research", label: "Start researching a topic", scope: "write", params: { title: "the topic", "question?": "what to find out" }, call: (p) => ["POST", "/api/research/topics", { title: str(p.title), question: str(p.question) || str(p.title) }] },
   { name: "research.ask", area: "research", label: "Ask a question inside a topic", scope: "write", params: { topicId: "the topic", text: "the question" }, call: (p) => ["POST", `/api/research/topics/${enc(str(p.topicId))}/questions`, { text: str(p.text) }] },
+  {
+    name: "research.chat",
+    area: "research",
+    label: "Ask a topic's research a question and get its answer, citing its findings and saying which are real evidence, speculation or fiction (waits for the answer)",
+    scope: "write",
+    params: { topicId: "the topic", message: "the question" },
+    call: (p) => ["POST", `/api/research/topics/${enc(str(p.topicId))}/chat?wait=1`, { message: str(p.message) || str(p.text) }]
+  },
+  { name: "research.report", area: "research", label: "A topic's reports (summary, study guide, full report) to read", scope: "read", params: { topicId: "the topic" }, call: (p) => ["GET", `/api/research/topics/${enc(str(p.topicId))}`] },
+
+  // ── Knowledge shared with Jarvis, and how the agents learn ────────────────
+  {
+    name: "knowledge.search",
+    area: "knowledge",
+    label: "Search everything the builder knows (research findings, reports, lessons, lessons from builds) and what you know, in one go",
+    scope: "read",
+    params: { q: "what to look for" },
+    call: (p) => ["GET", `/api/knowledge/search${query(p, "q")}`]
+  },
+  { name: "knowledge.status", area: "knowledge", label: "Whether the builder's knowledge is reaching yours (the sync queue)", scope: "read", params: {}, call: () => ["GET", "/api/knowledge/status"] },
+  {
+    name: "rl.feedback",
+    area: "knowledge",
+    label: "His verdict on the builder's last answer or lesson (\"that was great\", \"that was confusing\"): the agent learns which way of explaining works",
+    scope: "write",
+    params: { good: "true | false", "note?": "his words", "policy?": "chat.style | lesson.style (default: the latest)", "episodeId?": "a specific one" },
+    call: (p) => ["POST", "/api/rl/feedback", { ...pick(p, "note", "policy", "episodeId"), good: p.good === true || p.good === "true", source: "jarvis" }]
+  },
+  { name: "rl.stats", area: "knowledge", label: "What the agents have learned: each approach they try, how often, and how well it scores", scope: "read", params: {}, call: () => ["GET", "/api/rl/stats"] },
+
+  // ── Learning: courses that teach what the research found ──────────────────
+  { name: "learn.courses", area: "learning", label: "The owner's courses and how far through each one he is, plus flashcards due", scope: "read", params: {}, call: () => ["GET", "/api/learn"] },
+  {
+    name: "learn.plan",
+    area: "learning",
+    label: "Turn a research topic into a course (5-8 lessons) to teach him; takes a few minutes",
+    scope: "write",
+    params: { topicId: "the topic", "level?": "beginner | intermediate | advanced" },
+    call: (p) => ["POST", `/api/learn/${enc(str(p.topicId))}/plan`, pick(p, "level")]
+  },
+  { name: "learn.course", area: "learning", label: "One course: its lessons, which are written, his progress and quiz scores", scope: "read", params: { topicId: "the topic" }, call: (p) => ["GET", `/api/learn/${enc(str(p.topicId))}`] },
+  {
+    name: "learn.next",
+    area: "learning",
+    label: "Teach the next lesson: its text (explanation, example, key terms, fact check, sources) and quiz questions. If status is not ready it is being written: ask again in a few minutes",
+    scope: "write",
+    params: { topicId: "the topic" },
+    call: (p) => ["GET", `/api/learn/${enc(str(p.topicId))}/next`]
+  },
+  {
+    name: "learn.lesson",
+    area: "learning",
+    label: "One lesson by number (0 is the first): its text and quiz questions; written on demand",
+    scope: "write",
+    params: { topicId: "the topic", lesson: "lesson number, from 0" },
+    call: (p) => ["GET", `/api/learn/${enc(str(p.topicId))}/lessons/${enc(str(p.lesson) || "0")}`]
+  },
+  {
+    name: "learn.answer",
+    area: "learning",
+    label: "Mark his quiz answers for a lesson: which were right, why, and his score (75% completes the lesson)",
+    scope: "write",
+    params: { topicId: "the topic", "lesson?": "lesson number from 0 (default: the one he is on)", answers: 'his answers in order: letters like "b, a, d, c" or option numbers from 0' },
+    call: (p) => ["POST", `/api/learn/${enc(str(p.topicId))}/lessons/${enc(str(p.lesson) || "current")}/quiz`, { answers: Array.isArray(p.answers) ? p.answers : str(p.answers) }]
+  },
+  { name: "learn.done", area: "learning", label: "Mark a lesson studied (without a quiz)", scope: "write", params: { topicId: "the topic", lesson: "lesson number, from 0" }, call: (p) => ["POST", `/api/learn/${enc(str(p.topicId))}/lessons/${enc(str(p.lesson) || "0")}/done`, {}] },
+  { name: "learn.cards", area: "learning", label: "Flashcards due for review (all courses, or one topic)", scope: "read", params: { "topicId?": "one topic" }, call: (p) => ["GET", str(p.topicId) ? `/api/learn/${enc(str(p.topicId))}/cards/due` : "/api/learn/cards/due"] },
+  { name: "learn.review", area: "learning", label: "Record how a flashcard went: knew it (comes back later) or not (back tomorrow)", scope: "write", params: { cardId: "the card", knew: "true | false" }, call: (p) => ["POST", `/api/learn/cards/${enc(str(p.cardId))}/review`, { knew: p.knew === true || p.knew === "true" }] },
+  { name: "learn.pack", area: "learning", label: "The whole course as one study pack to read: syllabus, lessons, answers, flashcards, reading list", scope: "read", params: { topicId: "the topic" }, call: (p) => ["GET", `/api/learn/${enc(str(p.topicId))}/pack`] },
 
   // ── Customer orders ───────────────────────────────────────────────────────
   { name: "orders", area: "orders", label: "Customer orders", scope: "read", params: {}, call: () => ["GET", "/api/orders"] },

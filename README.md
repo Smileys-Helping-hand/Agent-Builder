@@ -134,7 +134,11 @@ LMSTUDIO_BASE_URL=http://localhost:1234
 LMSTUDIO_MODEL=gpt-4o-mini
 ```
 
-When using Ollama or LM Studio, ensure their local servers are running. The router falls back to OpenAI if the provider is unknown.
+When using Ollama or LM Studio, ensure their local servers are running. An unknown provider falls back to Ollama.
+
+The multi-agent swarm gives each role its own model. `MODEL_PROVIDER_<ROLE>` (+ `MODEL_NAME_<ROLE>`) sets one for `CODE`, `VISUAL`, `3D`, `PROMPTER` or `QA`. Adding `GEMINI_API_KEY` routes the visual, 3D and prompt roles to Gemini (`GEMINI_MODEL`, default `gemini-flash-latest`). OpenAI or Anthropic keys in `.env` take over roles only with `ROLE_CLOUD_FALLBACK=true`, so a local build never bills a cloud API by accident.
+
+Guides for the newer studios: [learning from research](docs/LEARNING.md) · [databases for built apps](docs/DATABASES.md) · [Unity levels](docs/UNITY_LEVELS.md) · [how the agents learn, and what they share with Jarvis](docs/AGENT_TRAINING.md).
 
 Run with a custom prompt via the CLI:
 

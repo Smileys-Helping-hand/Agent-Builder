@@ -46,7 +46,13 @@
     "test:exemplars": "tsx scripts/exemplar-memory-smoketest.ts",
     "key:agent": "tsx scripts/mint-agent-key.ts",
     "ecosystem:scan": "tsx scripts/scan-ecosystem.ts",
-    "verify:templates": "tsx scripts/verify-templates.ts"
+    "verify:templates": "tsx scripts/verify-templates.ts",
+    "test:super-model": "tsx scripts/super-model-smoketest.ts",
+    "test:game-evolution": "tsx scripts/game-evolution-smoketest.ts",
+    "test:unity-level": "tsx scripts/unity-level-smoketest.ts",
+    "test:db-kit": "tsx scripts/db-kit-smoketest.ts",
+    "test:study": "tsx scripts/study-smoketest.ts",
+    "test:rl": "tsx scripts/rl-smoketest.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",

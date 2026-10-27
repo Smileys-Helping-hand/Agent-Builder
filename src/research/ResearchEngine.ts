@@ -25,6 +25,7 @@ import {
   type ResearchTopic
 } from "./ResearchStore.js";
 import { fetchDocument, keywordQuery, rankResults, searchAll, type SearchResult } from "./SourceProviders.js";
+import { classifySource, TIER_LABEL, TIER_ORDER, type EvidenceTier } from "./SourceCredibility.js";
 
 const envMs = (name: string, fallback: number): number => {
   const value = Number(process.env[name]);
@@ -185,15 +186,21 @@ export class ResearchEngine {
     try {
       const cycleNumber = cycle ?? topic.cycles;
       const citations = new Map<number, number>();
-      const bibliography: Array<{ n: number; title: string; url: string }> = [];
+      const bibliography: Array<{ n: number; title: string; url: string; tier: EvidenceTier }> = [];
       const cite = (finding: ResearchFinding): string => {
         if (finding.sourceId === null || !finding.sourceUrl) return "";
         if (!citations.has(finding.sourceId)) {
           citations.set(finding.sourceId, bibliography.length + 1);
-          bibliography.push({ n: bibliography.length + 1, title: finding.sourceTitle ?? finding.sourceUrl, url: finding.sourceUrl });
+          bibliography.push({
+            n: bibliography.length + 1,
+            title: finding.sourceTitle ?? finding.sourceUrl,
+            url: finding.sourceUrl,
+            tier: classifySource(finding.sourceUrl, finding.sourceTitle).tier
+          });
         }
         return `[${citations.get(finding.sourceId)}]`;
       };
+      const tierOf = (finding: ResearchFinding): EvidenceTier => classifySource(finding.sourceUrl, finding.sourceTitle).tier;
       const describe = (finding: ResearchFinding): string =>
         finding.status === "contested"
           ? "CONTESTED"
@@ -201,23 +208,38 @@ export class ResearchEngine {
             ? `corroborated by ${finding.supportCount} sources`
             : `confidence ${finding.confidence.toFixed(2)}`;
       const findingLines = findings.map((finding) => `- ${finding.claim} ${cite(finding)} (${describe(finding)})`);
-      // The model gets claims and citations only. Given status/confidence notes, it
-      // copied them verbatim into the prose ("... [1] (confidence 0.90)").
+      // The model gets claims, citations and the kind of source. Given status/confidence
+      // notes it copied them into the prose ("... [1] (confidence 0.90)"); without the
+      // kind of source it wrote a fan wiki's "rituals open pocket dimensions" up as fact.
       const modelLines = findings.map(
-        (finding) => `- ${finding.claim} ${cite(finding)}${finding.status === "contested" ? " (CONTESTED)" : ""}`
+        (finding) => `- ${finding.claim} ${cite(finding)} (${tierOf(finding)}${finding.status === "contested" ? ", CONTESTED" : ""})`
       );
+      const unreal = findings.filter((finding) => ["speculative", "fiction"].includes(tierOf(finding))).length;
+      const evidenceRules =
+        "Each finding ends with the kind of source it comes from: academic, reference and news are evidence about the real world; " +
+        "community is practitioners' experience (useful, unreviewed); speculative is unproven; fiction is invented (games, novels, worldbuilding). " +
+        'Never state a speculative or fiction finding as fact about the real world: label it ("in fiction…", "some claim, without evidence…").';
       const hasContested = findings.some((finding) => finding.status === "contested");
       // Each document already carries its own title; drop a leading H1 the model adds anyway.
       const withoutTitle = (markdown: string): string => markdown.trim().replace(/^#\s+[^\n]*\n+/, "");
       const openQuestions = ResearchStore.listQuestions(id, 15, "open").map((question) => question.text);
-      const sourcesMarkdown = bibliography.map((source) => `${source.n}. [${source.title}](${source.url})`).join("\n");
+      const sourcesMarkdown = TIER_ORDER.filter((tier) => bibliography.some((source) => source.tier === tier))
+        .map(
+          (tier) =>
+            `### ${TIER_LABEL[tier]}\n\n${bibliography
+              .filter((source) => source.tier === tier)
+              .map((source) => `${source.n}. [${source.title}](${source.url})`)
+              .join("\n")}`
+        )
+        .join("\n\n");
       const summary = ResearchStore.getTopicSummary(id);
       const header =
         `_${findings.length} findings from ${bibliography.length} sources · ${summary?.corroboratedCount ?? 0} corroborated · ` +
         `${summary?.contestedCount ?? 0} contested · after ${cycleNumber} research cycles · generated ${new Date().toLocaleString()}_`;
       const caveat =
         "> Findings are extracted from the cited sources by a local model and checked against the source text. " +
-        "Verify anything important against the original source.";
+        "Each source is labelled with the kind of evidence it is: academic research and reference works are evidence; " +
+        "forums, speculation and fiction are not. Verify anything important against the original source.";
 
       const documents: ResearchDocument[] = [];
 
@@ -237,18 +259,20 @@ export class ResearchEngine {
 Topic: ${topic.title}
 Question: ${topic.question}
 
-Findings (each ends with its citation number${hasContested ? "; CONTESTED means sources disagree" : ""}):
+Findings (each ends with its citation number and the kind of source${hasContested ? "; CONTESTED means sources disagree" : ""}):
 ${modelLines.join("\n")}
+
+${evidenceRules}
 
 Open questions still being researched:
 ${openQuestions.map((question) => `- ${question}`).join("\n") || "- none"}
 
 Write Markdown with:
-- A direct answer to the question in 2-4 sentences, as far as the findings support one.
-- "## Key points": 5 to 8 bullets, each ending with its citation(s) like [2].
-${hasContested ? `- "## Where sources disagree": explain each CONTESTED finding.\n` : ""}- "## What is still unknown": the real gaps, informed by the open questions.
+- A direct, honest answer to the question in 2-4 sentences, as far as the real-world evidence supports one.
+- "## Key points": 5 to 8 bullets from academic, reference, news or community findings, each ending with its citation(s) like [2].
+${unreal > 0 ? `- "## Reality check": what is established, what is theoretical, and what comes only from fiction or unproven claims, said plainly.\n` : ""}${hasContested ? `- "## Where sources disagree": explain each CONTESTED finding.\n` : ""}- "## What is still unknown": the real gaps, informed by the open questions.
 
-Rules: no title heading; use ONLY the findings above; keep citation numbers exactly as given; never invent a source or statistic; stay under 400 words.`
+Rules: no title heading; use ONLY the findings above; keep citation numbers exactly as given; never invent a source or statistic; stay under 450 words.`
       );
       documents.push(
         ResearchStore.saveDocument(
@@ -266,14 +290,16 @@ Rules: no title heading; use ONLY the findings above; keep citation numbers exac
 Topic: ${topic.title}
 Question: ${topic.question}
 
-Findings (with citation numbers${hasContested ? "; CONTESTED means sources disagree" : ""}):
+Findings (with citation numbers and the kind of source${hasContested ? "; CONTESTED means sources disagree" : ""}):
 ${modelLines.join("\n")}
+
+${evidenceRules}
 
 Write Markdown with these sections:
 ## Core concepts: each concept in bold with a plain-language explanation of 2-3 sentences and its citations
 ## How it fits together: a short explanation of how the concepts connect
 ## Flashcards: 10 cards, each formatted exactly as "**Q:** question" on one line and "**A:** answer" on the next
-## Common misconceptions: ${hasContested ? "drawn from the CONTESTED findings and other likely confusions" : "likely confusions about this material"}
+## Common misconceptions: ${hasContested ? "drawn from the CONTESTED findings and other likely confusions" : "likely confusions about this material"}${unreal > 0 ? ", including ideas from fiction or unproven claims that people mistake for fact" : ""}
 ## Test yourself: 5 questions that require applying the material, then a "### Answers" subsection
 
 Rules: no title heading; use ONLY the findings; keep citation numbers exactly as given; never invent facts.`
@@ -718,14 +744,28 @@ Reply with ONLY this JSON: {"thinking": "...", "questions": ["...", "...", "..."
     header: string,
     caveat: string
   ): string {
-    const section = (heading: string, items: ResearchFinding[]) =>
+    const tierOf = (finding: ResearchFinding): EvidenceTier => classifySource(finding.sourceUrl, finding.sourceTitle).tier;
+    const section = (heading: string, items: ResearchFinding[], note = "") =>
       items.length === 0
         ? ""
-        : `## ${heading}\n\n${items.map((finding) => `- ${finding.claim} ${cite(finding)} _(${describe(finding)})_`).join("\n")}\n\n`;
+        : `## ${heading}\n\n${note ? `${note}\n\n` : ""}${items
+            .sort((a, b) => Number(b.status === "corroborated") - Number(a.status === "corroborated") || b.supportCount - a.supportCount)
+            .map((finding) => `- ${finding.claim} ${cite(finding)} _(${describe(finding)})_`)
+            .join("\n")}\n\n`;
+    const live = findings.filter((finding) => finding.status !== "contested");
+    const inTiers = (...tiers: EvidenceTier[]) => live.filter((finding) => tiers.includes(tierOf(finding)));
+    const counts = TIER_ORDER.map((tier) => [tier, findings.filter((finding) => tierOf(finding) === tier).length] as const).filter(([, n]) => n > 0);
+    const profile =
+      `## Evidence profile\n\n| Kind of source | Findings |\n|---|---|\n${counts.map(([tier, n]) => `| ${TIER_LABEL[tier]} | ${n} |`).join("\n")}\n\n` +
+      "Academic research, reference works and the science press are evidence about the real world. Practitioners' experience is useful but unreviewed. " +
+      "Speculative claims and fiction are listed separately below: they say what people believe or imagine, not how things are.\n\n";
     return (
       `# Research report: ${topic.title}\n\n**Question:** ${topic.question}\n\n${header}\n\n${caveat}\n\n` +
-      section("Corroborated findings", findings.filter((finding) => finding.status === "corroborated")) +
-      section("Findings", findings.filter((finding) => finding.status === "open")) +
+      profile +
+      section("Established evidence", inTiers("academic", "reference", "news"), "From peer-reviewed research, preprints, reference works and the science press.") +
+      section("From practitioners, companies and forums", inTiers("community")) +
+      section("Speculative and unverified claims", inTiers("speculative"), "Claims made without evidence. Do not rely on them.") +
+      section("From fiction and worldbuilding", inTiers("fiction"), "These describe invented worlds — games, novels, tabletop settings — not the real one.") +
       section("Contested findings", findings.filter((finding) => finding.status === "contested")) +
       (openQuestions.length > 0 ? `## Open questions still being researched\n\n${openQuestions.map((q) => `- ${q}`).join("\n")}\n\n` : "") +
       `## Sources\n\n${sourcesMarkdown}\n`
