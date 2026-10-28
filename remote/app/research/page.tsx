@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { api } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, usePersistentState, useRemote, useToast } from "../ui";
@@ -25,6 +25,14 @@ export default function Research() {
   const [fullscreen, setFullscreen] = useState(false);
   const [formOpen, setFormOpen] = usePersistentState<boolean | null>("research-form-open", null);
   const [search, setSearch] = useState("");
+
+  // Opened from elsewhere with ?topic=… (a continuous build's research): show that topic.
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get("topic");
+    if (!wanted) return;
+    setOpenId(wanted);
+    window.history.replaceState(null, "", window.location.pathname);
+  }, [setOpenId]);
 
   if (connected === false) return <NotConnected />;
 

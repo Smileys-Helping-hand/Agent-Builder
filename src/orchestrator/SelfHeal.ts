@@ -53,9 +53,15 @@ export const candidates = (builds: BuildView[], version: string, state: HealStat
   // a closer starter or parks an idea itself. Self-heal carried a Real Estate
   // practice on in the folder it began from the solar landing page for eight
   // passes (7½ hours) after the academy had moved it to the shop template.
+  // The same goes for every build something else manages: a continuous-builder
+  // step (it checks, retries and parks milestones itself; self-heal carrying one
+  // on held the workspace, and every later step failed "already building in
+  // that folder"), training-ground practice and a customer's site edit.
   const byId = new Map(builds.map((build) => [build.buildId, build]));
   const practice = (build: BuildView | undefined, depth = 0): boolean =>
-    Boolean(build) && (/^academy:/.test(build!.startedBy ?? "") || (depth < 8 && practice(build!.continuedFrom ? byId.get(build!.continuedFrom) : undefined, depth + 1)));
+    Boolean(build) &&
+    (/^(academy|continuous|ground|edit):/.test(build!.startedBy ?? "") ||
+      (depth < 8 && practice(build!.continuedFrom ? byId.get(build!.continuedFrom) : undefined, depth + 1)));
   return Array.from(latest.values())
     .filter((build) => {
       if (build.orderId || build.live) return false;

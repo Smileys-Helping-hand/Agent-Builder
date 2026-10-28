@@ -154,7 +154,8 @@ export const TrainingGround = {
       maxIterations: 4,
       qualityThreshold: 90,
       starter: "auto",
-      startedBy
+      // ground: marks it as the training ground's, so self-heal leaves it alone.
+      startedBy: `ground:${startedBy}`
     });
     const run: PracticeRun = { id: `run_${Date.now().toString(36)}`, challengeId: challenge.id, buildId: build.buildId, startedAt: new Date().toISOString(), finishedAt: null, state: "running", score: null };
     state.runs.push(run);

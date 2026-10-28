@@ -671,6 +671,10 @@ ${approach.arm.instruction}${instruction}
 Context: this is one step of a long-running build of "${session.projectName}".
 ${ownerWords(session)}
 Work in the existing code and keep everything that already works working.`;
+  // Only this session works in its workspace: a stray build there (one carried on by something else) is stopped first.
+  const strays = () => BuildService.active().filter((b) => path.resolve(b.outputDir) === path.resolve(dir));
+  for (const stray of strays()) BuildService.control(stray.buildId, "stop");
+  for (let i = 0; i < 60 && strays().length; i++) await sleep(1000);
   const build = BuildService.start({
     projectName: session.projectName,
     description,
