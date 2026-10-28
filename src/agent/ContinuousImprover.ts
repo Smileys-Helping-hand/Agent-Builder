@@ -524,35 +524,64 @@ const researchText = (session: ImproveSession) => {
   return claims.length ? `\nWhat research found about doing this well:\n${claims.map((c) => `- ${c}`).join("\n")}\n` : "";
 };
 
+/** Work outside the code that a build step cannot do (checks already run after every step). */
+const CHORE = /^(commit|push|deploy|release|stable release|final (testing|release)|monitor|merge|branch|code review|review|gather|collect|(beta|user) (testing|feedback)|feedback|post-release|(user |customer )?support (and||feedback|post-release|support|finali) maintenance|post-release support|finali[sz]e|verify|check branch|ensure clean|initial testing|testing and bug|prepare (for )?release)/i;
+
+/**
+ * The owner's requirements, in the order they gave them: what the roadmap
+ * must cover. Asked separately because, shown the whole project, the model
+ * tends to plan what the code already suggests and drop what was asked for.
+ */
+const requirementsOf = async (session: ImproveSession): Promise<string[]> => {
+  const answer = await ModelRouter.generate(
+    `Read the owner's goal and list every distinct thing they ask for, in the order they ask for it, keeping their own words and
+specifics (names, paths, tools). Where they say what comes first, put it first. 3-25 short items; no commentary.
+${ownerWords(session)}
+
+Answer with JSON only: {"requirements": ["<one requirement>", "..."]}`
+  );
+  const parsed = extractJson(answer);
+  const raw = Array.isArray(parsed?.requirements) ? parsed.requirements : [];
+  return raw.map((r) => String(r).trim().slice(0, 300)).filter((r) => r.length > 3).slice(0, 25);
+};
+
 const makePlan = async (session: ImproveSession): Promise<Milestone[]> => {
   const done = session.plan.filter((m) => m.status === "done");
+  const requirements = session.goal.trim() || session.notes.length ? await requirementsOf(session).catch(() => [] as string[]) : [];
+  const numbered = requirements.map((r, i) => `R${i + 1}. ${r}`).join("\n");
   const answer = await ModelRouter.generate(
     `You are the lead engineer on "${session.projectName}", working on it continuously until the goal is fully met.
 ${ownerWords(session)}
-
-The project:
-${await projectBriefing(session)}
+${numbered ? `\nThe owner's requirements, in their order. Every one must be covered, starting with the first:\n${numbered}\n` : ""}
+The project as it is (for context only; the owner's requirements decide what to build):
+${(await projectBriefing(session)).slice(0, 5000)}
 ${done.length ? `\nAlready built:\n${done.map((m) => `- ${m.title}`).join("\n")}\n` : ""}${declinedText(session, read().deliveries)}
-Write the roadmap of what is still left to reach the goal completely, in the order to build them. Use as many milestones as the
-goal really needs: one or two for a small tool, dozens for something as big as an operating system (up to 30 now; more are added
-as these are built). Each must be a concrete, verifiable chunk of code or content that one build session can write in this
-repository (a subsystem, a screen, a driver, a test suite, a fix), named for this project.
-Never include chores outside the code: no committing, pushing, branching, deploying, releasing, monitoring, code review,
-gathering feedback or "verify/finalise" steps — checks run after every step on their own.
+Write the roadmap of what is still left, in the order to build it. Use as many milestones as the goal really needs: one or two for
+a small tool, dozens for something as big as an operating system (up to 30 now; more are added as these are built). Each must be a
+concrete, verifiable chunk of code or content that one build session can write in this repository (a subsystem, a package, a
+screen, a driver, a test suite), with a specific title naming what it builds (not "Project setup" or "Add new capabilities").
+Never include chores outside the code: no committing, pushing, deploying, releasing, beta testing, feedback, support, reviews or
+"final testing" — checks run after every step on their own.${numbered ? `\nFor each milestone, list the requirements it covers (e.g. ["R1"]).` : ""}
 
-Answer with JSON only: {"milestones": [{"title": "<short>", "detail": "<what to build, precisely, and how to know it works>"}]}`
+Answer with JSON only: {"milestones": [{"title": "<specific>", "detail": "<what to build, precisely, and how to know it works>"${numbered ? `, "covers": ["R1"]` : ""}}]}`
   );
-  const chores = /^(commit|push|deploy|release|monitor|merge|branch|code review|review|gather|collect|user feedback|finali[sz]e|verify|check branch|ensure clean)/i;
-  const milestones = itemsFrom(answer, ["milestones"])
-    .filter((m) => !chores.test(m.title))
-    .slice(0, 30);
+  let milestones = itemsFrom(answer, ["milestones"]).filter((m) => !CHORE.test(m.title));
   if (!milestones.length) {
     Logger.warn("Continuous build: the roadmap could not be read from the model's answer", { answer: answer.slice(0, 2000) });
     throw new Error("The model did not write a usable roadmap.");
   }
+  // Whatever the owner asked for that no milestone covers is added, in their order: nothing they asked for is dropped.
+  if (requirements.length) {
+    const covered = new Set((answer.match(/R\d{1,2}\b/g) ?? []).map((r) => Number(r.slice(1))));
+    const text = milestones.map((m) => `${m.title} ${m.detail}`.toLowerCase()).join(" ");
+    const missing = requirements
+      .map((r, i) => ({ r, n: i + 1 }))
+      .filter(({ r, n }) => !covered.has(n) && !r.toLowerCase().split(/\W+/).filter((w) => w.length > 5).some((w) => text.includes(w)));
+    milestones = [...milestones, ...missing.map(({ r }) => ({ title: r.slice(0, 120), detail: `The owner asked for this: ${r}` }))];
+  }
   return [
     ...done,
-    ...milestones.map((m) => ({ id: newId("ms"), title: m.title, detail: m.detail, status: "todo" as const, attempts: 0, note: null, doneAt: null }))
+    ...milestones.slice(0, 40).map((m) => ({ id: newId("ms"), title: m.title, detail: m.detail, status: "todo" as const, attempts: 0, note: null, doneAt: null }))
   ];
 };
 
@@ -635,7 +664,9 @@ const buildStep = async (
     ref: `step:${session.id}:${Date.now()}`,
     prompt: title
   });
-  const description = `${approach.arm.instruction}${instruction}
+  const description = `${title.replace(/^(Building|Fixing|Improving): /, "")}
+
+${approach.arm.instruction}${instruction}
 
 Context: this is one step of a long-running build of "${session.projectName}".
 ${ownerWords(session)}
@@ -1391,7 +1422,7 @@ export const ContinuousImprover = {
   },
 
   /** For tests: the steps the loop takes, one at a time. */
-  testHooks: { prepareWorkspace, syncOwnerCommits, deliverIfReady, applyPendingRevert, getSession, runChecks, cycle, itemsFrom }
+  testHooks: { prepareWorkspace, syncOwnerCommits, deliverIfReady, applyPendingRevert, getSession, patchSession, runChecks, cycle, itemsFrom }
 };
 
 /** The first version's single changes: applied whole, as before. */

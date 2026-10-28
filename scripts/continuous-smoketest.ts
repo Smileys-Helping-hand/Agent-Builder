@@ -158,7 +158,7 @@ const main = async () => {
       : /Is the goal fully met/.test(prompt)
         ? JSON.stringify({ complete: true, missing: [] })
         : "{}";
-  const builds = BuildService as unknown as { start: (o: { workingDir: string }) => { buildId: string }; isRunning: (id: string) => boolean };
+  const builds = BuildService as unknown as { start: (o: { workingDir: string; description?: string }) => { buildId: string }; isRunning: (id: string) => boolean };
   builds.start = (options) => {
     fs.writeFileSync(path.join(options.workingDir, "hello.txt"), "hello\n");
     return { buildId: "stand-in" };
@@ -189,6 +189,68 @@ const main = async () => {
   const ownerRewarded = Reinforcement.recent(50).find((e) => e.policy === "continuous.step" && e.rewards.some((r) => r.source === "owner-decision"));
   if (!ownerRewarded) fail("the owner's approval did not reach the step's approach");
   console.log(`[PASS] it learns: the step's approach was rewarded (milestone done, then your approval), progress ${Math.round(progress.recentSuccess! * 100)}% of ${progress.steps} step(s), trend ${policy.trend.recent}`);
+
+  // 11. A whole forever-mode life: plan → build (fails, then refined) → fix → goal met → improve → upgrade → build the upgrade.
+  const { LessonMemory } = await import("../src/learning/LessonMemory.js");
+  (ModelRouter as unknown as { generate: (p: string) => Promise<string> }).generate = async (prompt: string) => {
+    if (/list every distinct thing they ask for/.test(prompt)) return JSON.stringify({ requirements: ["A hello file"] });
+    if (/Write the roadmap/.test(prompt)) return JSON.stringify({ milestones: [{ title: "Write the hello file", detail: "hello.txt says hello", covers: ["R1"] }] });
+    if (/Is the goal fully met/.test(prompt)) return JSON.stringify({ complete: true, missing: [] });
+    if (/A check was failing and this change fixed it/.test(prompt)) return "When a stale flag file makes a check fail, remove the flag and rerun the check.";
+    if (/Pick ONE improvement/.test(prompt)) return JSON.stringify({ title: "Louder hello", instruction: "Make the greeting in hello.txt louder, with capitals and an exclamation mark." });
+    if (/Plan its next upgrades/.test(prompt)) return JSON.stringify({ upgrades: [{ title: "Add a goodbye file", detail: "goodbye.txt says goodbye" }] });
+    return "{}";
+  };
+  let firstTry = true;
+  builds.start = (options: { workingDir: string; description?: string }) => {
+    const dir = options.workingDir;
+    const description = options.description ?? "";
+    const write = (file: string, text: string) => fs.writeFileSync(path.join(dir, file), text);
+    if (/Make every check pass|left these checks failing/.test(description)) fs.rmSync(path.join(dir, "broken.flag"), { force: true });
+    if (/Louder hello/.test(description)) write("hello.txt", "HELLO!\n");
+    else if (/goodbye/.test(description)) write("goodbye.txt", "goodbye\n");
+    else if (/Write the hello file/.test(description)) {
+      write("hello.txt", "hello\n");
+      // The first try leaves a check failing; the next one refines it.
+      if (firstTry) write("broken.flag", "x");
+      firstTry = false;
+    }
+    return { buildId: "stand-in" };
+  };
+  const life = await ContinuousImprover.startNew("Forever", {
+    goal: "A hello file. Then keep making it better forever.",
+    mode: "forever",
+    checkCommand: `node -e "process.exit(require('fs').existsSync('broken.flag')?1:0)"`
+  });
+  const at = () => hooks.getSession(life.id)!;
+  const outcomes = () => at().journal.map((s) => `${s.stage}:${s.outcome}${s.success ? "+" : ""}`).join(" ");
+  await hooks.cycle(life.id); // plan
+  if (at().stage !== "building" || at().plan.length !== 1) fail(`plan: ${JSON.stringify(at().plan)}`);
+  await hooks.cycle(life.id); // build: checks fail
+  if (at().plan[0].status === "done" || at().lastCheck?.passed) fail("the first try should have left a check failing");
+  await hooks.cycle(life.id); // build again: refined, milestone done
+  if (at().plan[0].status !== "done") fail(`refine: ${outcomes()}`);
+  await hooks.cycle(life.id); // nothing left to build → fixing
+  // Something breaks: the fix stage repairs it and learns a lesson.
+  fs.writeFileSync(path.join(at().workspace!.dir, "broken.flag"), "x");
+  execFileSync("git", ["add", "-A"], { cwd: at().workspace!.dir });
+  execFileSync("git", ["commit", "-q", "-m", "break it"], { cwd: at().workspace!.dir });
+  await hooks.cycle(life.id); // fixing: fix step
+  if (!at().journal.some((s) => s.stage === "fixing" && s.success)) fail(`fix: ${outcomes()}`);
+  if (!LessonMemory.list("build").some((l) => /stale flag file/.test(l.lesson))) fail("no lesson recorded from the fix");
+  await hooks.cycle(life.id); // fixing: clean, goal met → improving
+  if (at().stage !== "improving" || at().state === "stopped") fail(`after the goal: ${at().stage}/${at().state}`);
+  await hooks.cycle(life.id); // improve
+  if (!at().journal.some((s) => s.stage === "improving" && s.success)) fail(`improve: ${outcomes()}`);
+  hooks.patchSession(life.id, { improvementsSincePlan: 6 });
+  await hooks.cycle(life.id); // plan upgrades
+  if (at().stage !== "building" || !at().plan.some((m) => m.title === "Add a goodbye file")) fail(`upgrade: ${JSON.stringify(at().plan.map((m) => m.title))}`);
+  await hooks.cycle(life.id); // build the upgrade
+  if (at().plan.find((m) => m.title === "Add a goodbye file")?.status !== "done") fail(`upgrade build: ${outcomes()}`);
+  const ws2 = at().workspace!.dir;
+  if (read(path.join(ws2, "hello.txt")) !== "HELLO!\n" || !fs.existsSync(path.join(ws2, "goodbye.txt"))) fail("the work is not in the workspace");
+  ContinuousImprover.stop(life.id);
+  console.log(`[PASS] a forever session's whole life: ${outcomes()} (plan, build, refine, fix + lesson, goal met, improve, upgrade, build the upgrade)`);
 
   console.log("All continuous-builder checks passed.");
 };
