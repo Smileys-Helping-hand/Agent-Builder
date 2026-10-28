@@ -11,12 +11,18 @@
  *   model on a copy of the delivered site. Only if that build passes the same
  *   gates as a customer delivery does it replace the site; otherwise the site
  *   stays exactly as it was and the customer is told.
+ * - Their database (the platform and its public keys, from the Database panel
+ *   on their dashboard): written into the site's .env.local and the site
+ *   rebuilt, so every visitor's data goes there. A site built before it had a
+ *   data layer gets one (DbKit) on a copy, by the model, through the same
+ *   gates as a note.
  */
 import { execFile } from "child_process";
 import fs from "fs";
 import path from "path";
 import { promisify } from "util";
 
+import { DbKit, isPlatform } from "../database/DbKit.js";
 import { copyForBuild } from "../ecosystem/ProjectBuilds.js";
 import { BuildService, buildEvents, type BuildRecord } from "../orchestrator/BuildService.js";
 import { shareableBuildPreview } from "../server/previews.js";
@@ -69,10 +75,39 @@ async function applyFields(dir: string, edit: SiteEditRequest): Promise<string[]
   return result.changed;
 }
 
+/**
+ * The owner's database keys into the site, rebuilt with them ("live"), or
+ * "needs-build" when the site has no data layer yet. A failed rebuild puts the
+ * old keys back.
+ */
+async function applyDatabase(dir: string, edit: SiteEditRequest): Promise<"live" | "needs-build"> {
+  const chosen = edit.database!;
+  if (!isPlatform(chosen.platform)) throw new Error("that database is not one this site can use");
+  if (!DbKit.state(dir).installed) return "needs-build";
+  const envFile = path.join(dir, ".env.local");
+  const before = fs.existsSync(envFile) ? fs.readFileSync(envFile, "utf8") : null;
+  if (DbKit.state(dir).platform !== chosen.platform) DbKit.install(dir, chosen.platform);
+  DbKit.writeKeys(dir, chosen.platform, chosen.values ?? {});
+  const built = await Packager.buildWebsite(dir).catch(() => null);
+  if (!built) {
+    if (before === null) fs.rmSync(envFile, { force: true });
+    else fs.writeFileSync(envFile, before);
+    await Packager.buildWebsite(dir).catch(() => null);
+    throw new Error("the site did not build with those keys, so it was left as it was");
+  }
+  await commit(dir, `Owner connected ${chosen.platform} from their dashboard`);
+  return "live";
+}
+
 /** Build the note on a copy; report when it ends. Resolves once the build has started. */
 async function startNoteBuild(orderId: string, edit: SiteEditRequest, from: string): Promise<void> {
   const order = OrderStore.get(orderId)!;
   const { workDir } = await copyForBuild(from, order.title, "edit");
+  // A database for a site that had none: the data layer and the owner's keys go in before the model wires it up.
+  if (edit.database && isPlatform(edit.database.platform)) {
+    DbKit.install(workDir, edit.database.platform);
+    DbKit.writeKeys(workDir, edit.database.platform, edit.database.values ?? {});
+  }
   const build = BuildService.start({
     projectName: order.title,
     description: `${order.brief}\n\nThis site was built and delivered already; the owner is using it. Now make this change they asked for, and leave everything else as it is: ${edit.note}`,
@@ -132,12 +167,25 @@ export const SiteEdits = {
       }
       // One thing at a time per site: a build working on it, or game mode, means later.
       if ((order.buildId && BuildService.isRunning(order.buildId)) || GameMode.isOn()) continue;
-      if (edit.note && BuildService.active().length > 0) continue;
+      if ((edit.note || (edit.database && !DbKit.state(dir).installed)) && BuildService.active().length > 0) continue;
 
       inFlight.add(edit.editId);
       started += 1;
       await SiteClient.reportEdit(edit.orderId, { editId: edit.editId, status: "applying" });
       try {
+        if (edit.database) {
+          const result = await applyDatabase(dir, edit);
+          if (result === "needs-build") {
+            const note = `Keep everything this site saves (forms, bookings, products, posts, accounts) through src/lib/db, which is already added and connected to ${edit.database.platform}; show loading and error states, and keep the site looking and working as it does.`;
+            OrderStore.note(order.id, "instruction", `Owner connected ${edit.database.platform}; the site had no data layer, so the studio is adding one.`);
+            await startNoteBuild(order.id, { ...edit, note }, dir);
+            continue;
+          }
+          OrderStore.note(order.id, "instruction", `Owner connected ${edit.database.platform} from their dashboard; the site is rebuilt with it.`);
+          inFlight.delete(edit.editId);
+          await SiteClient.reportEdit(edit.orderId, { editId: edit.editId, status: "done", previewUrl: order.deliverableUrl });
+          continue;
+        }
         const changed = await applyFields(dir, edit);
         if (changed.length) OrderStore.note(order.id, "instruction", `Owner changed ${changed.join(", ")} from their dashboard; live now.`);
         if (edit.note) {

@@ -77,6 +77,8 @@ export interface Order {
   notes: string | null;
   /** The partner app the customer ordered through ("VerifiedBizLink"), or null for the site itself. */
   via: string | null;
+  /** The database the customer chose for their app (DbKit platform id), or null when they did not say. */
+  database: string | null;
   receivedAt: string;
   deliveredAt: string | null;
   updatedAt: string;
@@ -143,6 +145,8 @@ const db = () => {
     // Added after the first release: orders taken in through a partner's app.
     const columns = database.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>;
     if (!columns.some((column) => column.name === "via")) database.exec("ALTER TABLE orders ADD COLUMN via TEXT");
+    // And the database the customer chose for their app.
+    if (!columns.some((column) => column.name === "database")) database.exec("ALTER TABLE orders ADD COLUMN database TEXT");
     ready = true;
   }
   return database;
@@ -168,6 +172,7 @@ type OrderRow = {
   auto_improve: number;
   notes: string | null;
   via: string | null;
+  database: string | null;
   received_at: string;
   delivered_at: string | null;
   updated_at: string;
@@ -193,6 +198,7 @@ const mapOrder = (row: OrderRow): Order => ({
   autoImprove: row.auto_improve === 1,
   notes: row.notes,
   via: row.via ?? null,
+  database: row.database ?? null,
   receivedAt: row.received_at,
   deliveredAt: row.delivered_at,
   updatedAt: row.updated_at
@@ -214,6 +220,7 @@ export interface NewOrder {
   timeline?: string | null;
   autoImprove?: boolean;
   via?: string | null;
+  database?: string | null;
 }
 
 export const OrderStore = {
@@ -233,8 +240,8 @@ export const OrderStore = {
     db()
       .prepare(
         `INSERT INTO orders (id, external_id, source, customer_name, customer_email, product_type, title, brief,
-                             budget, timeline, status, auto_improve, via, received_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'received', ?, ?, ?, ?)`
+                             budget, timeline, status, auto_improve, via, database, received_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'received', ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -249,6 +256,7 @@ export const OrderStore = {
         input.timeline ?? null,
         input.autoImprove === false ? 0 : 1,
         input.via?.trim().slice(0, 60) || null,
+        input.database?.trim().slice(0, 20) || null,
         now,
         now
       );

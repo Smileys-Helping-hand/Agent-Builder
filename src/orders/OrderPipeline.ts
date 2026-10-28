@@ -30,6 +30,7 @@ import { Catalog } from "./Catalog.js";
 import { OrderStore, type Order } from "./OrderStore.js";
 import { OrderReceipts } from "./OrderReceipts.js";
 import { SiteClient, type SiteOrder } from "./SiteClient.js";
+import { isPlatform } from "../database/DbKit.js";
 import { SiteEdits } from "./SiteEdits.js";
 import { TemplateAcademy } from "../academy/TemplateAcademy.js";
 import { readPublicUrl } from "../utils/PublicUrl.js";
@@ -138,7 +139,8 @@ const normalize = (raw: SiteOrder): Parameters<typeof OrderStore.create>[0] | nu
     brief: features.length > 0 ? `${brief}\n\nFeatures they chose: ${features.join(", ")}.` : brief,
     budget: raw.budget ?? null,
     timeline: raw.timeline ?? null,
-    via: raw.source?.partnerName?.trim() || null
+    via: raw.source?.partnerName?.trim() || null,
+    database: isPlatform(raw.database) ? raw.database : null
   };
 };
 
@@ -439,7 +441,9 @@ export const OrderPipeline = {
       maxIterations: workingDir ? 8 : undefined,
       workingDir,
       startedBy: `order:${order.id} (${by})`,
-      orderId: order.id
+      orderId: order.id,
+      // The app is built around the database the customer chose; they connect it from their dashboard.
+      ...(isPlatform(order.database) ? { database: order.database } : {})
     });
 
     OrderStore.note(

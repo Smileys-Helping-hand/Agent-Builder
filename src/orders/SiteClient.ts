@@ -37,6 +37,8 @@ export interface SiteOrder {
   orderRef?: string;
   /** Sold through a partner's app (VerifiedBizLink), not the site itself. */
   source?: { partnerId: string; partnerName: string } | null;
+  /** The database the customer plans to use (DbKit platform id: supabase, firebase…), or null. */
+  database?: string | null;
 }
 
 /** What the builder tells the site each time it checks in. */
@@ -50,6 +52,8 @@ export interface SiteEditRequest {
   patch: Record<string, string>;
   sections: { order: string[]; hidden: string[] } | null;
   note: string | null;
+  /** The customer connecting their database: the platform and its public keys. */
+  database?: { platform: string; values: Record<string, string> } | null;
   at: number;
 }
 

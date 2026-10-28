@@ -1329,6 +1329,8 @@ export const ContinuousImprover = {
     const session = getSession(sessionId);
     if (!session) throw new Error("Unknown session.");
     patchSession(sessionId, { notes: [...session.notes, note].slice(-30), needsReplan: true });
+    // The owner's new direction counts now: the step in progress stops, and the roadmap is revised next.
+    if (session.currentBuildId && BuildService.isRunning(session.currentBuildId)) BuildService.control(session.currentBuildId, "stop");
     return getSession(sessionId)!;
   },
 

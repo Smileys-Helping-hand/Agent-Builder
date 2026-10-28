@@ -5,7 +5,11 @@
  * that make the choice permanent for everyone.
  *
  * <DbStatusBar /> is the small pill that says where data is going and opens
- * this panel. Put it once in the app (Agent Builder does).
+ * this panel. Put it once in the app (Agent Builder does). It is for the app's
+ * owner, not its visitors: it shows while developing, and on the live app only
+ * when it is opened with ?admin (remembered for that visit). Keys saved here
+ * connect that browser; for every visitor they go in .env.local (or the
+ * owner's Database panel on their ARP dashboard), which rebuilds the app.
  */
 import { useState, type CSSProperties } from "react";
 
@@ -168,11 +172,24 @@ export function DbSetup({ onClose }: { onClose?: () => void }) {
   );
 }
 
-/** A small pill showing where data is saved; tap it to connect a database. */
+/** The owner's view: while developing, or on the live app opened with ?admin. */
+export function adminMode(): boolean {
+  if ((import.meta.env as Record<string, unknown>).DEV) return true;
+  try {
+    if (/[?&#]admin\b/.test(`${window.location.search}${window.location.hash}`)) sessionStorage.setItem("db-admin", "1");
+    return sessionStorage.getItem("db-admin") === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** A small pill showing where data is saved; tap it to connect a database. Only the owner sees it (adminMode). */
 export function DbStatusBar() {
   const [open, setOpen] = useState(false);
   const [, setTick] = useState(0);
+  const [owner] = useState(adminMode);
   const info = dbInfo();
+  if (!owner) return null;
   return (
     <>
       <button
