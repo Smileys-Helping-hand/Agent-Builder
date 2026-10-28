@@ -1,9 +1,16 @@
 /**
- * Smoketest: continuous improvement's approval gate — the part that touches a
- * real repository. On a throwaway git project in a temporary folder:
- *   - an approved change is applied and committed on the live branch, and only its files
- *   - a change to a file the owner edited since is a conflict: nothing applied, the edit kept
- *   - approvals and rejections reward the improve.kind policy
+ * Smoketest: the continuous builder's machinery, on a throwaway git project
+ * in a temporary folder, without a model (each step of the loop is driven by
+ * hand through ContinuousImprover.testHooks):
+ *   - the project is copied into its own workspace; the original is never touched
+ *   - a clean workspace with something new waits as one delivery; a newer one replaces it
+ *   - the owner's own commits come into the workspace
+ *   - a major change (a dependency file) must have its parts chosen
+ *   - approving some parts applies and commits only those, on the live branch;
+ *     the declined parts are taken back out of the workspace
+ *   - a file the owner changed since is never overwritten, and the workspace takes their version
+ *   - the owner's check command decides whether checks pass
+ *   - a brand-new project starts from its goal
  *
  *   npx tsx scripts/continuous-smoketest.ts
  */
@@ -19,6 +26,8 @@ process.env.SECOND_BRAIN_SYNC = "false";
 process.env.MODEL_PROVIDER = "lmstudio";
 process.env.LMSTUDIO_BASE_URL = "http://127.0.0.1:9";
 process.env.MODEL_WAIT_MS = "0";
+process.env.CONTINUOUS_NO_LOOP = "1";
+process.env.CONTINUOUS_NEW_PROJECTS_DIR = path.join(tmp, "new-projects");
 process.env.GIT_AUTHOR_NAME = process.env.GIT_COMMITTER_NAME = "Smoketest";
 process.env.GIT_AUTHOR_EMAIL = process.env.GIT_COMMITTER_EMAIL = "smoketest@example.com";
 
@@ -26,12 +35,13 @@ const fail = (message: string): never => {
   throw new Error(message);
 };
 const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", windowsHide: true }).trim();
+const read = (file: string) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null);
+const passed = { at: new Date().toISOString(), passed: true, verified: true, failing: [], output: "", command: null };
 
 const main = async () => {
-  const { ProjectBuilds } = await import("../src/ecosystem/ProjectBuilds.js");
-  const { BuildService } = await import("../src/orchestrator/BuildService.js");
+  const { EcosystemStore } = await import("../src/ecosystem/EcosystemStore.js");
   const { ContinuousImprover } = await import("../src/agent/ContinuousImprover.js");
-  const { Reinforcement } = await import("../src/learning/Reinforcement.js");
+  const hooks = ContinuousImprover.testHooks;
 
   // A project with two files on its live branch.
   const project = path.join(tmp, "proj");
@@ -41,71 +51,119 @@ const main = async () => {
   fs.writeFileSync(path.join(project, "util.js"), "export const add = (a, b) => a + b;\n");
   git(project, "add", "-A");
   git(project, "commit", "-q", "-m", "start");
+  EcosystemStore.upsertProject({
+    id: "p1", name: "proj", path: project, root: tmp, kind: "node", description: null, stack: [], scripts: {},
+    gitBranch: "main", gitRemote: null, gitDirty: 0, gitAhead: 0, gitBehind: 0, lastCommitAt: null, lastCommitSubject: null, hasClaudeMd: false, readmeExcerpt: null
+  });
 
-  // An improvement as the loop leaves it: a build on a copy that changed a file and committed it.
-  const propose = async (file: string, content: string, title: string) => {
-    const record = await ProjectBuilds.start({ id: "p1", name: "proj", path: project }, title, { startedBy: "smoketest" });
-    for (let i = 0; i < 120 && BuildService.isRunning(record.buildId); i++) await new Promise((r) => setTimeout(r, 500));
-    if (BuildService.isRunning(record.buildId)) BuildService.control(record.buildId, "stop");
-    fs.writeFileSync(path.join(record.workDir, file), content);
-    git(record.workDir, "add", "-A");
-    git(record.workDir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", title);
-    const kind = Reinforcement.choose("improve.kind", { bucket: "p1", agent: "smoketest" });
-    const store = JSON.parse(fs.existsSync("data/agent/continuous.json") ? fs.readFileSync("data/agent/continuous.json", "utf8") : '{"sessions":[],"candidates":[]}');
-    const candidate = {
-      id: `imp_${store.candidates.length + 1}`,
-      sessionId: "s1",
-      projectId: "p1",
-      projectName: "proj",
-      buildId: record.buildId,
-      title,
-      why: "test",
-      kind: kind.arm.id,
-      instruction: title,
-      state: "awaiting",
-      createdAt: new Date().toISOString(),
-      decidedAt: null,
-      files: [file],
-      test: { passed: true, score: 100, failing: [] },
-      commit: null,
-      note: null,
-      episodeId: kind.episodeId
-    };
-    store.candidates.push(candidate);
-    fs.mkdirSync("data/agent", { recursive: true });
-    fs.writeFileSync("data/agent/continuous.json", JSON.stringify(store));
-    return candidate;
+  // 1. Its own workspace.
+  const session = ContinuousImprover.start("p1", { goal: "Greet people by name and add maths helpers", mode: "forever" });
+  await hooks.prepareWorkspace(session, EcosystemStore.getProject("p1")!);
+  const ws = hooks.getSession(session.id)!.workspace!;
+  if (!fs.existsSync(path.join(ws.dir, "app.js")) || ws.dir.startsWith(project)) fail("no separate workspace");
+  console.log("[PASS] workspace: a copy of the project of its own");
+
+  // 2. A step's work, then a delivery; a newer one replaces it.
+  fs.writeFileSync(path.join(ws.dir, "app.js"), "export const greet = (name = 'you') => `hi ${name}`;\n");
+  fs.mkdirSync(path.join(ws.dir, "lib"));
+  fs.writeFileSync(path.join(ws.dir, "lib", "maths.js"), "export const square = (x) => x * x;\n");
+  git(ws.dir, "add", "-A");
+  git(ws.dir, "commit", "-q", "-m", "step 1");
+  await hooks.deliverIfReady(session.id, passed);
+  const first = ContinuousImprover.list().deliveries[0];
+  if (!first || first.state !== "awaiting" || first.files.length !== 2 || first.major) fail(`first delivery: ${JSON.stringify(first)}`);
+  if (read(path.join(project, "app.js"))!.includes("name")) fail("the project was touched before approval");
+
+  // 3. The owner commits to the project meanwhile; it comes into the workspace.
+  fs.writeFileSync(path.join(project, "util.js"), "export const add = (a, b) => a + b;\nexport const sub = (a, b) => a - b;\n");
+  git(project, "commit", "-q", "-am", "owner: sub");
+  await hooks.syncOwnerCommits(session.id);
+  if (!read(path.join(ws.dir, "util.js"))!.includes("sub")) fail("the owner's commit did not come into the workspace");
+  console.log("[PASS] the original stays untouched until approved; the owner's commits come into the workspace");
+
+  // 4. More work, including a dependency file: a major change, replacing the first delivery.
+  fs.writeFileSync(path.join(ws.dir, "app.js"), "export const greet = (name = 'you') => `hello ${name}`;\n");
+  fs.writeFileSync(path.join(ws.dir, "package.json"), JSON.stringify({ name: "proj", type: "module" }, null, 2));
+  git(ws.dir, "add", "-A");
+  git(ws.dir, "commit", "-q", "-m", "step 2");
+  await hooks.deliverIfReady(session.id, passed);
+  const deliveries = ContinuousImprover.list().deliveries;
+  const second = deliveries[0];
+  if (deliveries.find((d) => d.id === first.id)?.state !== "superseded") fail("the older delivery was not replaced");
+  if (!second.major || !second.majorWhy.some((w) => w.includes("package.json"))) fail(`not flagged major: ${JSON.stringify(second.majorWhy)}`);
+  if (second.files.some((f) => f.path === "util.js")) fail("the owner's own change came back as a delivery");
+  let refused = false;
+  await ContinuousImprover.approve(second.id).catch(() => (refused = true));
+  if (!refused) fail("a major change was approved without choosing parts");
+  console.log("[PASS] one delivery at a time, the newest; a major change (package.json) must have its parts chosen");
+
+  // 5. Approve some parts: only those reach the project, committed on main; the rest leaves the workspace.
+  const decided = (await ContinuousImprover.approve(second.id, ["app.js", "lib/maths.js"])) as { state: string; applied: string[]; declined: string[]; commit: { branch: string } | null };
+  if (decided.state !== "partly" || decided.applied.length !== 2 || decided.declined.join() !== "package.json") fail(`partial approval: ${JSON.stringify(decided)}`);
+  if (!read(path.join(project, "app.js"))!.includes("hello") || !fs.existsSync(path.join(project, "lib", "maths.js"))) fail("approved parts not applied");
+  if (fs.existsSync(path.join(project, "package.json"))) fail("a declined part reached the project");
+  const committed = git(project, "show", "--name-only", "--format=", "HEAD").split("\n").filter(Boolean).sort();
+  if (committed.join() !== "app.js,lib/maths.js" || decided.commit?.branch !== "main") fail(`commit: ${committed} on ${decided.commit?.branch}`);
+  if (fs.existsSync(path.join(ws.dir, "package.json"))) fail("the declined part stayed in the workspace");
+  await hooks.deliverIfReady(session.id, passed);
+  if (ContinuousImprover.list().deliveries.some((d) => d.state === "awaiting")) fail("an empty delivery appeared after the decision");
+  console.log("[PASS] approving parts: only those applied and committed on main; the declined part left the workspace");
+
+  // 6. A file the owner is editing is never overwritten; the workspace takes their version.
+  fs.writeFileSync(path.join(ws.dir, "util.js"), "export const add = (a, b) => Number(a) + Number(b);\n");
+  git(ws.dir, "commit", "-q", "-am", "step 3");
+  fs.writeFileSync(path.join(project, "util.js"), "export const add = (a, b) => a + b; // the owner's edit in progress\n");
+  await hooks.deliverIfReady(session.id, passed);
+  const third = ContinuousImprover.list().deliveries[0];
+  const conflicted = (await ContinuousImprover.approve(third.id, ["util.js"])) as { conflicts: string[]; state: string };
+  if (conflicted.conflicts.join() !== "util.js" || conflicted.state !== "partly") fail(`conflict: ${JSON.stringify(conflicted)}`);
+  if (!read(path.join(project, "util.js"))!.includes("the owner's edit")) fail("the owner's edit was overwritten");
+  if (!read(path.join(ws.dir, "util.js"))!.includes("the owner's edit")) fail("the workspace did not take the owner's version");
+  console.log("[PASS] a file the owner changed since is kept as theirs, in the project and the workspace");
+
+  // 7. The owner's check command decides.
+  const failing = await hooks.runChecks({ ...hooks.getSession(session.id)!, checkCommand: 'node -e "process.exit(3)"' }, ws.dir);
+  const ok = await hooks.runChecks({ ...hooks.getSession(session.id)!, checkCommand: 'node -e "process.exit(0)"' }, ws.dir);
+  if (failing.passed || !failing.verified || ok.passed !== true) fail(`check command: ${JSON.stringify({ failing, ok })}`);
+  console.log("[PASS] the check command decides whether the workspace is clean");
+
+  // 8. A brand-new project from its goal.
+  const fresh = await ContinuousImprover.startNew("My Tiny OS", { goal: "A tiny operating system that boots and prints hello", mode: "complete" });
+  const readme = read(path.join(process.env.CONTINUOUS_NEW_PROJECTS_DIR!, "My-Tiny-OS", "README.md"));
+  if (!readme?.includes("boots and prints hello") || fresh.mode !== "complete" || !EcosystemStore.getProject(fresh.projectId)) fail("new project");
+  console.log("[PASS] a new project starts from nothing: folder, repository, its goal, in the project list");
+
+  ContinuousImprover.stop(session.id);
+  ContinuousImprover.stop(fresh.id);
+
+  // 9. The loop's stages, with a stand-in model and build: plan → build → check → deliver → fix → complete.
+  const { ModelRouter } = await import("../src/tools/ModelRouter.js");
+  const { BuildService } = await import("../src/orchestrator/BuildService.js");
+  (ModelRouter as unknown as { generate: (p: string) => Promise<string> }).generate = async (prompt: string) =>
+    /Write the roadmap/.test(prompt)
+      ? JSON.stringify({ milestones: [{ title: "Print hello", detail: "A hello.txt that says hello" }] })
+      : /Is the goal fully met/.test(prompt)
+        ? JSON.stringify({ complete: true, missing: [] })
+        : "{}";
+  const builds = BuildService as unknown as { start: (o: { workingDir: string }) => { buildId: string }; isRunning: (id: string) => boolean };
+  builds.start = (options) => {
+    fs.writeFileSync(path.join(options.workingDir, "hello.txt"), "hello\n");
+    return { buildId: "stand-in" };
   };
+  builds.isRunning = () => false;
+  const tiny = await ContinuousImprover.startNew("Tiny", { goal: "Print hello and nothing else, done properly", mode: "complete", checkCommand: 'node -e "process.exit(0)"' });
+  const stages: string[] = [];
+  for (let i = 0; i < 6 && hooks.getSession(tiny.id)!.state !== "stopped"; i++) {
+    await hooks.cycle(tiny.id);
+    stages.push(hooks.getSession(tiny.id)!.stage);
+  }
+  const end = hooks.getSession(tiny.id)!;
+  if (end.stage !== "complete" || end.state !== "stopped") fail(`stages: ${stages.join(" → ")}; ended ${end.stage}/${end.state}`);
+  if (end.plan[0]?.status !== "done") fail(`milestone: ${JSON.stringify(end.plan)}`);
+  if (!ContinuousImprover.list().deliveries.some((d) => d.sessionId === tiny.id && d.state === "awaiting" && d.files.some((f) => f.path === "hello.txt"))) fail("no delivery of the work");
+  console.log(`[PASS] the loop: ${stages.join(" → ")}; the milestone is done, the work waits for approval, and a "complete" session stops`);
 
-  // 1. Approve: applied and committed on main, only that file.
-  const good = await propose("app.js", "export const greet = (name = 'you') => `hi ${name}`;\n", "Greet by name");
-  fs.writeFileSync(path.join(project, "notes.txt"), "the owner's own unrelated work\n"); // must not be swept into the commit
-  const approved = await ContinuousImprover.approve(good.id);
-  if (approved.state !== "approved" || !approved.commit) fail(`approve: ${JSON.stringify(approved)}`);
-  if (!fs.readFileSync(path.join(project, "app.js"), "utf8").includes("name = 'you'")) fail("the change was not applied");
-  if (git(project, "rev-parse", "--abbrev-ref", "HEAD") !== "main" || approved.commit.branch !== "main") fail("not committed on the live branch");
-  const committed = git(project, "show", "--name-only", "--format=", "HEAD").split("\n").filter(Boolean);
-  if (committed.join(",") !== "app.js") fail(`the commit took more than the change: ${committed}`);
-  if (git(project, "status", "--porcelain").indexOf("notes.txt") < 0) fail("the owner's own file was touched");
-  console.log(`[PASS] approve: applied and committed on main (${approved.commit.hash.slice(0, 7)}), only app.js; the owner's other work untouched`);
-
-  // 2. Conflict: the owner edited util.js after the improvement was built from it.
-  const clash = await propose("util.js", "export const add = (a, b) => Number(a) + Number(b);\n", "Coerce numbers in add");
-  fs.writeFileSync(path.join(project, "util.js"), "export const add = (a, b) => a + b; // the owner's edit\n");
-  const conflicted = await ContinuousImprover.approve(clash.id);
-  if (conflicted.state !== "conflict") fail(`expected a conflict, got ${conflicted.state}`);
-  if (!fs.readFileSync(path.join(project, "util.js"), "utf8").includes("the owner's edit")) fail("the owner's edit was overwritten");
-  console.log("[PASS] conflict: a file the owner changed since is refused; their edit stays");
-
-  // 3. Reject, and the learning.
-  const rejected = ContinuousImprover.reject(clash.id, "not needed");
-  if (rejected.state !== "rejected") fail("reject failed");
-  const episodes = Reinforcement.recent(10).filter((e) => e.policy === "improve.kind");
-  const rewards = episodes.map((e) => e.reward).sort();
-  if (JSON.stringify(rewards) !== JSON.stringify([0, 1])) fail(`improve.kind rewards ${JSON.stringify(rewards)}`);
-  console.log("[PASS] decisions teach it: approved → 1, rejected → 0 for that kind of improvement");
-
-  console.log("All continuous-improvement checks passed.");
+  console.log("All continuous-builder checks passed.");
 };
 
 // Exit once open sockets have closed: process.exit() while a socket is still

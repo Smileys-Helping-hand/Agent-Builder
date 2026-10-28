@@ -11,11 +11,14 @@
  *   POST   /api/agent/ground/practise              { challengeId? }
  *   POST   /api/agent/ground/enabled               { enabled }
  *   POST   /api/agent/ground/harder                ask the model for harder challenges
- *   GET    /api/agent/continuous                   sessions and improvements
- *   POST   /api/agent/continuous/start             { projectId, focus? }
+ *   GET    /api/agent/continuous                   sessions (roadmap, journal), deliveries waiting and decided
+ *   POST   /api/agent/continuous/start             { projectId | newProject: name, goal?, mode?: "complete"|"forever", checkCommand? }
+ *   POST   /api/agent/continuous/:id/instruct      { text }  a new instruction; the roadmap is revised
+ *   POST   /api/agent/continuous/:id/configure     { mode?, checkCommand? }
  *   POST   /api/agent/continuous/:id/stop
- *   GET    /api/agent/approvals/:id/diff
- *   POST   /api/agent/approvals/:id/approve        apply + commit on the live branch
+ *   POST   /api/agent/continuous/:id/restart       carry on from where it got to
+ *   GET    /api/agent/approvals/:id/diff           ?file=… one file
+ *   POST   /api/agent/approvals/:id/approve        { files? } the parts to add; applied + committed on the live branch
  *   POST   /api/agent/approvals/:id/reject         { note? }
  */
 import type { Express, Request, Response } from "express";
@@ -38,7 +41,7 @@ export const registerAgentRoutes = (app: Express) => {
   );
   registerProfileSources({
     approvedImprovements: () => ContinuousImprover.approvedCount(),
-    waitingApprovals: () => ContinuousImprover.list().candidates.filter((c) => c.state === "awaiting" || c.state === "conflict").length,
+    waitingApprovals: () => ContinuousImprover.waitingCount(),
     practiceWins: () => TrainingGround.wins(),
     continuousRunning: () => ContinuousImprover.running(),
     practising: () => TrainingGround.practising()
@@ -126,13 +129,49 @@ export const registerAgentRoutes = (app: Express) => {
     res.json(ContinuousImprover.list());
   });
 
-  app.post("/api/agent/continuous/start", authenticateAgent("execute"), (req: Request, res: Response) => {
-    const projectId = typeof req.body?.projectId === "string" ? req.body.projectId : "";
-    if (!projectId) return res.status(400).json({ error: "Choose a project." });
+  app.post("/api/agent/continuous/start", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const projectId = typeof body.projectId === "string" ? body.projectId : "";
+    const newProject = typeof body.newProject === "string" ? body.newProject.trim() : "";
+    const goal = typeof body.goal === "string" ? body.goal : typeof body.focus === "string" ? body.focus : "";
+    const options = {
+      goal,
+      mode: body.mode === "complete" ? ("complete" as const) : ("forever" as const),
+      checkCommand: typeof body.checkCommand === "string" ? body.checkCommand : null
+    };
+    if (!projectId && !newProject) return res.status(400).json({ error: "Choose a project, or name a new one." });
+    if (newProject && goal.trim().length < 10) return res.status(400).json({ error: "Say what to build: a new project starts from its goal." });
+    const actor = (req as AgentRequest).actor ?? "owner";
     try {
-      res.json({ session: ContinuousImprover.start(projectId, typeof req.body?.focus === "string" ? req.body.focus : "", (req as AgentRequest).actor ?? "owner") });
+      res.json({ session: newProject ? await ContinuousImprover.startNew(newProject, options, actor) : ContinuousImprover.start(projectId, options, actor) });
+    } catch (error) {
+      res.status(/Unknown project/.test(message(error)) ? 404 : 409).json({ error: message(error) });
+    }
+  });
+
+  app.post("/api/agent/continuous/:id/instruct", authenticateAgent("execute"), (req: Request, res: Response) => {
+    try {
+      res.json({ session: ContinuousImprover.instruct(req.params.id, typeof req.body?.text === "string" ? req.body.text : "") });
+    } catch (error) {
+      res.status(/Unknown/.test(message(error)) ? 404 : 400).json({ error: message(error) });
+    }
+  });
+
+  app.post("/api/agent/continuous/:id/configure", authenticateAgent("execute"), (req: Request, res: Response) => {
+    try {
+      const mode = req.body?.mode === "complete" || req.body?.mode === "forever" ? req.body.mode : undefined;
+      const checkCommand = typeof req.body?.checkCommand === "string" || req.body?.checkCommand === null ? req.body.checkCommand : undefined;
+      res.json({ session: ContinuousImprover.configure(req.params.id, { mode, checkCommand }) });
     } catch (error) {
       res.status(404).json({ error: message(error) });
+    }
+  });
+
+  app.post("/api/agent/continuous/:id/restart", authenticateAgent("execute"), (req: Request, res: Response) => {
+    try {
+      res.json({ session: ContinuousImprover.restart(req.params.id) });
+    } catch (error) {
+      res.status(409).json({ error: message(error) });
     }
   });
 
@@ -144,7 +183,7 @@ export const registerAgentRoutes = (app: Express) => {
 
   app.get("/api/agent/approvals/:id/diff", authenticateAgent("read"), async (req: Request, res: Response) => {
     try {
-      res.json({ diff: await ContinuousImprover.diff(req.params.id) });
+      res.json({ diff: await ContinuousImprover.diff(req.params.id, typeof req.query.file === "string" ? req.query.file : undefined) });
     } catch (error) {
       res.status(404).json({ error: message(error) });
     }
@@ -152,15 +191,16 @@ export const registerAgentRoutes = (app: Express) => {
 
   app.post("/api/agent/approvals/:id/approve", authenticateAgent("execute"), async (req: Request, res: Response) => {
     try {
-      res.json({ candidate: await ContinuousImprover.approve(req.params.id) });
+      const files = Array.isArray(req.body?.files) ? (req.body.files as unknown[]).filter((f): f is string => typeof f === "string") : undefined;
+      res.json({ candidate: await ContinuousImprover.approve(req.params.id, files) });
     } catch (error) {
       res.status(409).json({ error: message(error) });
     }
   });
 
-  app.post("/api/agent/approvals/:id/reject", authenticateAgent("execute"), (req: Request, res: Response) => {
+  app.post("/api/agent/approvals/:id/reject", authenticateAgent("execute"), async (req: Request, res: Response) => {
     try {
-      res.json({ candidate: ContinuousImprover.reject(req.params.id, typeof req.body?.note === "string" ? req.body.note : "") });
+      res.json({ candidate: await ContinuousImprover.reject(req.params.id, typeof req.body?.note === "string" ? req.body.note : "") });
     } catch (error) {
       res.status(404).json({ error: message(error) });
     }

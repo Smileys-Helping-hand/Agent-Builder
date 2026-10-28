@@ -996,12 +996,46 @@ export interface GroundState {
   runs: Array<{ id: string; challengeId: string; buildId: string; startedAt: string; finishedAt: string | null; state: string; score: number | null }>;
 }
 
+export interface Milestone {
+  id: string;
+  title: string;
+  detail: string;
+  status: "todo" | "doing" | "done" | "parked";
+  attempts: number;
+  note: string | null;
+  doneAt: string | null;
+}
+
+export interface ContinuousStep {
+  at: string;
+  stage: string;
+  title: string;
+  outcome: "kept" | "rolled-back" | "no-change" | "stopped" | "failed";
+  note: string | null;
+  commit: string | null;
+}
+
+export interface ContinuousCheck {
+  at: string;
+  passed: boolean;
+  verified: boolean;
+  failing: string[];
+  output: string;
+  command: string | null;
+}
+
 export interface ImproveSession {
   id: string;
   projectId: string;
   projectName: string;
+  projectPath: string;
   liveBranch: string | null;
+  goal: string;
   focus: string;
+  notes: string[];
+  mode: "complete" | "forever";
+  stage: "planning" | "building" | "fixing" | "improving" | "complete";
+  checkCommand: string | null;
   state: "running" | "waiting" | "stopped";
   phase: string;
   startedAt: string;
@@ -1009,6 +1043,31 @@ export interface ImproveSession {
   cycles: number;
   currentBuildId: string | null;
   lastError: string | null;
+  plan: Milestone[];
+  journal: ContinuousStep[];
+  lastCheck: ContinuousCheck | null;
+  researchTopicId: string | null;
+}
+
+export interface Delivery {
+  id: string;
+  sessionId: string;
+  projectId: string;
+  projectName: string;
+  title: string;
+  summary: string[];
+  files: Array<{ path: string; change: "added" | "modified" | "deleted"; added: number; removed: number }>;
+  major: boolean;
+  majorWhy: string[];
+  check: ContinuousCheck | null;
+  state: "awaiting" | "approved" | "partly" | "declined" | "superseded";
+  createdAt: string;
+  decidedAt: string | null;
+  applied: string[];
+  declined: string[];
+  conflicts: string[];
+  commit: { hash: string; branch: string } | null;
+  note: string | null;
 }
 
 export interface ImproveCandidate {
@@ -1407,14 +1466,21 @@ export const api = {
   groundPractise: (challengeId?: string) => request<{ run: unknown }>("/api/agent/ground/practise", { method: "POST", body: JSON.stringify({ challengeId }) }),
   groundEnabled: (enabled: boolean) => request<GroundState>("/api/agent/ground/enabled", { method: "POST", body: JSON.stringify({ enabled }) }),
   groundHarder: () => request<{ added: unknown[] }>("/api/agent/ground/harder", { method: "POST" }, 600000),
-  continuous: () => request<{ sessions: ImproveSession[]; candidates: ImproveCandidate[] }>("/api/agent/continuous"),
-  continuousStart: (projectId: string, focus: string) =>
-    request<{ session: ImproveSession }>("/api/agent/continuous/start", { method: "POST", body: JSON.stringify({ projectId, focus }) }),
+  continuous: () => request<{ sessions: ImproveSession[]; deliveries: Delivery[]; candidates: ImproveCandidate[] }>("/api/agent/continuous"),
+  continuousStart: (input: { projectId?: string; newProject?: string; goal: string; mode: "complete" | "forever"; checkCommand?: string }) =>
+    request<{ session: ImproveSession }>("/api/agent/continuous/start", { method: "POST", body: JSON.stringify(input) }, 120000),
   continuousStop: (id: string) => request<{ session: ImproveSession }>(`/api/agent/continuous/${encodeURIComponent(id)}/stop`, { method: "POST" }),
-  approvalDiff: (id: string) => request<{ diff: string }>(`/api/agent/approvals/${encodeURIComponent(id)}/diff`),
-  approve: (id: string) => request<{ candidate: ImproveCandidate }>(`/api/agent/approvals/${encodeURIComponent(id)}/approve`, { method: "POST" }, 120000),
+  continuousRestart: (id: string) => request<{ session: ImproveSession }>(`/api/agent/continuous/${encodeURIComponent(id)}/restart`, { method: "POST" }),
+  continuousInstruct: (id: string, text: string) =>
+    request<{ session: ImproveSession }>(`/api/agent/continuous/${encodeURIComponent(id)}/instruct`, { method: "POST", body: JSON.stringify({ text }) }),
+  continuousConfigure: (id: string, input: { mode?: "complete" | "forever"; checkCommand?: string | null }) =>
+    request<{ session: ImproveSession }>(`/api/agent/continuous/${encodeURIComponent(id)}/configure`, { method: "POST", body: JSON.stringify(input) }),
+  approvalDiff: (id: string, file?: string) =>
+    request<{ diff: string }>(`/api/agent/approvals/${encodeURIComponent(id)}/diff${file ? `?file=${encodeURIComponent(file)}` : ""}`, {}, 60000),
+  approve: (id: string, files?: string[]) =>
+    request<{ candidate: ImproveCandidate | Delivery }>(`/api/agent/approvals/${encodeURIComponent(id)}/approve`, { method: "POST", body: JSON.stringify(files ? { files } : {}) }, 120000),
   reject: (id: string, note?: string) =>
-    request<{ candidate: ImproveCandidate }>(`/api/agent/approvals/${encodeURIComponent(id)}/reject`, { method: "POST", body: JSON.stringify({ note }) }),
+    request<{ candidate: ImproveCandidate | Delivery }>(`/api/agent/approvals/${encodeURIComponent(id)}/reject`, { method: "POST", body: JSON.stringify({ note }) }, 120000),
   projectContext: (id: string) => request<{ markdown: string }>(`/api/ecosystem/projects/${id}/context?github=0`, {}, 45000),
   handoff: () => request<{ markdown: string }>("/api/ecosystem/handoff"),
   diagnose: (id: string) =>

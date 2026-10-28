@@ -355,17 +355,39 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
   { name: "agent.profile", area: "agent", label: "Agent Builder's level, XP, abilities (new ones flagged), whether it is getting stronger, and what it is doing", scope: "read", params: {}, call: () => ["GET", "/api/agent/profile"] },
   { name: "ground.state", area: "agent", label: "Its training ground: practice challenges and how it scores on each", scope: "read", params: {}, call: () => ["GET", "/api/agent/ground"] },
   { name: "ground.practise", area: "agent", label: "Have it practise a challenge now (its weakest when none is named)", scope: "execute", params: { "challengeId?": "a challenge" }, call: (p) => ["POST", "/api/agent/ground/practise", pick(p, "challengeId")] },
-  { name: "continuous.list", area: "agent", label: "Continuous improvement: projects being improved, and improvements waiting for approval", scope: "read", params: {}, call: () => ["GET", "/api/agent/continuous"] },
+  { name: "continuous.list", area: "agent", label: "Continuous builder: projects being built or improved (roadmap, stage), and deliveries waiting for approval", scope: "read", params: {}, call: () => ["GET", "/api/agent/continuous"] },
   {
     name: "continuous.start",
     area: "agent",
-    label: "Improve a project continuously (24/7 until stopped): each change is built and tested on a copy and waits for approval",
+    label:
+      "Continuous builder: work on a project 24/7 toward a goal — plan, build every milestone, fix until every check passes, then (mode forever) keep researching and improving it; all in its own workspace, delivered for approval",
     scope: "execute",
-    params: { projectId: "the project", "focus?": "what to concentrate on" },
-    call: (p) => ["POST", "/api/agent/continuous/start", pick(p, "projectId", "focus")]
+    params: {
+      "projectId?": "an existing project",
+      "newProject?": "or a name, to start a brand-new project from nothing",
+      goal: "what to build or achieve, in the owner's words",
+      "mode?": "complete (stop when done) | forever (keep improving, the default)",
+      "checkCommand?": "a command that must pass, e.g. make or cargo test"
+    },
+    call: (p) => ["POST", "/api/agent/continuous/start", pick(p, "projectId", "newProject", "goal", "mode", "checkCommand")]
+  },
+  {
+    name: "continuous.instruct",
+    area: "agent",
+    label: "Give a running continuous build a new instruction (its roadmap is revised)",
+    scope: "execute",
+    params: { sessionId: "the session", text: "the instruction" },
+    call: (p) => ["POST", `/api/agent/continuous/${enc(str(p.sessionId))}/instruct`, pick(p, "text")]
   },
   { name: "continuous.stop", area: "agent", label: "Stop improving a project", scope: "execute", params: { sessionId: "the session" }, call: (p) => ["POST", `/api/agent/continuous/${enc(str(p.sessionId))}/stop`, {}] },
-  { name: "approvals.approve", area: "agent", label: "Approve an improvement: apply it to the project and commit it on its live branch", scope: "execute", params: { candidateId: "the improvement" }, call: (p) => ["POST", `/api/agent/approvals/${enc(str(p.candidateId))}/approve`, {}] },
+  {
+    name: "approvals.approve",
+    area: "agent",
+    label: "Approve a delivery from the continuous builder (all of it, or only some files): apply it to the project and commit it on its live branch",
+    scope: "execute",
+    params: { candidateId: "the delivery", "files?": "only these files (a major change needs them listed)" },
+    call: (p) => ["POST", `/api/agent/approvals/${enc(str(p.candidateId))}/approve`, pick(p, "files")]
+  },
   { name: "approvals.reject", area: "agent", label: "Reject an improvement", scope: "execute", params: { candidateId: "the improvement", "note?": "why" }, call: (p) => ["POST", `/api/agent/approvals/${enc(str(p.candidateId))}/reject`, pick(p, "note")] },
 
   // ── Knowledge shared with Jarvis, and how the agents learn ────────────────

@@ -8,7 +8,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
-import { api, type AgentMessage, type ChatPending, type ImproveCandidate } from "@/lib/api";
+import { api, type AgentMessage, type ChatPending, type Delivery, type ImproveCandidate, type ImproveSession } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
 
 type Tab = "growth" | "talk" | "ground" | "continuous";
@@ -385,16 +385,22 @@ function Ground() {
   );
 }
 
+const STAGE_LABEL: Record<ImproveSession["stage"], string> = {
+  planning: "Planning",
+  building: "Building",
+  fixing: "Fixing",
+  improving: "Improving",
+  complete: "Complete"
+};
+
+type Act = (label: string, fn: () => Promise<unknown>, ok: string) => Promise<void>;
+
 function Continuous() {
   const toast = useToast();
   const data = useRemote(() => api.continuous(), 10000, "agent-continuous");
-  const projects = useRemote(() => api.projects(), 0, "projects");
-  const [projectId, setProjectId] = useState("");
-  const [focus, setFocus] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  const [diff, setDiff] = useState<{ id: string; text: string } | null>(null);
 
-  const act = async (label: string, fn: () => Promise<unknown>, ok: string) => {
+  const act: Act = async (label, fn, ok) => {
     setBusy(label);
     try {
       await fn();
@@ -408,79 +414,52 @@ function Continuous() {
   };
 
   const sessions = data.data?.sessions ?? [];
-  const candidates = data.data?.candidates ?? [];
-  const waiting = candidates.filter((c) => c.state === "awaiting" || c.state === "conflict");
-  const done = candidates.filter((c) => !["awaiting", "conflict"].includes(c.state)).slice(0, 20);
+  const deliveries = data.data?.deliveries ?? [];
+  const legacy = data.data?.candidates ?? [];
+  const waiting = deliveries.filter((d) => d.state === "awaiting");
+  const waitingLegacy = legacy.filter((c) => c.state === "awaiting" || c.state === "conflict");
+  const decided = deliveries.filter((d) => d.state !== "awaiting" && d.state !== "superseded").slice(0, 15);
 
   return (
     <>
-      <div className="card">
-        <p className="small" style={{ marginTop: 0 }}>
-          Pick a project and it keeps making it better, around the clock, until you stop it. Every change is built and tested on a copy;
-          nothing touches the project until you approve it below — then it is applied and committed on the project's live branch.
-        </p>
-        <div className="learn-plan">
-          <select className="input" value={projectId} onChange={(e) => setProjectId(e.target.value)} aria-label="Project">
-            <option value="">Choose a project…</option>
-            {(projects.data?.projects ?? []).map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          <input className="input" style={{ flex: 1, minWidth: 200 }} value={focus} placeholder="What to concentrate on (optional)" onChange={(e) => setFocus(e.target.value)} />
-          <button className="btn primary" disabled={!projectId || busy !== null} onClick={() => void act("start", () => api.continuousStart(projectId, focus), "Improving it continuously. Changes will wait here for you.")}>
-            Improve continuously
-          </button>
-        </div>
-      </div>
+      <StartBuild busy={busy} act={act} />
+
+      <div className="section-title">Waiting for your approval · {waiting.length + waitingLegacy.length}</div>
+      {waiting.length + waitingLegacy.length === 0 ? (
+        <p className="muted small">Nothing waiting. Work shows up here whenever a workspace is clean and has something new for you.</p>
+      ) : null}
+      {waiting.map((d) => (
+        <DeliveryCard key={d.id} d={d} busy={busy} act={act} />
+      ))}
+      {waitingLegacy.map((c) => (
+        <Approval key={c.id} c={c} busy={busy} act={act} />
+      ))}
 
       {sessions.length ? (
         <>
-          <div className="section-title">Projects being improved</div>
-          <div className="card">
-            {sessions.map((s) => (
-              <div key={s.id} className="row">
-                <div className="body">
-                  <strong>{s.projectName}</strong>{" "}
-                  <small className="muted">
-                    · {s.state} · {s.cycles} cycles · branch {s.liveBranch ?? "?"} · since {ago(s.startedAt)}
-                  </small>
-                  <div className="muted small">
-                    {s.phase}
-                    {s.focus ? ` · focus: ${s.focus}` : ""}
-                    {s.lastError ? ` · last problem: ${s.lastError}` : ""}
-                  </div>
-                </div>
-                {s.state !== "stopped" ? (
-                  <button className="btn small danger" disabled={busy !== null} onClick={() => void act(s.id, () => api.continuousStop(s.id), "Stopped.")}>
-                    Stop
-                  </button>
-                ) : null}
-              </div>
-            ))}
-          </div>
+          <div className="section-title">Projects in the continuous builder</div>
+          {sessions.map((s) => (
+            <SessionCard key={s.id} s={s} busy={busy} act={act} />
+          ))}
         </>
       ) : null}
 
-      <div className="section-title">Waiting for your approval · {waiting.length}</div>
-      {waiting.length === 0 ? <p className="muted small">Nothing waiting.</p> : null}
-      {waiting.map((c) => (
-        <Approval key={c.id} c={c} busy={busy} diff={diff} setDiff={setDiff} act={act} />
-      ))}
-
-      {done.length ? (
+      {decided.length ? (
         <>
-          <div className="section-title">History</div>
+          <div className="section-title">Decided</div>
           <div className="card">
-            {done.map((c) => (
-              <div key={c.id} className="row">
+            {decided.map((d) => (
+              <div key={d.id} className="row">
                 <div className="body">
-                  <strong>{c.title}</strong> <small className="muted">· {c.projectName} · {ago(c.createdAt)}</small>
-                  {c.note ? <div className="muted small">{c.note}</div> : null}
+                  <strong>{d.title}</strong> <small className="muted">· {d.projectName} · {ago(d.decidedAt ?? d.createdAt)}</small>
+                  <div className="muted small">
+                    {d.applied.length ? `${d.applied.length} file(s) added` : ""}
+                    {d.declined.length ? `${d.applied.length ? " · " : ""}${d.declined.length} declined` : ""}
+                    {d.note ? ` · ${d.note}` : ""}
+                  </div>
                 </div>
-                <span className={`tag ${c.state === "approved" ? "ok" : c.state === "rejected" || c.state === "failed" ? "bad" : "info"}`}>
-                  {c.state === "approved" && c.commit ? `approved · ${c.commit.hash.slice(0, 7)} on ${c.commit.branch}` : c.state}
+                <span className={`tag ${d.state === "approved" ? "ok" : d.state === "declined" ? "bad" : "info"}`}>
+                  {d.commit ? `${d.state} · ${d.commit.hash.slice(0, 7)} on ${d.commit.branch}` : d.state}
                 </span>
               </div>
             ))}
@@ -491,20 +470,350 @@ function Continuous() {
   );
 }
 
-function Approval({
-  c,
-  busy,
-  diff,
-  setDiff,
-  act
-}: {
-  c: ImproveCandidate;
-  busy: string | null;
-  diff: { id: string; text: string } | null;
-  setDiff: (d: { id: string; text: string } | null) => void;
-  act: (label: string, fn: () => Promise<unknown>, ok: string) => Promise<void>;
-}) {
+function StartBuild({ busy, act }: { busy: string | null; act: Act }) {
+  const projects = useRemote(() => api.projects(), 0, "projects");
+  const [kind, setKind] = useState<"existing" | "new">("existing");
+  const [projectId, setProjectId] = useState("");
+  const [name, setName] = useState("");
+  const [goal, setGoal] = useState("");
+  const [mode, setMode] = useState<"complete" | "forever">("forever");
+  const [checkCommand, setCheckCommand] = useState("");
+  const ready = kind === "existing" ? Boolean(projectId) : name.trim().length > 1 && goal.trim().length >= 10;
+
+  return (
+    <div className="card">
+      <p className="small" style={{ marginTop: 0 }}>
+        Give it a project and a goal, however big, and it works on it around the clock: it plans a roadmap, builds every milestone,
+        fixes until every check passes, then keeps researching and improving it if you want. It all happens in its own workspace;
+        your project only changes when you approve what it delivers, part by part.
+      </p>
+      <div className="btn-row" style={{ marginBottom: 8 }}>
+        <button className={`btn small ${kind === "existing" ? "primary" : "ghost"}`} onClick={() => setKind("existing")}>
+          A project I have
+        </button>
+        <button className={`btn small ${kind === "new" ? "primary" : "ghost"}`} onClick={() => setKind("new")}>
+          A new project from nothing
+        </button>
+      </div>
+      {kind === "existing" ? (
+        <select className="input" value={projectId} onChange={(e) => setProjectId(e.target.value)} aria-label="Project" style={{ width: "100%" }}>
+          <option value="">Choose a project…</option>
+          {(projects.data?.projects ?? []).map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <input className="input" style={{ width: "100%" }} value={name} placeholder="Name of the new project (e.g. My Linux OS)" onChange={(e) => setName(e.target.value)} />
+      )}
+      <textarea
+        className="input"
+        style={{ width: "100%", marginTop: 8, minHeight: 110 }}
+        value={goal}
+        onChange={(e) => setGoal(e.target.value)}
+        placeholder={
+          kind === "new"
+            ? "What to build, in as much detail as you like: what it is, what it must do, how you will know it is done…"
+            : "The goal and your instructions (optional), e.g. make it a flawless emulator: fix every emulation issue, then performance, then features"
+        }
+      />
+      <div className="btn-row" style={{ marginTop: 8 }}>
+        <button className={`btn small ${mode === "complete" ? "primary" : "ghost"}`} onClick={() => setMode("complete")}>
+          Finish it, then stop
+        </button>
+        <button className={`btn small ${mode === "forever" ? "primary" : "ghost"}`} onClick={() => setMode("forever")}>
+          Finish it, then keep improving forever
+        </button>
+      </div>
+      <input
+        className="input"
+        style={{ width: "100%", marginTop: 8 }}
+        value={checkCommand}
+        onChange={(e) => setCheckCommand(e.target.value)}
+        placeholder="Check command that must pass (optional, e.g. make, cargo test, npm test); detected when empty"
+      />
+      <div className="btn-row" style={{ marginTop: 10 }}>
+        <button
+          className="btn primary"
+          disabled={!ready || busy !== null}
+          onClick={() =>
+            void act(
+              "start",
+              () =>
+                api.continuousStart({
+                  ...(kind === "existing" ? { projectId } : { newProject: name }),
+                  goal,
+                  mode,
+                  ...(checkCommand.trim() ? { checkCommand } : {})
+                }),
+              "Started. It plans first, then builds; deliveries will wait here for you."
+            )
+          }
+        >
+          {busy === "start" ? <Busy label="Starting…" /> : "Start the continuous builder"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SessionCard({ s, busy, act }: { s: ImproveSession; busy: string | null; act: Act }) {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const done = s.plan.filter((m) => m.status === "done").length;
+  const parked = s.plan.filter((m) => m.status === "parked").length;
+  const pct = s.plan.length ? Math.round((done / s.plan.length) * 100) : 0;
+  const running = s.state !== "stopped";
+
+  return (
+    <div className="card" style={{ marginBottom: 10 }}>
+      <div className="rl-head">
+        <strong>{s.projectName}</strong>
+        <span className={`tag ${s.stage === "complete" ? "ok" : running ? "info" : "warn"}`}>
+          {STAGE_LABEL[s.stage]}
+          {running ? "" : " · stopped"}
+        </span>
+      </div>
+      <div className="muted small">
+        {s.mode === "forever" ? "Keeps improving forever" : "Stops when the goal is met"} · {s.cycles} steps · since {ago(s.startedAt)} · branch {s.liveBranch ?? "?"}
+      </div>
+      <div className="small" style={{ marginTop: 6 }}>
+        {s.phase}
+      </div>
+      {s.lastError ? <div className="muted small">Last problem: {s.lastError}</div> : null}
+
+      {s.plan.length ? (
+        <div className="progress compact">
+          <div>
+            <div className="progress-label">
+              <strong>Roadmap</strong>
+              <span>
+                {done}/{s.plan.length}
+                {parked ? ` · ${parked} parked` : ""}
+              </span>
+            </div>
+            <div className={`bar ${running ? "active" : "paused"}`}>
+              <i style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {s.lastCheck ? (
+        <div className="small" style={{ marginTop: 6 }}>
+          Checks:{" "}
+          {s.lastCheck.passed ? (s.lastCheck.verified ? "all passing" : "none apply yet (add a check command)") : `failing: ${s.lastCheck.failing.join(", ")}`}
+          {s.lastCheck.command ? ` (${s.lastCheck.command})` : ""}
+        </div>
+      ) : null}
+
+      <div className="btn-row" style={{ marginTop: 8 }}>
+        <button className="btn small" onClick={() => setOpen((v) => !v)}>
+          {open ? "Less" : "Roadmap, history & settings"}
+        </button>
+        {running ? (
+          <button className="btn small danger" disabled={busy !== null} onClick={() => void act(`stop-${s.id}`, () => api.continuousStop(s.id), "Stopped. Carry on any time from here.")}>
+            Stop
+          </button>
+        ) : (
+          <button className="btn small primary" disabled={busy !== null} onClick={() => void act(`go-${s.id}`, () => api.continuousRestart(s.id), "Carrying on from where it got to.")}>
+            Carry on
+          </button>
+        )}
+        {s.researchTopicId ? (
+          <Link className="btn small ghost" href={`/research?topic=${encodeURIComponent(s.researchTopicId)}`}>
+            Its research
+          </Link>
+        ) : null}
+      </div>
+
+      {open ? (
+        <div style={{ marginTop: 10 }}>
+          {s.goal ? (
+            <>
+              <div className="muted small">Goal</div>
+              <div className="small" style={{ whiteSpace: "pre-wrap" }}>
+                {s.goal}
+              </div>
+            </>
+          ) : null}
+          {s.notes.length ? (
+            <div className="muted small" style={{ marginTop: 6 }}>
+              Your later notes: {s.notes.join(" · ")}
+            </div>
+          ) : null}
+          <div className="learn-plan" style={{ marginTop: 8 }}>
+            <input className="input" style={{ flex: 1, minWidth: 200 }} value={note} placeholder="A new instruction (the roadmap is revised)" onChange={(e) => setNote(e.target.value)} />
+            <button
+              className="btn small primary"
+              disabled={!note.trim() || busy !== null}
+              onClick={() => void act(`note-${s.id}`, () => api.continuousInstruct(s.id, note).then(() => setNote("")), "Noted. The roadmap will be revised.")}
+            >
+              Send
+            </button>
+            <button
+              className="btn small"
+              disabled={busy !== null}
+              onClick={() =>
+                void act(
+                  `mode-${s.id}`,
+                  () => api.continuousConfigure(s.id, { mode: s.mode === "forever" ? "complete" : "forever" }),
+                  s.mode === "forever" ? "It will stop when the goal is met." : "It will keep improving after the goal is met."
+                )
+              }
+            >
+              {s.mode === "forever" ? "Stop when done instead" : "Keep improving forever"}
+            </button>
+          </div>
+
+          {s.plan.length ? (
+            <ol className="small" style={{ paddingLeft: 18, marginTop: 10 }}>
+              {s.plan.map((m) => (
+                <li key={m.id} style={{ opacity: m.status === "done" ? 0.65 : 1 }}>
+                  {m.status === "done" ? "✓ " : m.status === "doing" ? "→ " : m.status === "parked" ? "‖ " : ""}
+                  <strong>{m.title}</strong>
+                  {m.status === "parked" && m.note ? <span className="muted"> — parked ({m.note}); tried again later</span> : null}
+                  {m.attempts > 1 && m.status !== "done" ? <span className="muted"> · {m.attempts} attempts</span> : null}
+                </li>
+              ))}
+            </ol>
+          ) : null}
+
+          {s.journal.length ? (
+            <>
+              <div className="muted small" style={{ marginTop: 8 }}>
+                Recent steps
+              </div>
+              {[...s.journal]
+                .reverse()
+                .slice(0, 10)
+                .map((step, i) => (
+                  <div key={`${step.at}-${i}`} className="small">
+                    <span className={`tag ${step.outcome === "kept" ? "ok" : step.outcome === "failed" || step.outcome === "rolled-back" ? "bad" : "info"}`}>{step.outcome}</span> {step.title}{" "}
+                    <span className="muted">
+                      · {ago(step.at)}
+                      {step.note ? ` · ${step.note}` : ""}
+                    </span>
+                  </div>
+                ))}
+            </>
+          ) : null}
+          {s.lastCheck && !s.lastCheck.passed ? <pre className="agent-diff">{s.lastCheck.output || "(no output)"}</pre> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Files grouped by their top folder, so a big delivery can be taken in parts. */
+const groupOf = (file: string) => (file.includes("/") ? file.slice(0, file.indexOf("/")) : "(top level)");
+
+function DeliveryCard({ d, busy, act }: { d: Delivery; busy: string | null; act: Act }) {
   const toast = useToast();
+  const [chosen, setChosen] = useState<Set<string>>(() => new Set(d.files.map((f) => f.path)));
+  const [diff, setDiff] = useState<{ file: string | null; text: string } | null>(null);
+  const [note, setNote] = useState("");
+  const groups = new Map<string, Delivery["files"]>();
+  for (const f of d.files) groups.set(groupOf(f.path), [...(groups.get(groupOf(f.path)) ?? []), f]);
+  const toggle = (files: string[], on: boolean) =>
+    setChosen((current) => {
+      const next = new Set(current);
+      for (const f of files) {
+        if (on) next.add(f);
+        else next.delete(f);
+      }
+      return next;
+    });
+  const show = (file: string | null) => {
+    if (diff && diff.file === file) {
+      setDiff(null);
+      return;
+    }
+    void api
+      .approvalDiff(d.id, file ?? undefined)
+      .then((r) => setDiff({ file, text: r.diff }))
+      .catch((e) => toast(e instanceof Error ? e.message : String(e), "error"));
+  };
+  const lines = d.files.reduce((sum, f) => sum + f.added + f.removed, 0);
+
+  return (
+    <div className="card" style={{ marginBottom: 10 }}>
+      <div className="rl-head">
+        <strong>{d.title}</strong>
+        <span className={`tag ${d.major ? "warn" : "info"}`}>{d.major ? "Major change" : "Ready"}</span>
+      </div>
+      <div className="muted small">
+        {d.projectName} · {d.files.length} file{d.files.length === 1 ? "" : "s"} · {lines} lines · checks {d.check?.verified ? "passing" : "none apply"} · {ago(d.createdAt)}
+      </div>
+      {d.major ? <Banner kind="info">Major: {d.majorWhy.join("; ")}. Choose which parts to add to your project.</Banner> : null}
+      {d.summary.length ? (
+        <ul className="small" style={{ paddingLeft: 18, margin: "8px 0" }}>
+          {d.summary.slice(-12).map((line, i) => (
+            <li key={i}>{line}</li>
+          ))}
+        </ul>
+      ) : null}
+
+      <div style={{ marginTop: 6 }}>
+        {[...groups].map(([group, files]) => {
+          const all = files.every((f) => chosen.has(f.path));
+          return (
+            <details key={group} style={{ marginBottom: 4 }}>
+              <summary className="small">
+                <label onClick={(e) => e.stopPropagation()}>
+                  <input type="checkbox" checked={all} onChange={(e) => toggle(files.map((f) => f.path), e.target.checked)} /> <strong>{group}</strong>
+                </label>{" "}
+                <span className="muted">· {files.length} file(s)</span>
+              </summary>
+              {files.map((f) => (
+                <div key={f.path} className="small" style={{ paddingLeft: 22 }}>
+                  <label>
+                    <input type="checkbox" checked={chosen.has(f.path)} onChange={(e) => toggle([f.path], e.target.checked)} /> {f.path}
+                  </label>{" "}
+                  <span className="muted">
+                    {f.change} +{f.added} −{f.removed}
+                  </span>{" "}
+                  <button className="btn small ghost" onClick={() => show(f.path)}>
+                    {diff?.file === f.path ? "hide" : "view"}
+                  </button>
+                </div>
+              ))}
+            </details>
+          );
+        })}
+      </div>
+
+      <input className="input" style={{ width: "100%", marginTop: 8 }} value={note} placeholder="A note if you decline (it learns from it)" onChange={(e) => setNote(e.target.value)} />
+      <div className="btn-row" style={{ marginTop: 8 }}>
+        <button className="btn small" onClick={() => show(null)}>
+          {diff?.file === null ? "Hide changes" : "All changes"}
+        </button>
+        <button
+          className="btn small primary"
+          disabled={busy !== null || chosen.size === 0}
+          onClick={() =>
+            void act(
+              `ok-${d.id}`,
+              () => api.approve(d.id, [...chosen]),
+              chosen.size === d.files.length ? "Added to your project and committed." : `Added ${chosen.size} file(s); the rest were taken back out of the workspace.`
+            )
+          }
+        >
+          {busy === `ok-${d.id}` ? <Busy label="Applying…" /> : chosen.size === d.files.length ? "Add all to my project" : `Add ${chosen.size} of ${d.files.length} parts`}
+        </button>
+        <button className="btn small ghost" disabled={busy !== null} onClick={() => void act(`no-${d.id}`, () => api.reject(d.id, note), "Declined: taken back out of the workspace.")}>
+          Decline
+        </button>
+      </div>
+      {diff ? <pre className="agent-diff">{diff.text || "(no changes)"}</pre> : null}
+    </div>
+  );
+}
+
+/** A single change from the first version of the continuous builder. */
+function Approval({ c, busy, act }: { c: ImproveCandidate; busy: string | null; act: Act }) {
+  const toast = useToast();
+  const [diff, setDiff] = useState<string | null>(null);
   return (
     <div className="card" style={{ marginBottom: 10 }}>
       <div className="rl-head">
@@ -514,22 +823,23 @@ function Approval({
       <div className="small">{c.why}</div>
       <div className="muted small">
         {c.projectName} · {c.files.length} file{c.files.length === 1 ? "" : "s"}: {c.files.slice(0, 6).join(", ")}
-        {c.test ? ` · checks ${c.test.passed ? "passed" : "failed"}${c.test.score !== null ? ` (score ${Math.round(c.test.score)})` : ""}` : ""}
       </div>
       {c.state === "conflict" && c.note ? <Banner kind="error">{c.note}</Banner> : null}
       <div className="btn-row" style={{ marginTop: 8 }}>
         <button
           className="btn small"
-          onClick={() =>
-            diff?.id === c.id
-              ? setDiff(null)
-              : void api
-                  .approvalDiff(c.id)
-                  .then((r) => setDiff({ id: c.id, text: r.diff }))
-                  .catch((e) => toast(e instanceof Error ? e.message : String(e), "error"))
-          }
+          onClick={() => {
+            if (diff !== null) {
+              setDiff(null);
+              return;
+            }
+            void api
+              .approvalDiff(c.id)
+              .then((r) => setDiff(r.diff))
+              .catch((e) => toast(e instanceof Error ? e.message : String(e), "error"));
+          }}
         >
-          {diff?.id === c.id ? "Hide changes" : "See the changes"}
+          {diff !== null ? "Hide changes" : "See the changes"}
         </button>
         <button className="btn small primary" disabled={busy !== null} onClick={() => void act(`ok-${c.id}`, () => api.approve(c.id), "Approved: applied and committed.")}>
           {busy === `ok-${c.id}` ? <Busy label="Applying…" /> : "Approve & merge"}
@@ -538,7 +848,7 @@ function Approval({
           Reject
         </button>
       </div>
-      {diff?.id === c.id ? <pre className="agent-diff">{diff.text || "(no changes)"}</pre> : null}
+      {diff !== null ? <pre className="agent-diff">{diff || "(no changes)"}</pre> : null}
     </div>
   );
 }

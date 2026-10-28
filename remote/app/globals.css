@@ -353,6 +353,8 @@ select:focus {
 .tag.warn { color: var(--warn); background: rgba(255, 194, 71, 0.13); }
 .tag.bad { color: var(--bad); background: rgba(255, 107, 129, 0.13); }
 .tag.good { color: var(--good); background: rgba(61, 220, 154, 0.13); }
+.tag.ok { color: var(--good); background: rgba(61, 220, 154, 0.13); }
+.tag.info { color: var(--accent); background: var(--accent-soft); }
 
 .feed-item .text { min-width: 0; }
 .feed-item .text p { margin: 0; font-size: 13.8px; overflow-wrap: anywhere; }

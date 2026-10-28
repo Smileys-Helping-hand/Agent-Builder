@@ -173,23 +173,28 @@ const slug = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]+/
 export const copyForBuild = async (
   sourcePath: string,
   label: string,
-  prefix: string
+  prefix: string,
+  limits: { maxFiles?: number; maxBytes?: number; allowEmpty?: boolean } = {}
 ): Promise<{ workDir: string; startCommit: string; files: string[] }> => {
+  const maxFiles = limits.maxFiles ?? MAX_FILES;
+  const maxBytes = limits.maxBytes ?? MAX_BYTES;
   const files = await listProjectFiles(sourcePath);
-  if (files.length === 0) throw new Error(`${sourcePath} has no files to work on.`);
-  if (files.length > MAX_FILES) throw new Error(`${label} has more than ${MAX_FILES} files; too big to copy for a build.`);
+  if (files.length === 0 && !limits.allowEmpty) throw new Error(`${sourcePath} has no files to work on.`);
+  if (files.length > maxFiles) throw new Error(`${label} has more than ${maxFiles} files; too big to copy for a build.`);
 
+  // Without blocking: a large project on a busy disk would otherwise hold the builder for minutes.
   let bytes = 0;
-  for (const file of files) bytes += fs.statSync(path.join(sourcePath, file)).size;
-  if (bytes > MAX_BYTES) {
+  for (const file of files) bytes += (await fs.promises.stat(path.join(sourcePath, file))).size;
+  if (bytes > maxBytes) {
     throw new Error(`${label} is ${Math.round(bytes / 1024 / 1024)} MB without its ignored files; too big to copy for a build.`);
   }
 
   const workDir = path.join(BUILDS_ROOT, `${prefix}_${slug(label)}_${Date.now()}`);
+  await fs.promises.mkdir(workDir, { recursive: true });
   for (const file of files) {
     const target = path.join(workDir, file);
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(path.join(sourcePath, file), target);
+    await fs.promises.mkdir(path.dirname(target), { recursive: true });
+    await fs.promises.copyFile(path.join(sourcePath, file), target);
   }
   // Without this, installing dependencies during checks would commit node_modules.
   const ignore = path.join(workDir, ".gitignore");
@@ -204,10 +209,43 @@ export const copyForBuild = async (
   fs.mkdirSync(path.join(workDir, ".git", "info"), { recursive: true });
   fs.writeFileSync(path.join(workDir, ".git", "info", "attributes"), "* -text\n", "utf8");
   await git(workDir, ["add", "-A"]);
-  await git(workDir, ["commit", "-q", "--no-verify", "-m", `Starting point: ${label} as it was`], GIT_ENV);
+  await git(workDir, ["commit", "-q", "--no-verify", "--allow-empty", "-m", `Starting point: ${label} as it was`], GIT_ENV);
   const startCommit = (await git(workDir, ["rev-parse", "HEAD"])).trim();
 
   return { workDir, startCommit, files };
+};
+
+/**
+ * Commit exactly these paths in a project, whatever else is staged or edited
+ * there. Falls back to Agent Builder's identity when the PC has no git identity.
+ */
+export const commitPaths = async (
+  projectPath: string,
+  paths: string[],
+  subject: string,
+  footer: string
+): Promise<{ hash: string; branch: string; message: string; files: string[]; at: string }> => {
+  const body = `${subject}\n\n${footer}`;
+  try {
+    await git(projectPath, ["add", "-A", "--", ...paths]);
+    // With paths given, git commits only those paths, whatever else is staged.
+    await git(projectPath, ["commit", "-m", body, "--", ...paths]);
+  } catch (error) {
+    const detail = gitError(error);
+    if (/Please tell me who you are|user\.email|empty ident/i.test(detail)) {
+      // No git identity on this PC; commit as Agent Builder rather than fail.
+      await git(projectPath, ["commit", "-m", body, "--", ...paths], GIT_ENV);
+    } else {
+      throw new Error(detail);
+    }
+  }
+  return {
+    hash: (await git(projectPath, ["rev-parse", "HEAD"])).trim(),
+    branch: (await git(projectPath, ["rev-parse", "--abbrev-ref", "HEAD"])).trim(),
+    message: subject,
+    files: paths,
+    at: new Date().toISOString()
+  };
 };
 
 export const ProjectBuilds = {
@@ -413,28 +451,7 @@ export const ProjectBuilds = {
     if (pending.length === 0) throw new Error("Those files are already committed, or match the last commit; there is nothing new to commit.");
 
     const subject = (message?.trim() || record.instruction).replace(/\s+/g, " ").slice(0, 72);
-    const body = `${subject}\n\nMade with Agent Builder (build ${record.buildId}).`;
-    try {
-      await git(record.projectPath, ["add", "-A", "--", ...pending]);
-      // With paths given, git commits only those paths, whatever else is staged.
-      await git(record.projectPath, ["commit", "-m", body, "--", ...pending]);
-    } catch (error) {
-      const detail = gitError(error);
-      if (/Please tell me who you are|user\.email|empty ident/i.test(detail)) {
-        // No git identity on this PC; commit as Agent Builder rather than fail.
-        await git(record.projectPath, ["commit", "-m", body, "--", ...pending], GIT_ENV);
-      } else {
-        throw new Error(detail);
-      }
-    }
-
-    const commit = {
-      hash: (await git(record.projectPath, ["rev-parse", "HEAD"])).trim(),
-      branch: (await git(record.projectPath, ["rev-parse", "--abbrev-ref", "HEAD"])).trim(),
-      message: subject,
-      files: pending,
-      at: new Date().toISOString()
-    };
+    const commit = await commitPaths(record.projectPath, pending, subject, `Made with Agent Builder (build ${record.buildId}).`);
     const latest = this.get(record.buildId) ?? record;
     saveRecord({ ...latest, commit });
     Logger.log("Project build committed", { buildId: record.buildId, project: record.projectName, commit: commit.hash, files: pending.length });
