@@ -122,8 +122,17 @@ type Extra = {
   practiceWins: () => number;
   continuousRunning: () => string[];
   practising: () => string | null;
+  /** The continuous builder's steps: how often they succeed now against before. */
+  continuousProgress: () => { recentSuccess: number | null; earlierSuccess: number | null; steps: number; milestonesDone: number } | null;
 };
-let extra: Extra = { approvedImprovements: () => 0, waitingApprovals: () => 0, practiceWins: () => 0, continuousRunning: () => [], practising: () => null };
+let extra: Extra = {
+  approvedImprovements: () => 0,
+  waitingApprovals: () => 0,
+  practiceWins: () => 0,
+  continuousRunning: () => [],
+  practising: () => null,
+  continuousProgress: () => null
+};
 export const registerProfileSources = (sources: Partial<Extra>) => {
   extra = { ...extra, ...sources };
 };
@@ -215,7 +224,15 @@ export const AgentProfile = {
     const score = (list: typeof builds) => (list.length ? list.reduce((n, b) => n + (b.bestScore ?? 0), 0) / list.length : null);
     const policies = Reinforcement.stats().map((p) => {
       const leader = [...p.arms].sort((a, b) => b.chanceBest - a.chanceBest)[0];
-      return { id: p.id, label: p.label, rewarded: p.rewarded, leader: p.rewarded >= 5 ? leader.label : null, confidence: p.rewarded >= 5 ? leader.chanceBest : null };
+      return {
+        id: p.id,
+        label: p.label,
+        rewarded: p.rewarded,
+        leader: p.rewarded >= 5 ? leader.label : null,
+        confidence: p.rewarded >= 5 ? leader.chanceBest : null,
+        // The average outcome of its last 20 decided tries, and of the 20 before.
+        trend: p.trend
+      };
     });
     return {
       builds: {
@@ -225,6 +242,7 @@ export const AgentProfile = {
         averageScore: score(recent),
         averageScoreBefore: score(before)
       },
+      continuous: extra.continuousProgress(),
       policies
     };
   },

@@ -47,6 +47,7 @@ import { ProjectScanner } from "../ecosystem/ProjectScanner.js";
 import { BuildService } from "../orchestrator/BuildService.js";
 import { Verifier } from "../orchestrator/Verifier.js";
 import { Workspace } from "../orchestrator/Workspace.js";
+import { LessonMemory } from "../learning/LessonMemory.js";
 import { Reinforcement } from "../learning/Reinforcement.js";
 import { ResearchEngine } from "../research/ResearchEngine.js";
 import { ResearchStore } from "../research/ResearchStore.js";
@@ -78,6 +79,10 @@ export interface Step {
   note: string | null;
   commit: string | null;
   episodeId?: number;
+  /** The episode of how it worked through the step (continuous.step), when that is not episodeId. */
+  approachEpisodeId?: number;
+  /** The step did what it set out to do (a milestone done, checks greener, an improvement kept). */
+  success?: boolean;
 }
 
 export interface CheckRun {
@@ -490,13 +495,19 @@ ${ownerWords(session)}
 The project:
 ${await projectBriefing(session)}
 ${done.length ? `\nAlready built:\n${done.map((m) => `- ${m.title}`).join("\n")}\n` : ""}${declinedText(session, read().deliveries)}
-Write the roadmap of what is still left to reach the goal completely: 4-20 milestones in the order to build them. Each must be a
-concrete, verifiable chunk of work that one build session can finish (a subsystem, a screen, a driver, a fix), named for this
-project. Large goals are fine: break them down rather than leaving anything out.
+Write the roadmap of what is still left to reach the goal completely, in the order to build them. Use as many milestones as the
+goal really needs: one or two for a small tool, dozens for something as big as an operating system (up to 30 now; more are added
+as these are built). Each must be a concrete, verifiable chunk of code or content that one build session can write in this
+repository (a subsystem, a screen, a driver, a test suite, a fix), named for this project.
+Never include chores outside the code: no committing, pushing, branching, deploying, releasing, monitoring, code review,
+gathering feedback or "verify/finalise" steps — checks run after every step on their own.
 
 Answer with JSON only: {"milestones": [{"title": "<short>", "detail": "<what to build, precisely, and how to know it works>"}]}`
   );
-  const milestones = list(extractJson(answer)?.milestones).slice(0, 20);
+  const chores = /^(commit|push|deploy|release|monitor|merge|branch|code review|review|gather|collect|user feedback|finali[sz]e|verify|check branch|ensure clean)/i;
+  const milestones = list(extractJson(answer)?.milestones)
+    .filter((m) => !chores.test(m.title))
+    .slice(0, 30);
   if (!milestones.length) throw new Error("The model did not write a usable roadmap.");
   return [
     ...done,
@@ -516,7 +527,8 @@ ${roadmapText(session.plan)}
 The project now:
 ${await projectBriefing(session)}
 
-Is the goal fully met, with nothing important missing? If not, list what is still missing as milestones.
+Is the goal fully met, with nothing important missing? If not, list what is still missing as milestones (code or content to write
+in the repository only; no committing, deploying, reviewing or other chores).
 Answer with JSON only: {"complete": true|false, "missing": [{"title": "<short>", "detail": "<what to build>"}]}`
   );
   const parsed = extractJson(answer);
@@ -566,10 +578,21 @@ Answer with JSON only: {"title": "<short commit-style title>", "instruction": "<
 /* ─── the work ─── */
 
 /** Builds one step in the workspace; the commits it made. */
-const buildStep = async (session: ImproveSession, title: string, instruction: string): Promise<{ before: string; after: string; stopped: boolean }> => {
+const buildStep = async (
+  session: ImproveSession,
+  title: string,
+  instruction: string
+): Promise<{ before: string; after: string; stopped: boolean; episodeId: number }> => {
   const dir = session.workspace!.dir;
   const before = await head(dir);
-  const description = `${instruction}
+  // How to work through it is learned per stage, from what the steps achieve and what the owner approves.
+  const approach = Reinforcement.choose("continuous.step", {
+    bucket: session.stage,
+    agent: "continuous-builder",
+    ref: `step:${session.id}:${Date.now()}`,
+    prompt: title
+  });
+  const description = `${approach.arm.instruction}${instruction}
 
 Context: this is one step of a long-running build of "${session.projectName}".
 ${ownerWords(session)}
@@ -598,7 +621,44 @@ Work in the existing code and keep everything that already works working.`;
   }
   patchSession(session.id, { currentBuildId: null });
   await commitAll(dir, `${title}\n\nContinuous build step.`);
-  return { before, after: await head(dir), stopped };
+  const after = await head(dir);
+  // A step cut off by a stop says nothing about the approach.
+  if (stopped && getSession(session.id)?.state === "stopped") Reinforcement.forget(approach.episodeId);
+  return { before, after, stopped, episodeId: approach.episodeId };
+};
+
+/** Rewards a step's approach by what it achieved (0..1). */
+const rewardStep = (episodeId: number, value: number, why: string) => {
+  try {
+    Reinforcement.reward(episodeId, Math.max(0, Math.min(1, value)), "step-outcome", why);
+  } catch {
+    /* forgotten (a stopped step) */
+  }
+};
+
+/** A one-line, general lesson from a fix that turned checks green, kept for every later build. */
+const learnFromFix = async (session: ImproveSession, failing: CheckRun, before: string, after: string) => {
+  try {
+    const stat = (await git(session.workspace!.dir, ["diff", "--no-renames", "--stat", before, after])).slice(0, 1500);
+    const patch = (await git(session.workspace!.dir, ["diff", "--no-renames", before, after])).slice(0, 4000);
+    const answer = await ModelRouter.generate(
+      `A check was failing and this change fixed it. Write ONE general lesson (one or two sentences) that would help fix the same kind of failure in another project. No project names.
+
+Failing output:
+${failing.output.slice(-2500)}
+
+The fix (${stat}):
+${patch}
+
+Answer with the lesson only.`
+    );
+    const lesson = answer.trim().replace(/^["'\s]+|["'\s]+$/g, "").slice(0, 400);
+    if (lesson.length < 20) return;
+    const first = failing.failing[0] ?? "checks";
+    LessonMemory.recordFix("build", LessonMemory.errorSignature(first, failing.output), lesson, patch.slice(0, 1500));
+  } catch (error) {
+    Logger.warn("Continuous build: could not record the lesson from a fix", { error: (error as Error)?.message });
+  }
 };
 
 const rollBack = async (dir: string, to: string) => {
@@ -716,7 +776,7 @@ const deliverIfReady = async (sessionId: string, check: CheckRun) => {
     conflicts: [],
     commit: null,
     note: null,
-    episodeIds: since.map((s) => s.episodeId).filter((e): e is number => typeof e === "number")
+    episodeIds: since.flatMap((s) => [s.episodeId, s.approachEpisodeId]).filter((e): e is number => typeof e === "number")
   };
   update((s) => {
     for (const older of s.deliveries) if (older.sessionId === sessionId && older.state === "awaiting") older.state = "superseded";
@@ -799,13 +859,16 @@ ${roadmapText(session.plan, milestone)}${
       else m.status = "doing";
       s.sessions.find((x) => x.id === sessionId)!.lastCheck = check;
     });
+    rewardStep(step.episodeId, finished ? 1 : changed ? 0.4 : 0.1, finished ? "milestone done" : changed ? "progress, checks failing" : "no change");
     journal(sessionId, {
       at: new Date().toISOString(),
       stage: "building",
       title: milestone.title,
       outcome: changed ? "kept" : "no-change",
       note: finished ? "milestone done" : changed ? `checks failing: ${check.failing.join(", ")}` : "the build changed nothing",
-      commit: changed ? step.after : null
+      commit: changed ? step.after : null,
+      episodeId: changed ? step.episodeId : undefined,
+      success: finished
     });
     await deliverIfReady(sessionId, check);
     return;
@@ -838,12 +901,23 @@ ${roadmapText(session.plan, milestone)}${
       return;
     }
     const before = await head(dir);
-    const step = await buildStep(session, `Fixing: ${check.failing.join(", ")}`, `Make every check pass. These are failing:\n\n${check.output}`);
+    // What fixed this kind of failure before, in any project.
+    const lessons = LessonMemory.relevant("build", `${check.failing.join(" ")}\n${check.output.slice(0, 2000)}`, 4);
+    if (lessons.length) LessonMemory.markApplied(lessons.map((l) => l.id));
+    const step = await buildStep(
+      session,
+      `Fixing: ${check.failing.join(", ")}`,
+      `Make every check pass. These are failing:\n\n${check.output}${lessons.length ? `\n\nWhat fixed failures like this before:\n${LessonMemory.formatForPrompt(lessons)}` : ""}`
+    );
     if (step.stopped && getSession(sessionId)?.state === "stopped") return;
     const after = await runChecks(session, dir);
     // A fix that leaves more failing than before is undone.
     const worse = after.failing.length > check.failing.length;
+    const better = after.passed || after.failing.length < check.failing.length;
     if (worse) await rollBack(dir, before);
+    if (lessons.length) LessonMemory.recordOutcome(lessons.map((l) => l.id), better && !worse);
+    rewardStep(step.episodeId, worse ? 0 : after.passed ? 1 : better ? 0.6 : 0.2, worse ? "made it worse" : after.passed ? "checks green" : better ? "fewer failing" : "no better");
+    if (after.passed && !worse && step.after !== step.before) await learnFromFix(session, check, step.before, step.after);
     patchSession(sessionId, { lastCheck: worse ? check : after });
     journal(sessionId, {
       at: new Date().toISOString(),
@@ -851,7 +925,9 @@ ${roadmapText(session.plan, milestone)}${
       title: `Fixing ${check.failing.join(", ")}`,
       outcome: worse ? "rolled-back" : step.after === step.before ? "no-change" : "kept",
       note: worse ? `made it worse (${after.failing.join(", ")})` : after.passed ? "all checks pass" : `still failing: ${after.failing.join(", ")}`,
-      commit: worse ? null : step.after
+      commit: worse ? null : step.after,
+      episodeId: worse ? undefined : step.episodeId,
+      success: !worse && better
     });
     if (after.passed && !worse) await deliverIfReady(sessionId, after);
     return;
@@ -884,8 +960,12 @@ ${roadmapText(session.plan, milestone)}${
     if (changed && !check.passed) {
       await rollBack(dir, step.before);
       Reinforcement.reward(kind.episodeId, 0.2, "checks-failed");
+      rewardStep(step.episodeId, 0, "broke the checks");
     } else if (!changed) {
       Reinforcement.forget(kind.episodeId);
+      rewardStep(step.episodeId, 0.1, "no change");
+    } else {
+      rewardStep(step.episodeId, 0.8, "kept, checks pass");
     }
     patchSession(sessionId, { lastCheck: changed && !check.passed ? session.lastCheck : check, improvementsSincePlan: session.improvementsSincePlan + 1 });
     journal(sessionId, {
@@ -895,7 +975,9 @@ ${roadmapText(session.plan, milestone)}${
       outcome: !changed ? "no-change" : check.passed ? "kept" : "rolled-back",
       note: changed && !check.passed ? `broke ${check.failing.join(", ")}` : null,
       commit: changed && check.passed ? step.after : null,
-      episodeId: changed && check.passed ? kind.episodeId : undefined
+      episodeId: changed && check.passed ? kind.episodeId : undefined,
+      approachEpisodeId: changed && check.passed ? step.episodeId : undefined,
+      success: changed && check.passed
     });
     if (changed && check.passed) await deliverIfReady(sessionId, check);
   }
@@ -1025,6 +1107,40 @@ const decide = async (deliveryId: string, chosen: string[] | null, note: string)
   return read().deliveries.find((d) => d.id === deliveryId)!;
 };
 
+/* ─── is it getting better? ─── */
+
+export interface Progress {
+  /** Share of the last 20 work steps that achieved what they set out to (0..1), and of the 20 before. */
+  recentSuccess: number | null;
+  earlierSuccess: number | null;
+  steps: number;
+  milestonesDone: number;
+  milestones: number;
+  /** Work steps in a row that succeeded, counting back from now. */
+  cleanStreak: number;
+  approved: number;
+  declined: number;
+}
+
+const rateOf = (steps: Step[]) => (steps.length ? Math.round((steps.filter((s) => s.success).length / steps.length) * 100) / 100 : null);
+
+const progressOf = (session: ImproveSession, deliveries: Delivery[]): Progress => {
+  const work = session.journal.filter((s) => typeof s.success === "boolean");
+  let cleanStreak = 0;
+  for (let i = work.length - 1; i >= 0 && work[i].success; i--) cleanStreak += 1;
+  const mine = deliveries.filter((d) => d.sessionId === session.id);
+  return {
+    recentSuccess: rateOf(work.slice(-20)),
+    earlierSuccess: work.length > 20 ? rateOf(work.slice(-40, -20)) : null,
+    steps: work.length,
+    milestonesDone: session.plan.filter((m) => m.status === "done").length,
+    milestones: session.plan.length,
+    cleanStreak,
+    approved: mine.filter((d) => d.state === "approved" || d.state === "partly").length,
+    declined: mine.filter((d) => d.state === "declined").length
+  };
+};
+
 /* ─── the API ─── */
 
 export interface StartOptions {
@@ -1044,7 +1160,7 @@ export const ContinuousImprover = {
   list() {
     const store = read();
     return {
-      sessions: [...store.sessions].reverse(),
+      sessions: [...store.sessions].reverse().map((session) => ({ ...session, progress: progressOf(session, store.deliveries) })),
       deliveries: [...store.deliveries].reverse(),
       candidates: [...store.candidates].reverse()
     };
@@ -1059,6 +1175,21 @@ export const ContinuousImprover = {
   approvedCount(): number {
     const store = read();
     return store.candidates.filter((c) => c.state === "approved").length + store.deliveries.filter((d) => d.state === "approved" || d.state === "partly").length;
+  },
+
+  /** Across every session: how often its steps succeed now against before, for the agent's profile. */
+  progress(): { recentSuccess: number | null; earlierSuccess: number | null; steps: number; milestonesDone: number } {
+    const store = read();
+    const work = store.sessions
+      .flatMap((s) => s.journal)
+      .filter((s) => typeof s.success === "boolean")
+      .sort((a, b) => (a.at < b.at ? -1 : 1));
+    return {
+      recentSuccess: rateOf(work.slice(-30)),
+      earlierSuccess: work.length > 30 ? rateOf(work.slice(-60, -30)) : null,
+      steps: work.length,
+      milestonesDone: store.sessions.reduce((sum, s) => sum + s.plan.filter((m) => m.status === "done").length, 0)
+    };
   },
 
   waitingCount(): number {

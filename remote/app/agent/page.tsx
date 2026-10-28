@@ -21,6 +21,14 @@ const TABS: Array<{ id: Tab; label: string }> = [
 
 const pct = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${Math.round(v * 100)}%`);
 
+/** "72% now (was 45%) ▲": whether a rate went up since the stretch before. */
+const trendText = (recent: number | null | undefined, earlier: number | null | undefined) => {
+  if (recent === null || recent === undefined) return "not enough tries yet";
+  if (earlier === null || earlier === undefined) return `${pct(recent)} so far`;
+  const arrow = recent > earlier + 0.02 ? " ▲" : recent < earlier - 0.02 ? " ▼" : " ＝";
+  return `${pct(recent)} now (was ${pct(earlier)})${arrow}`;
+};
+
 export default function AgentPage() {
   const connected = useConnected();
   const profile = useRemote(() => api.agentProfile(), 20000, "agent-profile");
@@ -94,6 +102,17 @@ function Growth({ profile }: { profile: ReturnType<typeof useRemote<Awaited<Retu
             {b.averageScoreBefore !== null ? ` (before: ${Math.round(b.averageScoreBefore)})` : ""}
           </div>
         </div>
+        {p.strength.continuous && p.strength.continuous.steps > 0 ? (
+          <div className="card rl-card">
+            <strong>Continuous builder</strong>
+            <div className="small">
+              Steps that succeed: <b>{trendText(p.strength.continuous.recentSuccess, p.strength.continuous.earlierSuccess)}</b>
+            </div>
+            <div className="small">
+              {p.strength.continuous.steps} steps · {p.strength.continuous.milestonesDone} milestones built
+            </div>
+          </div>
+        ) : null}
         {p.strength.policies.map((pol) => (
           <div key={pol.id} className="card rl-card">
             <strong>{pol.label}</strong>
@@ -107,6 +126,7 @@ function Growth({ profile }: { profile: ReturnType<typeof useRemote<Awaited<Retu
               )}{" "}
               · {pol.rewarded} rewarded tries
             </div>
+            {pol.trend && pol.trend.decided > 0 ? <div className="small muted">Average outcome: {trendText(pol.trend.recent, pol.trend.earlier)}</div> : null}
           </div>
         ))}
       </div>
@@ -563,7 +583,7 @@ function SessionCard({ s, busy, act }: { s: ImproveSession; busy: string | null;
   const [note, setNote] = useState("");
   const done = s.plan.filter((m) => m.status === "done").length;
   const parked = s.plan.filter((m) => m.status === "parked").length;
-  const pct = s.plan.length ? Math.round((done / s.plan.length) * 100) : 0;
+  const roadmapPct = s.plan.length ? Math.round((done / s.plan.length) * 100) : 0;
   const running = s.state !== "stopped";
 
   return (
@@ -594,9 +614,16 @@ function SessionCard({ s, busy, act }: { s: ImproveSession; busy: string | null;
               </span>
             </div>
             <div className={`bar ${running ? "active" : "paused"}`}>
-              <i style={{ width: `${pct}%` }} />
+              <i style={{ width: `${roadmapPct}%` }} />
             </div>
           </div>
+        </div>
+      ) : null}
+      {s.progress && s.progress.steps > 0 ? (
+        <div className="small" style={{ marginTop: 6 }}>
+          Getting better: <b>{trendText(s.progress.recentSuccess, s.progress.earlierSuccess)}</b> of steps succeed
+          {s.progress.cleanStreak > 1 ? ` · ${s.progress.cleanStreak} in a row` : ""}
+          {s.progress.approved ? ` · ${s.progress.approved} deliveries approved` : ""}
         </div>
       ) : null}
       {s.lastCheck ? (

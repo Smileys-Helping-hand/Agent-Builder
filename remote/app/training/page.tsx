@@ -137,6 +137,14 @@ export default function Training() {
                     <span className="tag info">{policy.rewarded} rewarded</span>
                   </div>
                   <small className="muted">Rewarded by {policy.reward}</small>
+                  {policy.trend && policy.trend.recent !== null ? (
+                    <div className="small">
+                      Average outcome of the last {Math.min(20, policy.trend.decided)} tries: <b>{Math.round(policy.trend.recent * 100)}%</b>
+                      {policy.trend.earlier !== null
+                        ? ` (the ${policy.trend.decided - 20} before: ${Math.round(policy.trend.earlier * 100)}%) ${policy.trend.recent > policy.trend.earlier + 0.02 ? "▲ getting better" : policy.trend.recent < policy.trend.earlier - 0.02 ? "▼ worse lately" : "＝ steady"}`
+                        : ""}
+                    </div>
+                  ) : null}
                   {policy.arms.map((arm) => (
                     <div key={arm.id} className="rl-arm">
                       <div className="rl-arm-label">

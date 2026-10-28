@@ -970,7 +970,9 @@ export interface AgentProfileView {
   doing: { line: string; busy: boolean; parts: string[] };
   strength: {
     builds: { recent: number; passRate: number | null; passRateBefore: number | null; averageScore: number | null; averageScoreBefore: number | null };
-    policies: Array<{ id: string; label: string; rewarded: number; leader: string | null; confidence: number | null }>;
+    /** The continuous builder: how often its steps succeed now (last 30) against the 30 before. */
+    continuous: { recentSuccess: number | null; earlierSuccess: number | null; steps: number; milestonesDone: number } | null;
+    policies: Array<{ id: string; label: string; rewarded: number; leader: string | null; confidence: number | null; trend?: RlTrend }>;
   };
   abilities: AgentAbility[];
   newAbilities: string[];
@@ -1047,6 +1049,17 @@ export interface ImproveSession {
   journal: ContinuousStep[];
   lastCheck: ContinuousCheck | null;
   researchTopicId: string | null;
+  /** Is it getting better: its last 20 work steps against the 20 before. */
+  progress?: {
+    recentSuccess: number | null;
+    earlierSuccess: number | null;
+    steps: number;
+    milestonesDone: number;
+    milestones: number;
+    cleanStreak: number;
+    approved: number;
+    declined: number;
+  };
 }
 
 export interface Delivery {
@@ -1099,6 +1112,13 @@ export interface FineTuneJob {
   error: string | null;
 }
 
+/** The average reward of the last 20 decided tries, and of the 20 before (null until there are any). */
+export interface RlTrend {
+  recent: number | null;
+  earlier: number | null;
+  decided: number;
+}
+
 export interface RlPolicyStats {
   id: string;
   label: string;
@@ -1107,6 +1127,7 @@ export interface RlPolicyStats {
   episodes: number;
   rewarded: number;
   buckets: string[];
+  trend?: RlTrend;
   arms: Array<{ id: string; label: string; tries: number; rewarded: number; averageReward: number | null; posteriorMean: number; chanceBest: number }>;
 }
 

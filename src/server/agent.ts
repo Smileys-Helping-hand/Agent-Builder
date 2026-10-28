@@ -42,6 +42,7 @@ export const registerAgentRoutes = (app: Express) => {
   registerProfileSources({
     approvedImprovements: () => ContinuousImprover.approvedCount(),
     waitingApprovals: () => ContinuousImprover.waitingCount(),
+    continuousProgress: () => ContinuousImprover.progress(),
     practiceWins: () => TrainingGround.wins(),
     continuousRunning: () => ContinuousImprover.running(),
     practising: () => TrainingGround.practising()

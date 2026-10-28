@@ -83,6 +83,18 @@ export const POLICIES: Policy[] = [
     ]
   },
   {
+    id: "continuous.step",
+    agent: "continuous-builder",
+    label: "How the continuous builder works through one step (per stage)",
+    reward: "what the step achieved: milestone done or checks green 1, progress 0.4–0.6, nothing 0.1, made worse 0; your approval of the delivery joins it",
+    arms: [
+      { id: "focused", label: "Smallest complete change", instruction: "How to work: make the smallest complete change that achieves this, touching as few files as possible, and finish it fully.\n\n" },
+      { id: "test-first", label: "Test first", instruction: "How to work: first add or extend a test (or a check script) that shows this working, then write the code that makes it pass.\n\n" },
+      { id: "plan-first", label: "Plan, then build", instruction: "How to work: first decide the files, functions and data you will add or change, then implement all of it in one go, wiring every part in.\n\n" },
+      { id: "read-first", label: "Read the code first", instruction: "How to work: first read the code this touches and follow its existing patterns and names exactly; change what is there rather than adding parallel versions.\n\n" }
+    ]
+  },
+  {
     id: "build.approach",
     agent: "builder",
     label: "How a new build plans its first pass",
@@ -401,6 +413,10 @@ export const Reinforcement = {
       }
       const episodes = (db().prepare("SELECT COUNT(*) AS n, SUM(reward IS NOT NULL) AS rewarded FROM rl_episodes WHERE policy = ?").get(policy.id) as { n: number; rewarded: number | null });
       const buckets = (db().prepare("SELECT DISTINCT bucket FROM rl_arms WHERE policy = ? AND bucket <> '*'").all(policy.id) as Array<{ bucket: string }>).map((b) => b.bucket);
+      // Is it getting better? The average reward of the last 20 decided tries against the 20 before.
+      const latest = (db().prepare("SELECT reward FROM rl_episodes WHERE policy = ? AND reward IS NOT NULL ORDER BY id DESC LIMIT 40").all(policy.id) as Array<{ reward: number }>).map((r) => r.reward);
+      const mean = (values: number[]) => (values.length ? Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 1000) / 1000 : null);
+      const trend = { recent: mean(latest.slice(0, 20)), earlier: latest.length > 20 ? mean(latest.slice(20)) : null, decided: latest.length };
       return {
         id: policy.id,
         label: policy.label,
@@ -409,6 +425,7 @@ export const Reinforcement = {
         episodes: episodes.n,
         rewarded: episodes.rewarded ?? 0,
         buckets,
+        trend,
         arms: policy.arms.map((arm) => {
           const r = byArm.get(arm.id);
           return {

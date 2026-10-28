@@ -163,6 +163,20 @@ const main = async () => {
   if (!ContinuousImprover.list().deliveries.some((d) => d.sessionId === tiny.id && d.state === "awaiting" && d.files.some((f) => f.path === "hello.txt"))) fail("no delivery of the work");
   console.log(`[PASS] the loop: ${stages.join(" → ")}; the milestone is done, the work waits for approval, and a "complete" session stops`);
 
+  // 10. It learns from it: the step's approach was rewarded for finishing its milestone, and its progress shows.
+  const { Reinforcement } = await import("../src/learning/Reinforcement.js");
+  const stepEpisodes = Reinforcement.recent(50).filter((e) => e.policy === "continuous.step" && e.reward !== null);
+  if (!stepEpisodes.some((e) => e.reward === 1)) fail(`continuous.step rewards: ${JSON.stringify(stepEpisodes.map((e) => e.reward))}`);
+  const progress = (ContinuousImprover.list().sessions.find((x) => x.id === tiny.id) as { progress?: { recentSuccess: number | null; steps: number } }).progress;
+  if (!progress || progress.steps < 1 || progress.recentSuccess !== 1) fail(`progress: ${JSON.stringify(progress)}`);
+  const policy = Reinforcement.stats().find((p) => p.id === "continuous.step");
+  if (!policy || policy.trend.recent === null) fail("no trend for continuous.step");
+  const delivery = ContinuousImprover.list().deliveries.find((d) => d.sessionId === tiny.id && d.state === "awaiting")!;
+  await ContinuousImprover.approve(delivery.id, delivery.files.map((f) => f.path));
+  const ownerRewarded = Reinforcement.recent(50).find((e) => e.policy === "continuous.step" && e.rewards.some((r) => r.source === "owner-decision"));
+  if (!ownerRewarded) fail("the owner's approval did not reach the step's approach");
+  console.log(`[PASS] it learns: the step's approach was rewarded (milestone done, then your approval), progress ${Math.round(progress.recentSuccess! * 100)}% of ${progress.steps} step(s), trend ${policy.trend.recent}`);
+
   console.log("All continuous-builder checks passed.");
 };
 
