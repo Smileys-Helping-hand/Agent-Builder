@@ -252,6 +252,24 @@ const main = async () => {
   ContinuousImprover.stop(life.id);
   console.log(`[PASS] a forever session's whole life: ${outcomes()} (plan, build, refine, fix + lesson, goal met, improve, upgrade, build the upgrade)`);
 
+  // 12. A project that is already broken gets that fixed first.
+  const broken = path.join(tmp, "broken-proj");
+  fs.mkdirSync(broken);
+  git(broken, "init", "-q", "-b", "main");
+  fs.writeFileSync(path.join(broken, "broken.flag"), "x");
+  git(broken, "add", "-A");
+  git(broken, "commit", "-q", "-m", "start");
+  EcosystemStore.upsertProject({
+    id: "p-broken", name: "broken", path: broken, root: tmp, kind: "unknown", description: null, stack: [], scripts: {},
+    gitBranch: "main", gitRemote: null, gitDirty: 0, gitAhead: 0, gitBehind: 0, lastCommitAt: null, lastCommitSubject: null, hasClaudeMd: false, readmeExcerpt: null
+  });
+  const repair = ContinuousImprover.start("p-broken", { goal: "A hello file", mode: "complete", checkCommand: `node -e "process.exit(require('fs').existsSync('broken.flag')?1:0)"` });
+  await hooks.cycle(repair.id);
+  const firstMilestone = hooks.getSession(repair.id)!.plan.find((m) => m.status !== "done");
+  if (firstMilestone?.title !== "Make the existing checks pass") fail(`broken project's plan: ${JSON.stringify(hooks.getSession(repair.id)!.plan.map((m) => m.title))}`);
+  ContinuousImprover.stop(repair.id);
+  console.log("[PASS] a project whose checks already fail gets that fixed first");
+
   console.log("All continuous-builder checks passed.");
 };
 

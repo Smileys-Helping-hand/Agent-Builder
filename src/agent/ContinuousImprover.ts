@@ -524,6 +524,9 @@ const researchText = (session: ImproveSession) => {
   return claims.length ? `\nWhat research found about doing this well:\n${claims.map((c) => `- ${c}`).join("\n")}\n` : "";
 };
 
+/** The first milestone of a project whose checks already fail. */
+const BASELINE_TITLE = "Make the existing checks pass";
+
 /** Work outside the code that a build step cannot do (checks already run after every step). */
 const CHORE = /^(commit|push|deploy|release|stable release|final (testing|release)|monitor|merge|branch|code review|review|gather|collect|(beta|user) (testing|feedback)|feedback|post-release|(user |customer )?support (and||feedback|post-release|support|finali) maintenance|post-release support|finali[sz]e|verify|check branch|ensure clean|initial testing|testing and bug|prepare (for )?release)/i;
 
@@ -894,7 +897,24 @@ async function cycle(sessionId: string) {
   if (session.stage === "planning" || session.needsReplan || session.plan.length === 0) {
     patchSession(sessionId, { phase: session.plan.length ? "Revising the roadmap with your notes" : "Reading the goal and planning the roadmap" });
     const plan = await makePlan(session);
-    patchSession(sessionId, { plan, stage: plan.some((m) => m.status === "todo") ? "building" : "fixing", needsReplan: false });
+    // A project whose checks already fail gets that fixed first, so everything after builds on a working base.
+    patchSession(sessionId, { phase: "Checking what already works" });
+    const baseline = session.lastCheck ?? (await runChecks(session, dir));
+    if (!baseline.passed && !plan.some((m) => m.status !== "done" && m.title === BASELINE_TITLE)) {
+      const first = plan.findIndex((m) => m.status !== "done");
+      plan.splice(first < 0 ? plan.length : first, 0, {
+        id: newId("ms"),
+        title: BASELINE_TITLE,
+        detail: `These checks were already failing before this milestone's work: ${baseline.failing.join(", ")}. Fix what is broken (keep everything that works working), so every later step starts from a clean project.
+
+${baseline.output.slice(-3000)}`,
+        status: "todo",
+        attempts: 0,
+        note: null,
+        doneAt: null
+      });
+    }
+    patchSession(sessionId, { plan, lastCheck: baseline, stage: plan.some((m) => m.status === "todo") ? "building" : "fixing", needsReplan: false });
     journal(sessionId, { at: new Date().toISOString(), stage: "planning", title: `Roadmap: ${plan.filter((m) => m.status !== "done").length} milestones to go`, outcome: "kept", note: null, commit: null });
     return;
   }
