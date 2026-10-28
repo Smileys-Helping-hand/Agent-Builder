@@ -283,9 +283,47 @@ const extractJson = (text: string): Record<string, unknown> | null => {
 
 const list = (value: unknown): Array<{ title: string; detail: string }> =>
   (Array.isArray(value) ? value : [])
-    .map((entry) => (entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {}))
-    .map((entry) => ({ title: String(entry.title ?? "").trim().slice(0, 120), detail: String(entry.detail ?? "").trim().slice(0, 1500) }))
+    .map((entry) => (typeof entry === "string" ? { title: entry } : entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {}))
+    .map((entry) => ({
+      title: String(entry.title ?? entry.name ?? entry.milestone ?? "").trim().slice(0, 120),
+      detail: String(entry.detail ?? entry.details ?? entry.description ?? entry.what ?? "").trim().slice(0, 1500)
+    }))
     .filter((entry) => entry.title.length > 2);
+
+/**
+ * The milestones in a model's answer, however it wrote them: an object with
+ * the list under the expected key (or a near one), a bare list, or — when the
+ * answer was cut off — every complete {"title": …, "detail": …} that made it.
+ */
+const itemsFrom = (answer: string, keys: string[]): Array<{ title: string; detail: string }> => {
+  const parsed = extractJson(answer);
+  if (parsed) {
+    for (const key of [...keys, "milestones", "roadmap", "plan", "steps", "items", "upgrades", "missing"]) {
+      const found = list(parsed[key]);
+      if (found.length) return found;
+    }
+  }
+  const start = answer.indexOf("[");
+  const end = answer.lastIndexOf("]");
+  if (start >= 0 && end > start) {
+    try {
+      const found = list(JSON.parse(answer.slice(start, end + 1)));
+      if (found.length) return found;
+    } catch {
+      /* cut off or not JSON: salvage below */
+    }
+  }
+  const salvaged: Array<{ title: string; detail: string }> = [];
+  const pattern = /"(?:title|name)"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"(?:detail|details|description)"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+  for (const match of answer.matchAll(pattern)) {
+    try {
+      salvaged.push({ title: JSON.parse(`"${match[1]}"`), detail: JSON.parse(`"${match[2]}"`) });
+    } catch {
+      /* a broken escape: skip it */
+    }
+  }
+  return list(salvaged);
+};
 
 /* ─── git in the workspace ─── */
 
@@ -505,10 +543,13 @@ gathering feedback or "verify/finalise" steps — checks run after every step on
 Answer with JSON only: {"milestones": [{"title": "<short>", "detail": "<what to build, precisely, and how to know it works>"}]}`
   );
   const chores = /^(commit|push|deploy|release|monitor|merge|branch|code review|review|gather|collect|user feedback|finali[sz]e|verify|check branch|ensure clean)/i;
-  const milestones = list(extractJson(answer)?.milestones)
+  const milestones = itemsFrom(answer, ["milestones"])
     .filter((m) => !chores.test(m.title))
     .slice(0, 30);
-  if (!milestones.length) throw new Error("The model did not write a usable roadmap.");
+  if (!milestones.length) {
+    Logger.warn("Continuous build: the roadmap could not be read from the model's answer", { answer: answer.slice(0, 2000) });
+    throw new Error("The model did not write a usable roadmap.");
+  }
   return [
     ...done,
     ...milestones.map((m) => ({ id: newId("ms"), title: m.title, detail: m.detail, status: "todo" as const, attempts: 0, note: null, doneAt: null }))
@@ -532,8 +573,10 @@ in the repository only; no committing, deploying, reviewing or other chores).
 Answer with JSON only: {"complete": true|false, "missing": [{"title": "<short>", "detail": "<what to build>"}]}`
   );
   const parsed = extractJson(answer);
-  if (!parsed) throw new Error("The model could not judge whether the goal is met.");
-  return parsed.complete === true ? [] : list(parsed.missing).slice(0, 10);
+  if (parsed?.complete === true) return [];
+  const missing = itemsFrom(answer, ["missing"]).slice(0, 10);
+  if (!parsed && !missing.length) throw new Error("The model could not judge whether the goal is met.");
+  return missing;
 };
 
 /** Bigger upgrades for a project that already works. */
@@ -548,7 +591,7 @@ ${roadmapText(session.plan)}
 
 Answer with JSON only: {"upgrades": [{"title": "<short>", "detail": "<what to build, precisely>"}]} (1-5 upgrades)`
   );
-  return list(extractJson(answer)?.upgrades).slice(0, 5);
+  return itemsFrom(answer, ["upgrades"]).slice(0, 5);
 };
 
 /** One improvement for a project that works. */
@@ -1348,7 +1391,7 @@ export const ContinuousImprover = {
   },
 
   /** For tests: the steps the loop takes, one at a time. */
-  testHooks: { prepareWorkspace, syncOwnerCommits, deliverIfReady, applyPendingRevert, getSession, runChecks, cycle }
+  testHooks: { prepareWorkspace, syncOwnerCommits, deliverIfReady, applyPendingRevert, getSession, runChecks, cycle, itemsFrom }
 };
 
 /** The first version's single changes: applied whole, as before. */

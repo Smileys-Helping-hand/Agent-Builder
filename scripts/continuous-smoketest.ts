@@ -136,6 +136,19 @@ const main = async () => {
   ContinuousImprover.stop(session.id);
   ContinuousImprover.stop(fresh.id);
 
+  // 8b. A roadmap is read however the model wrote it, even cut off half way.
+  const shapes = [
+    '{"milestones": [{"title": "Boot", "detail": "a"}, {"title": "Shell", "detail": "b"}]}',
+    '```json\n[{"name": "Boot", "description": "a"}, {"name": "Shell", "description": "b"}]\n```',
+    '{"roadmap": [{"title": "Boot", "details": "a"}, {"title": "Shell", "details": "b"}]}',
+    '{"milestones": [{"title": "Boot", "detail": "a"}, {"title": "Shell", "detail": "b"}, {"title": "Desk'
+  ];
+  for (const shape of shapes) {
+    const items = hooks.itemsFrom(shape, ["milestones"]);
+    if (items.length !== 2 || items[0].title !== "Boot" || items[1].detail !== "b") fail(`roadmap not read from ${shape.slice(0, 40)}: ${JSON.stringify(items)}`);
+  }
+  console.log("[PASS] roadmaps are read from any shape of answer, including one cut off half way");
+
   // 9. The loop's stages, with a stand-in model and build: plan → build → check → deliver → fix → complete.
   const { ModelRouter } = await import("../src/tools/ModelRouter.js");
   const { BuildService } = await import("../src/orchestrator/BuildService.js");
