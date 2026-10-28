@@ -63,6 +63,7 @@ export const ASKABLE = [
   "agent.profile",
   "ground.state",
   "continuous.list",
+  "reconstruct.list",
   "academy",
   "academy.add",
   "academy.propose",

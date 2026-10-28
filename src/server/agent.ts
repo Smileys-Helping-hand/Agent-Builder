@@ -20,12 +20,17 @@
  *   GET    /api/agent/approvals/:id/diff           ?file=… one file
  *   POST   /api/agent/approvals/:id/approve        { files? } the parts to add; applied + committed on the live branch
  *   POST   /api/agent/approvals/:id/reject         { note? }
+ *   GET    /api/agent/reconstruct                  the Reconstructor: runs and what it has learned
+ *   POST   /api/agent/reconstruct                  { projectId } | { gitUrl }: study, rebuild, compare, learn
+ *   POST   /api/agent/reconstruct/:id/again        another round on what it still misses
+ *   POST   /api/agent/reconstruct/:id/stop
  */
 import type { Express, Request, Response } from "express";
 
 import { AgentChat, setAgentActions } from "../agent/AgentChat.js";
 import { AgentProfile, registerProfileSources } from "../agent/AgentProfile.js";
 import { ContinuousImprover } from "../agent/ContinuousImprover.js";
+import { Reconstructor } from "../agent/Reconstructor.js";
 import { TrainingGround } from "../agent/TrainingGround.js";
 import { GameMode } from "../utils/GameMode.js";
 import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
@@ -43,6 +48,8 @@ export const registerAgentRoutes = (app: Express) => {
     approvedImprovements: () => ContinuousImprover.approvedCount(),
     waitingApprovals: () => ContinuousImprover.waitingCount(),
     continuousProgress: () => ContinuousImprover.progress(),
+    appsReconstructed: () => Reconstructor.skills().appsRebuilt,
+    reconstructing: () => Reconstructor.running(),
     practiceWins: () => TrainingGround.wins(),
     continuousRunning: () => ContinuousImprover.running(),
     practising: () => TrainingGround.practising()
@@ -50,6 +57,7 @@ export const registerAgentRoutes = (app: Express) => {
   AgentProfile.start();
   TrainingGround.start();
   ContinuousImprover.resume();
+  Reconstructor.resume();
 
   app.get("/api/agent/profile", authenticateAgent("read"), (_req: Request, res: Response) => {
     res.json(AgentProfile.profile());
@@ -180,6 +188,35 @@ export const registerAgentRoutes = (app: Express) => {
     const session = ContinuousImprover.stop(req.params.id);
     if (!session) return res.status(404).json({ error: "Unknown session." });
     res.json({ session });
+  });
+
+  app.get("/api/agent/reconstruct", authenticateAgent("read"), (_req: Request, res: Response) => {
+    res.json(Reconstructor.list());
+  });
+
+  app.post("/api/agent/reconstruct", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const actor = (req as AgentRequest).actor ?? "owner";
+    try {
+      if (typeof req.body?.projectId === "string" && req.body.projectId) return res.json({ run: Reconstructor.fromProject(req.body.projectId, actor) });
+      if (typeof req.body?.gitUrl === "string" && req.body.gitUrl) return res.json({ run: await Reconstructor.fromGit(req.body.gitUrl, actor) });
+      res.status(400).json({ error: "Choose one of your projects, or give a Git repository's https address." });
+    } catch (error) {
+      res.status(400).json({ error: message(error) });
+    }
+  });
+
+  app.post("/api/agent/reconstruct/:id/again", authenticateAgent("execute"), (req: Request, res: Response) => {
+    try {
+      res.json({ run: Reconstructor.again(req.params.id) });
+    } catch (error) {
+      res.status(409).json({ error: message(error) });
+    }
+  });
+
+  app.post("/api/agent/reconstruct/:id/stop", authenticateAgent("execute"), (req: Request, res: Response) => {
+    const run = Reconstructor.stop(req.params.id);
+    if (!run) return res.status(404).json({ error: "Unknown run." });
+    res.json({ run });
   });
 
   app.get("/api/agent/approvals/:id/diff", authenticateAgent("read"), async (req: Request, res: Response) => {

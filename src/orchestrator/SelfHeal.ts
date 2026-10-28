@@ -60,7 +60,7 @@ export const candidates = (builds: BuildView[], version: string, state: HealStat
   const byId = new Map(builds.map((build) => [build.buildId, build]));
   const practice = (build: BuildView | undefined, depth = 0): boolean =>
     Boolean(build) &&
-    (/^(academy|continuous|ground|edit):/.test(build!.startedBy ?? "") ||
+    (/^(academy|continuous|ground|edit|reconstruct):/.test(build!.startedBy ?? "") ||
       (depth < 8 && practice(build!.continuedFrom ? byId.get(build!.continuedFrom) : undefined, depth + 1)));
   return Array.from(latest.values())
     .filter((build) => {

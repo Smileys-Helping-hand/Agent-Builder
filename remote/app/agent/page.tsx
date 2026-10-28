@@ -8,15 +8,16 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
-import { api, type AgentMessage, type ChatPending, type Delivery, type ImproveCandidate, type ImproveSession } from "@/lib/api";
+import { api, type AgentMessage, type ChatPending, type Delivery, type ImproveCandidate, type ImproveSession, type ReconstructRun } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
 
-type Tab = "growth" | "talk" | "ground" | "continuous";
+type Tab = "growth" | "talk" | "ground" | "continuous" | "reconstruct";
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: "growth", label: "Growth" },
   { id: "talk", label: "Talk" },
   { id: "ground", label: "Training ground" },
-  { id: "continuous", label: "Continuous & approvals" }
+  { id: "continuous", label: "Continuous & approvals" },
+  { id: "reconstruct", label: "Reconstructor" }
 ];
 
 const pct = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${Math.round(v * 100)}%`);
@@ -56,6 +57,7 @@ export default function AgentPage() {
           {tab === "talk" ? <Talk /> : null}
           {tab === "ground" ? <Ground /> : null}
           {tab === "continuous" ? <Continuous /> : null}
+          {tab === "reconstruct" ? <Reconstruct /> : null}
         </div>
       </div>
     </>
@@ -877,5 +879,185 @@ function Approval({ c, busy, act }: { c: ImproveCandidate; busy: string | null; 
       </div>
       {diff !== null ? <pre className="agent-diff">{diff || "(no changes)"}</pre> : null}
     </div>
+  );
+}
+
+/** The Reconstructor: rebuild any app from its blueprint, compare, and learn from what was missed. */
+function Reconstruct() {
+  const toast = useToast();
+  const data = useRemote(() => api.reconstruct(), 15000, "agent-reconstruct");
+  const projects = useRemote(() => api.projects(), 0, "projects");
+  const [kind, setKind] = useState<"project" | "git">("project");
+  const [projectId, setProjectId] = useState("");
+  const [gitUrl, setGitUrl] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+
+  const act = async (label: string, fn: () => Promise<unknown>, ok: string) => {
+    setBusy(label);
+    try {
+      await fn();
+      toast(ok, "ok");
+      await data.refresh();
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error), "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const skills = data.data?.skills;
+  const runs = data.data?.runs ?? [];
+  const working = (state: ReconstructRun["state"]) => ["queued", "studying", "rebuilding", "comparing", "learning"].includes(state);
+
+  return (
+    <>
+      <div className="card">
+        <p className="small" style={{ marginTop: 0 }}>
+          Give it any app and it learns to build things like it: it studies the code into a blueprint of every feature, rebuilds the app from
+          that blueprint alone (it never sees the code while building), checks the rebuild feature by feature, and turns everything it missed
+          into lessons every later build uses. Rebuilds are private study copies; code without an open licence teaches lessons only.
+        </p>
+        <div className="btn-row" style={{ marginBottom: 8 }}>
+          <button className={`btn small ${kind === "project" ? "primary" : "ghost"}`} onClick={() => setKind("project")}>
+            One of my projects
+          </button>
+          <button className={`btn small ${kind === "git" ? "primary" : "ghost"}`} onClick={() => setKind("git")}>
+            A Git repository
+          </button>
+        </div>
+        <div className="learn-plan">
+          {kind === "project" ? (
+            <select className="input" style={{ flex: 1 }} value={projectId} onChange={(e) => setProjectId(e.target.value)} aria-label="Project">
+              <option value="">Choose a project…</option>
+              {(projects.data?.projects ?? []).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input className="input" style={{ flex: 1, minWidth: 220 }} value={gitUrl} placeholder="https://github.com/owner/repo" onChange={(e) => setGitUrl(e.target.value)} />
+          )}
+          <button
+            className="btn primary"
+            disabled={busy !== null || (kind === "project" ? !projectId : !gitUrl.trim())}
+            onClick={() =>
+              void act(
+                "start",
+                () => api.reconstructStart(kind === "project" ? { projectId } : { gitUrl: gitUrl.trim() }),
+                "Queued. It studies the app first, then rebuilds it."
+              )
+            }
+          >
+            {busy === "start" ? <Busy label={kind === "git" ? "Cloning…" : "Queueing…"} /> : "Reconstruct and learn"}
+          </button>
+        </div>
+      </div>
+
+      {skills && skills.appsRebuilt > 0 ? (
+        <>
+          <div className="section-title">What it has learned</div>
+          <div className="rl-grid">
+            <div className="card rl-card">
+              <strong>First-try coverage</strong>
+              <div className="small">
+                How much of a new app its first rebuild gets right: <b>{trendText(skills.firstTryCoverage.recent, skills.firstTryCoverage.earlier)}</b>
+              </div>
+            </div>
+            <div className="card rl-card">
+              <strong>Studied</strong>
+              <div className="small">
+                {skills.appsRebuilt} apps · {skills.featuresStudied} features · {skills.lessons} lessons · {skills.examplesKept} kept as worked examples
+              </div>
+            </div>
+            <div className="card rl-card">
+              <strong>Kinds of apps</strong>
+              <div className="small">{skills.kinds.map((k) => `${k.kind} (${k.count})`).join(" · ")}</div>
+            </div>
+          </div>
+        </>
+      ) : null}
+
+      {runs.length ? <div className="section-title">Apps</div> : null}
+      {runs.map((run) => {
+        const best = run.rounds.reduce((max, r) => Math.max(max, r.coverage ?? 0), 0);
+        const last = run.rounds[run.rounds.length - 1];
+        return (
+          <div key={run.id} className="card" style={{ marginBottom: 10 }}>
+            <div className="rl-head">
+              <strong>{run.blueprint?.title ?? run.source.label}</strong>
+              <span className={`tag ${run.state === "done" ? "ok" : run.state === "failed" ? "bad" : working(run.state) ? "info" : "warn"}`}>{run.state}</span>
+            </div>
+            <div className="muted small">
+              {run.source.kind === "git" ? `${run.source.label} · licence ${run.source.license ?? "none"}` : "your project"}
+              {run.blueprint ? ` · ${run.blueprint.kind} · ${run.blueprint.features.length} features` : ""} · {ago(run.createdAt)}
+            </div>
+            <div className="small" style={{ marginTop: 6 }}>
+              {run.phase}
+            </div>
+            {run.rounds.length ? (
+              <div className="progress compact">
+                <div>
+                  <div className="progress-label">
+                    <strong>Features rebuilt</strong>
+                    <span>{run.rounds.map((r) => `round ${r.round}: ${r.coverage === null ? "?" : `${Math.round(r.coverage * 100)}%`}`).join(" → ")}</span>
+                  </div>
+                  <div className={`bar ${working(run.state) ? "active" : ""}`}>
+                    <i style={{ width: `${Math.round(best * 100)}%` }} />
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            <div className="btn-row" style={{ marginTop: 8 }}>
+              <button className="btn small" onClick={() => setOpen(open === run.id ? null : run.id)}>
+                {open === run.id ? "Less" : "Blueprint, gaps & lessons"}
+              </button>
+              {working(run.state) ? (
+                <button className="btn small danger" disabled={busy !== null} onClick={() => void act(`stop-${run.id}`, () => api.reconstructStop(run.id), "Stopped.")}>
+                  Stop
+                </button>
+              ) : run.blueprint && last && last.missing.length ? (
+                <button className="btn small primary" disabled={busy !== null} onClick={() => void act(`again-${run.id}`, () => api.reconstructAgain(run.id), "Another round queued.")}>
+                  Rebuild what it missed
+                </button>
+              ) : null}
+            </div>
+            {open === run.id ? (
+              <div style={{ marginTop: 10 }}>
+                {run.error ? <Banner kind="error">{run.error}</Banner> : null}
+                {run.blueprint ? (
+                  <>
+                    <div className="small">{run.blueprint.purpose}</div>
+                    <ol className="small" style={{ paddingLeft: 18, marginTop: 8 }}>
+                      {run.blueprint.features.map((f) => (
+                        <li key={f.name}>
+                          {last ? (last.present.includes(f.name) ? "✓ " : "✗ ") : ""}
+                          <strong>{f.name}</strong> — {f.detail}
+                        </li>
+                      ))}
+                    </ol>
+                    {run.blueprint.techniques.length ? <div className="muted small">Techniques: {run.blueprint.techniques.join(" · ")}</div> : null}
+                  </>
+                ) : null}
+                {run.lessons.length ? (
+                  <>
+                    <div className="muted small" style={{ marginTop: 8 }}>
+                      Lessons it learned (used by every build from now on)
+                    </div>
+                    <ul className="small" style={{ paddingLeft: 18 }}>
+                      {run.lessons.map((lesson, i) => (
+                        <li key={i}>{lesson}</li>
+                      ))}
+                    </ul>
+                  </>
+                ) : null}
+                {run.keptAsExample ? <div className="muted small">Kept as a worked example for similar builds.</div> : null}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </>
   );
 }

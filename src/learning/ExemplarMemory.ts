@@ -196,6 +196,8 @@ const sourceFiles = (root: string): Record<string, string> => {
     }
   };
   walk(path.join(root, "src"));
+  // An app that does not keep its code in src/ (the Reconstructor's sources): its own files from the top.
+  if (Object.keys(out).length === 0 && !fs.existsSync(path.join(root, "src"))) walk(root);
   return out;
 };
 

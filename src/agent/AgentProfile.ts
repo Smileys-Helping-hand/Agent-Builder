@@ -52,6 +52,7 @@ const ABILITY_DEFS: Array<Omit<Ability, "since" | "isNew" | "ready" | "uses" | "
   { id: "projects", label: "Diagnoses, repairs and carries on your projects", area: "build", file: "src/ecosystem/ProjectDoctor.ts" },
   { id: "continuous", label: "Improves a project around the clock, for your approval", area: "build", file: "src/agent/ContinuousImprover.ts" },
   { id: "databases", label: "Sets apps up for your database with plug-in keys", area: "build", file: "src/database/DbKit.ts" },
+  { id: "reconstruct", label: "Rebuilds any app from its blueprint and learns from what it missed", area: "learn", file: "src/agent/Reconstructor.ts" },
   { id: "research", label: "Researches any topic around the clock", area: "learn", file: "src/research/ResearchEngine.ts" },
   { id: "evidence", label: "Tells real evidence from speculation and fiction", area: "learn", file: "src/research/SourceCredibility.ts" },
   { id: "reinforcement", label: "Learns which way of working earns the best results", area: "learn", file: "src/learning/Reinforcement.ts" },
@@ -124,6 +125,9 @@ type Extra = {
   practising: () => string | null;
   /** The continuous builder's steps: how often they succeed now against before. */
   continuousProgress: () => { recentSuccess: number | null; earlierSuccess: number | null; steps: number; milestonesDone: number } | null;
+  /** The Reconstructor: apps rebuilt, and what it is rebuilding now. */
+  appsReconstructed: () => number;
+  reconstructing: () => string | null;
 };
 let extra: Extra = {
   approvedImprovements: () => 0,
@@ -131,7 +135,9 @@ let extra: Extra = {
   practiceWins: () => 0,
   continuousRunning: () => [],
   practising: () => null,
-  continuousProgress: () => null
+  continuousProgress: () => null,
+  appsReconstructed: () => 0,
+  reconstructing: () => null
 };
 export const registerProfileSources = (sources: Partial<Extra>) => {
   extra = { ...extra, ...sources };
@@ -155,7 +161,8 @@ export const AgentProfile = {
       talk: count("SELECT COUNT(*) AS n FROM agent_messages WHERE role = 'agent'"),
       unity: UnityLevelStudio.listJobs().filter((j) => j.status === "done").length,
       reinforcement: count("SELECT COUNT(*) AS n FROM rl_episodes WHERE reward IS NOT NULL"),
-      practice: extra.practiceWins()
+      practice: extra.practiceWins(),
+      reconstruct: extra.appsReconstructed()
     };
     const readiness: Record<string, { ready: boolean; note?: string }> = {
       unity: unity.installed ? { ready: true, note: `Unity ${unity.version}` } : { ready: false, note: "No Unity editor found" },
@@ -206,6 +213,7 @@ export const AgentProfile = {
       { label: "Build lessons proven", count: proven, each: 12 },
       { label: "Improvements you approved", count: extra.approvedImprovements(), each: 60 },
       { label: "Practice challenges won", count: extra.practiceWins(), each: 35 },
+      { label: "Apps reconstructed", count: extra.appsReconstructed(), each: 50 },
       { label: "Rewarded tries (× average reward)", count: rewarded.n, each: 10 * (rewarded.avg ?? 0) }
     ].map((s) => ({ ...s, xp: Math.round(s.count * s.each) }));
     const xp = sources.reduce((n, s) => n + s.xp, 0);
@@ -255,6 +263,8 @@ export const AgentProfile = {
     for (const name of extra.continuousRunning()) parts.push(`Improving ${name} continuously`);
     const practice = extra.practising();
     if (practice) parts.push(`Practising: ${practice}`);
+    const rebuilding = extra.reconstructing();
+    if (rebuilding) parts.push(rebuilding);
     const unity = UnityLevelStudio.listJobs().find((j) => !["done", "failed"].includes(j.status));
     if (unity) parts.push(`Designing a Unity level`);
     const waiting = extra.waitingApprovals();

@@ -138,7 +138,7 @@ When using Ollama or LM Studio, ensure their local servers are running. An unkno
 
 The multi-agent swarm gives each role its own model. `MODEL_PROVIDER_<ROLE>` (+ `MODEL_NAME_<ROLE>`) sets one for `CODE`, `VISUAL`, `3D`, `PROMPTER` or `QA`. Adding `GEMINI_API_KEY` routes the visual, 3D and prompt roles to Gemini (`GEMINI_MODEL`, default `gemini-flash-latest`). OpenAI or Anthropic keys in `.env` take over roles only with `ROLE_CLOUD_FALLBACK=true`, so a local build never bills a cloud API by accident.
 
-Guides for the newer studios: [learning from research](docs/LEARNING.md) · [databases for built apps](docs/DATABASES.md) · [Unity levels](docs/UNITY_LEVELS.md) · [how the agents learn, and what they share with Jarvis](docs/AGENT_TRAINING.md) · [the continuous builder](docs/CONTINUOUS_BUILDER.md).
+Guides for the newer studios: [learning from research](docs/LEARNING.md) · [databases for built apps](docs/DATABASES.md) · [Unity levels](docs/UNITY_LEVELS.md) · [how the agents learn, and what they share with Jarvis](docs/AGENT_TRAINING.md) · [the continuous builder](docs/CONTINUOUS_BUILDER.md) · [the Reconstructor](docs/RECONSTRUCTOR.md).
 
 Run with a custom prompt via the CLI:
 
