@@ -38,28 +38,39 @@ const git = async (cwd: string, args: string[]): Promise<string> => {
   }
 };
 
-const readIfPresent = (file: string, maxBytes = 4000): string | null => {
+/**
+ * The start of a file, or null. Everything a scan reads is read without
+ * blocking: 120-odd projects of synchronous reads on a hard drive another
+ * program was saturating froze the builder for a minute per sweep.
+ */
+const readIfPresent = async (file: string, maxBytes = 4000): Promise<string | null> => {
+  let handle: fs.promises.FileHandle | null = null;
   try {
-    if (!fs.existsSync(file)) return null;
-    const handle = fs.openSync(file, "r");
-    try {
-      const buffer = Buffer.alloc(maxBytes);
-      const read = fs.readSync(handle, buffer, 0, maxBytes, 0);
-      return buffer.subarray(0, read).toString("utf8");
-    } finally {
-      fs.closeSync(handle);
-    }
+    handle = await fs.promises.open(file, "r");
+    const buffer = Buffer.alloc(maxBytes);
+    const { bytesRead } = await handle.read(buffer, 0, maxBytes, 0);
+    return buffer.subarray(0, bytesRead).toString("utf8");
   } catch {
     return null;
+  } finally {
+    await handle?.close().catch(() => undefined);
   }
 };
 
+/** The names in a project's top folder, lower-cased (Windows names ignore case). */
+type TopNames = Map<string, string>;
+
+const topNames = async (projectPath: string): Promise<TopNames> => {
+  const names = await fs.promises.readdir(projectPath).catch(() => [] as string[]);
+  return new Map(names.map((name) => [name.toLowerCase(), name]));
+};
+
 /** First real paragraph of a README, with markdown chrome stripped. */
-const readmeExcerpt = (projectPath: string): string | null => {
-  const candidates = ["README.md", "readme.md", "Readme.md", "README.MD"];
-  for (const name of candidates) {
-    const raw = readIfPresent(path.join(projectPath, name));
-    if (!raw) continue;
+const readmeExcerpt = async (projectPath: string, names: TopNames): Promise<string | null> => {
+  const actual = names.get("readme.md");
+  if (actual) {
+    const raw = await readIfPresent(path.join(projectPath, actual));
+    if (!raw) return null;
     const text = raw
       .split("\n")
       .filter((line) => !line.trim().startsWith("#") && !line.trim().startsWith("![") && !line.trim().startsWith("["))
@@ -80,8 +91,9 @@ type PackageJson = {
   devDependencies?: Record<string, string>;
 };
 
-const readPackageJson = (projectPath: string): PackageJson | null => {
-  const raw = readIfPresent(path.join(projectPath, "package.json"), 20_000);
+const readPackageJson = async (projectPath: string, names: TopNames): Promise<PackageJson | null> => {
+  if (!names.has("package.json")) return null;
+  const raw = await readIfPresent(path.join(projectPath, "package.json"), 20_000);
   if (!raw) return null;
   try {
     return JSON.parse(raw) as PackageJson;
@@ -91,10 +103,10 @@ const readPackageJson = (projectPath: string): PackageJson | null => {
 };
 
 /** What the project is built with — used for routing work and for briefings. */
-const detectStack = (projectPath: string, pkg: PackageJson | null): { kind: string; stack: string[] } => {
+const detectStack = (names: TopNames, pkg: PackageJson | null): { kind: string; stack: string[] } => {
   const dependencies = { ...(pkg?.dependencies ?? {}), ...(pkg?.devDependencies ?? {}) };
   const has = (name: string) => Object.prototype.hasOwnProperty.call(dependencies, name);
-  const fileExists = (name: string) => fs.existsSync(path.join(projectPath, name));
+  const fileExists = (name: string) => names.has(name.toLowerCase());
 
   const stack: string[] = [];
   if (pkg) stack.push("node");
@@ -173,8 +185,9 @@ export const findRepositories = async (roots: string[] = projectRoots()): Promis
 };
 
 const scanRepository = async (projectPath: string, root: string): Promise<Omit<EcosystemProject, "scannedAt">> => {
-  const pkg = readPackageJson(projectPath);
-  const { kind, stack } = detectStack(projectPath, pkg);
+  const names = await topNames(projectPath);
+  const pkg = await readPackageJson(projectPath, names);
+  const { kind, stack } = detectStack(names, pkg);
 
   const [branch, remote, statusOutput, lastCommit, tracking] = await Promise.all([
     git(projectPath, ["rev-parse", "--abbrev-ref", "HEAD"]),
@@ -204,8 +217,8 @@ const scanRepository = async (projectPath: string, root: string): Promise<Omit<E
     gitBehind: behind ?? 0,
     lastCommitAt: commitDate || null,
     lastCommitSubject: commitSubject || null,
-    hasClaudeMd: fs.existsSync(path.join(projectPath, "CLAUDE.md")),
-    readmeExcerpt: readmeExcerpt(projectPath)
+    hasClaudeMd: names.has("claude.md"),
+    readmeExcerpt: await readmeExcerpt(projectPath, names)
   };
 };
 
