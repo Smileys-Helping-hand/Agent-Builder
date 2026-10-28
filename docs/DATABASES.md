@@ -34,6 +34,16 @@ Every platform stores records the same way (one `ab_records` table/collection wi
 
 The build's model is told to keep all saved data in `src/lib/db` and render `<DbStatusBar />` (`DbKit.preamble`).
 
+## Apps ordered on the ARP site (and through VerifiedBizLink)
+
+The same choice and the same keys, without the customer touching code:
+
+1. **Ordering**: every way to order (Buy, the project builder, VerifiedBizLink's Build Studio) asks *Where should it keep its data?* The build job carries the choice; the app is built around it.
+2. **Connecting**: once the first version is ready, the customer's dashboard has **Connect your database** (on VerifiedBizLink: the project page). They pick the platform, follow its steps and paste its public keys; secret keys are refused there and again at the hub.
+3. **Applying**: the keys reach Agent Builder as a site edit on its next poll. It writes them into the delivered site's `.env.local` and rebuilds it in place, so every visitor's data goes to their database (a failed rebuild puts the old keys back). A site built before it had a data layer gets one on a copy, through the same quality gates as any change to a delivered site.
+
+In a built app the **Connect a database** pill is for the owner only: it shows while developing, and on the live app only when it is opened with `?admin` (remembered for that visit). Keys saved there connect that browser; for everyone they go in `.env.local`, which is what the dashboard does.
+
 ## Keys
 
 There are two places to put them:
