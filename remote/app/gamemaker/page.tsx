@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   api,
   type GameVersionBranch,
@@ -21,6 +22,7 @@ import UnityLevelPanel from "./UnityLevelPanel";
 export default function GameMakerStudio() {
   const connected = useConnected();
   const toast = useToast();
+  const router = useRouter();
 
   const [games, setGames] = useState<GameVersionBranch[]>([]);
   const [gamemakerStatus, setGamemakerStatus] = useState<Awaited<ReturnType<typeof api.gamemakerStatus>> | null>(null);
@@ -97,13 +99,16 @@ export default function GameMakerStudio() {
     if (!gamePrompt.trim()) return;
     setSuperBuilding(true);
     try {
-      toast("Deploying Multi-Agent Super-Build Swarm...", "info");
+      toast("Starting the game build…", "info");
       const data = await api.superBuild(gamePrompt);
-      toast(`Game super-build initiated! Build ID: ${data.buildId}`, "ok");
       setGamePrompt("");
-      await loadData();
+      // Straight to the build, so you watch it being made instead of wondering whether it started.
+      toast("Your game is being built. Opening it…", "ok");
+      router.push(`/build/?id=${encodeURIComponent(data.buildId)}`);
     } catch (err: any) {
-      toast(err?.message || "Super-build error", "error");
+      // Say plainly why nothing started: game mode, the PC not answering, or the builder's own reason.
+      const reason = err?.message || "the builder did not answer";
+      toast(`The game did not start: ${reason}${/fetch|network|timed? ?out|abort/i.test(reason) ? " (the PC may be busy or restarting; try again in a minute)" : ""}`, "error");
     } finally {
       setSuperBuilding(false);
     }

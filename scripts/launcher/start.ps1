@@ -553,7 +553,8 @@ $apiMisses = 0
 # A builder still booting is not a hung one: on a disk another program is
 # hammering, loading it can take minutes, and restarting it then only starts
 # the load again (it looped like that). So one this launcher started gets up to
-# 10 minutes to answer for the first time while its process is alive.
+# 30 minutes to answer for the first time while its process is alive (a disk
+# shared with Drive sync and SaveState took more than 10).
 $apiEverUp = $false
 if (-not $apiStartedAt) { $apiStartedAt = Get-Date }
 $ollamaMisses = 0
@@ -576,7 +577,7 @@ try {
             $apiAlive = $started.api -and (Get-Process -Id $started.api -ErrorAction SilentlyContinue)
             $apiAnswers = Test-Endpoint "http://127.0.0.1:4000/api/update/check" 5
             if ($apiAnswers) { $apiMisses = 0; $apiEverUp = $true } else { $apiMisses++ }
-            $apiBooting = $apiAlive -and -not $apiEverUp -and ((Get-Date) - $apiStartedAt).TotalMinutes -lt 10
+            $apiBooting = $apiAlive -and -not $apiEverUp -and ((Get-Date) - $apiStartedAt).TotalMinutes -lt 30
 
             if (-not $apiAnswers -and -not $apiBooting -and (-not $apiAlive -or $apiMisses -ge 8)) {
                 $wait = $backoff[[Math]::Min($apiFailures, $backoff.Count - 1)]

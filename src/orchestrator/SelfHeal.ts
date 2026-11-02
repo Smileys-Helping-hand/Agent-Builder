@@ -61,6 +61,9 @@ export const candidates = (builds: BuildView[], version: string, state: HealStat
   const practice = (build: BuildView | undefined, depth = 0): boolean =>
     Boolean(build) &&
     (/^(academy|continuous|ground|edit|reconstruct):/.test(build!.startedBy ?? "") ||
+      // Practice from before practice builds were labelled ground: (31 retries of one in five days).
+      build!.startedBy === "training-ground" ||
+      /^practice-/.test(build!.projectName ?? "") ||
       (depth < 8 && practice(build!.continuedFrom ? byId.get(build!.continuedFrom) : undefined, depth + 1)));
   return Array.from(latest.values())
     .filter((build) => {
