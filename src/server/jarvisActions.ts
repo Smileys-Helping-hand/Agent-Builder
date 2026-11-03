@@ -367,9 +367,11 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
       "newProject?": "or a name, to start a brand-new project from nothing",
       goal: "what to build or achieve, in the owner's words",
       "mode?": "complete (stop when done) | forever (keep improving, the default)",
-      "checkCommand?": "a command that must pass, e.g. make or cargo test"
+      "checkCommand?": "a command that must pass, e.g. make or cargo test",
+      "kind?": "game: a new game built for hours or days, a playable version at every milestone (a new project whose goal is a game is one anyway)",
+      "multiplayer?": "true/false: online multiplayer for a new game (by default when the goal asks for it)"
     },
-    call: (p) => ["POST", "/api/agent/continuous/start", pick(p, "projectId", "newProject", "goal", "mode", "checkCommand")]
+    call: (p) => ["POST", "/api/agent/continuous/start", pick(p, "projectId", "newProject", "goal", "mode", "checkCommand", "kind", "multiplayer")]
   },
   {
     name: "continuous.instruct",

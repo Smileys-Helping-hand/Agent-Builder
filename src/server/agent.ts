@@ -148,7 +148,7 @@ export const registerAgentRoutes = (app: Express) => {
       mode: body.mode === "complete" ? ("complete" as const) : ("forever" as const),
       checkCommand: typeof body.checkCommand === "string" ? body.checkCommand : null,
       ...(body.kind === "game" || body.kind === "app" ? { kind: body.kind as "game" | "app" } : {}),
-      ...(typeof body.multiplayer === "boolean" ? { multiplayer: body.multiplayer } : {})
+      ...(body.multiplayer === true || body.multiplayer === "true" ? { multiplayer: true } : body.multiplayer === false || body.multiplayer === "false" ? { multiplayer: false } : {})
     };
     if (!projectId && !newProject) return res.status(400).json({ error: "Choose a project, or name a new one." });
     if (newProject && goal.trim().length < 10) return res.status(400).json({ error: "Say what to build: a new project starts from its goal." });
