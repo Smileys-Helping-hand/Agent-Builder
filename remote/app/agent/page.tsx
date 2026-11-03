@@ -422,6 +422,43 @@ const STAGE_LABEL: Record<ImproveSession["stage"], string> = {
 
 type Act = (label: string, fn: () => Promise<unknown>, ok: string) => Promise<void>;
 
+/** Agent Builder improving its own code from the evidence of what keeps going wrong. */
+function SelfImprove({ busy, act }: { busy: string | null; act: Act }) {
+  const self = useRemote(() => api.selfReport(), 60000, "agent-self");
+  const report = self.data?.report;
+  const session = self.data?.session;
+  return (
+    <div className="card">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <strong>Improve itself</strong>
+        {session ? <span className="tag ok">Working on itself · {session.phase}</span> : null}
+      </div>
+      <p className="small" style={{ margin: "6px 0" }}>
+        What its own record shows needs fixing in the builder: milestones it parks, lessons that do not help, choices getting worse, features
+        rebuilds miss. It changes its own code to fix the causes, in a workspace, passing its typecheck and smoketests; nothing reaches the
+        running builder until you approve it below.
+      </p>
+      {report ? (
+        report.findings.length ? (
+          <ul className="small" style={{ margin: "4px 0 8px", paddingLeft: 18 }}>
+            {report.findings.slice(0, 8).map((f, i) => (
+              <li key={i}>
+                <strong>{f.area}</strong>: {f.evidence}
+              </li>
+            ))}
+            {report.findings.length > 8 ? <li>…and {report.findings.length - 8} more</li> : null}
+          </ul>
+        ) : (
+          <p className="muted small">Nothing is failing repeatedly right now; it would work on planning, recovery and completeness.</p>
+        )
+      ) : null}
+      <button className="btn small primary" disabled={busy !== null} onClick={() => void act("self", () => api.selfImprove().then(() => self.refresh()), session ? "Given the latest findings." : "Started: it is working on its own code.")}>
+        {busy === "self" ? <Busy label="Starting…" /> : session ? "Give it the latest findings" : "Improve itself from these"}
+      </button>
+    </div>
+  );
+}
+
 function Continuous() {
   const toast = useToast();
   const data = useRemote(() => api.continuous(), 10000, "agent-continuous");
@@ -449,6 +486,7 @@ function Continuous() {
 
   return (
     <>
+      <SelfImprove busy={busy} act={act} />
       <StartBuild busy={busy} act={act} />
 
       <div className="section-title">Waiting for your approval · {waiting.length + waitingLegacy.length}</div>

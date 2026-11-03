@@ -389,6 +389,15 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
     params: { "projectId?": "one of the owner's projects", "gitUrl?": "or a public Git repository's https address", "siteUrl?": "or a live website's address (studied from what its pages show)" },
     call: (p) => ["POST", "/api/agent/reconstruct", pick(p, "projectId", "gitUrl", "siteUrl")]
   },
+  { name: "self.report", area: "agent", label: "What Agent Builder has learned about itself: where it keeps failing, lessons that do not help, choices getting worse — and what to change", scope: "read", params: {}, call: () => ["GET", "/api/agent/self"] },
+  {
+    name: "self.improve",
+    area: "agent",
+    label: "Agent Builder improves its own code from what it has learned (a continuous session on its own repository; every change waits for the owner's approval)",
+    scope: "execute",
+    params: {},
+    call: () => ["POST", "/api/agent/self/start", {}]
+  },
   { name: "reconstruct.list", area: "agent", label: "Reconstructor: apps rebuilt, their coverage and what it has learned", scope: "read", params: {}, call: () => ["GET", "/api/agent/reconstruct"] },
   { name: "continuous.stop", area: "agent", label: "Stop improving a project", scope: "execute", params: { sessionId: "the session" }, call: (p) => ["POST", `/api/agent/continuous/${enc(str(p.sessionId))}/stop`, {}] },
   {

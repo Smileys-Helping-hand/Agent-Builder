@@ -1555,6 +1555,9 @@ export const api = {
   continuousInstruct: (id: string, text: string) =>
     request<{ session: ImproveSession }>(`/api/agent/continuous/${encodeURIComponent(id)}/instruct`, { method: "POST", body: JSON.stringify({ text }) }),
   reconstruct: () => request<{ runs: ReconstructRun[]; skills: ReconstructSkills }>("/api/agent/reconstruct"),
+  selfReport: () =>
+    request<{ report: { at: string; findings: Array<{ area: string; evidence: string; change: string }>; goal: string }; session: ImproveSession | null }>("/api/agent/self", {}, 60000),
+  selfImprove: () => request<{ session: ImproveSession }>("/api/agent/self/start", { method: "POST" }, 120000),
   reconstructStart: (input: { projectId?: string; gitUrl?: string; siteUrl?: string }) =>
     request<{ run: ReconstructRun }>("/api/agent/reconstruct", { method: "POST", body: JSON.stringify(input) }, 120000),
   reconstructAgain: (id: string) => request<{ run: ReconstructRun }>(`/api/agent/reconstruct/${encodeURIComponent(id)}/again`, { method: "POST" }),
