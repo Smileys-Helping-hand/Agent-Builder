@@ -9,6 +9,7 @@ import { StallWatch } from "../utils/StallWatch.js";
 import fs from "fs";
 import http from "http";
 import path from "path";
+import { pathToFileURL } from "url";
 import express, { Request, Response } from "express";
 import cors from "cors";
 import { Server } from "socket.io";
@@ -149,6 +150,20 @@ const io = new Server(server, {
     origin: allowedOrigins,
     credentials: true
   }
+});
+
+// Multiplayer for the games it makes: their demos play online through this server (ws(s)://…/net, GET /net/rooms).
+// The same room server a game ships with (templates/net-kit/server); NET_RELAY=off turns it off.
+let netRooms: { handle(req: Request, res: Response): boolean } | null = null;
+if (process.env.NET_RELAY !== "off") {
+  import(pathToFileURL(path.resolve("templates/net-kit/server/room-server.mjs")).href)
+    .then(({ attachRooms }) => {
+      netRooms = attachRooms(server, { path: "/net" });
+    })
+    .catch((error: unknown) => console.warn("Game multiplayer rooms are off:", error instanceof Error ? error.message : error));
+}
+app.get(["/net/rooms", "/net/health"], (req: Request, res: Response, next) => {
+  if (!netRooms?.handle(req, res)) next();
 });
 
 io.use((socket, next) => {

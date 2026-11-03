@@ -94,12 +94,16 @@ interface Transport {
   close(): void;
 }
 
+/** The room server: VITE_NET_URL when the game was built with one, else the one the page's host provides (Agent Builder's demos). */
 const envUrl = (): string | undefined => {
   try {
-    return (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_NET_URL || undefined;
+    const built = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_NET_URL;
+    if (built) return built;
   } catch {
-    return undefined;
+    // Not built by Vite.
   }
+  const given = (globalThis as { AB_NET_URL?: unknown }).AB_NET_URL;
+  return typeof given === "string" && given ? given : undefined;
 };
 
 const storage = (): Storage | null => {

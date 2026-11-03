@@ -18,6 +18,7 @@ import {
   useToast
 } from "../ui";
 import UnityLevelPanel from "./UnityLevelPanel";
+import ContinuousGamesPanel from "./ContinuousGamesPanel";
 
 export default function GameMakerStudio() {
   const connected = useConnected();
@@ -209,6 +210,8 @@ export default function GameMakerStudio() {
             </button>
           </div>
         </div>
+
+        <ContinuousGamesPanel />
 
         <UnityLevelPanel onLevelDone={loadData} />
 

@@ -1026,6 +1026,19 @@ export interface ContinuousCheck {
   command: string | null;
 }
 
+/** One playable version of a continuously built game. */
+export interface GameRelease {
+  version: number;
+  title: string;
+  at: string;
+  commit: string | null;
+  multiplayer: boolean;
+  sizeKb: number;
+  kept: boolean;
+  /** Its play link on the machine (null once its files were let go). */
+  url: string | null;
+}
+
 export interface ImproveSession {
   id: string;
   projectId: string;
@@ -1049,6 +1062,10 @@ export interface ImproveSession {
   journal: ContinuousStep[];
   lastCheck: ContinuousCheck | null;
   researchTopicId: string | null;
+  /** A game: released as a playable version at every milestone. */
+  kind?: "app" | "game";
+  lastRelease?: { version: number; at: string; title: string } | null;
+  releaseError?: string | null;
   /** Is it getting better: its last 20 work steps against the 20 before. */
   progress?: {
     recentSuccess: number | null;
@@ -1521,8 +1538,18 @@ export const api = {
   groundEnabled: (enabled: boolean) => request<GroundState>("/api/agent/ground/enabled", { method: "POST", body: JSON.stringify({ enabled }) }),
   groundHarder: () => request<{ added: unknown[] }>("/api/agent/ground/harder", { method: "POST" }, 600000),
   continuous: () => request<{ sessions: ImproveSession[]; deliveries: Delivery[]; candidates: ImproveCandidate[] }>("/api/agent/continuous"),
-  continuousStart: (input: { projectId?: string; newProject?: string; goal: string; mode: "complete" | "forever"; checkCommand?: string }) =>
+  continuousStart: (input: {
+    projectId?: string;
+    newProject?: string;
+    goal: string;
+    mode: "complete" | "forever";
+    checkCommand?: string;
+    kind?: "app" | "game";
+    multiplayer?: boolean;
+  }) =>
     request<{ session: ImproveSession }>("/api/agent/continuous/start", { method: "POST", body: JSON.stringify(input) }, 120000),
+  gameReleases: (sessionId: string) =>
+    request<{ releases: GameRelease[]; lastError: { at: string; title: string; error: string } | null }>(`/api/previews/demos/${encodeURIComponent(sessionId)}`),
   continuousStop: (id: string) => request<{ session: ImproveSession }>(`/api/agent/continuous/${encodeURIComponent(id)}/stop`, { method: "POST" }),
   continuousRestart: (id: string) => request<{ session: ImproveSession }>(`/api/agent/continuous/${encodeURIComponent(id)}/restart`, { method: "POST" }),
   continuousInstruct: (id: string, text: string) =>

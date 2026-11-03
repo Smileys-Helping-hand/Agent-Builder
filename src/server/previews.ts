@@ -7,6 +7,7 @@
  *   GET /api/previews/build/:buildId   the same for a build
  *   GET /api/previews/project/:id      the same for a project on the PC
  *   POST /api/previews/project/:id/build  build a fresh preview of it, in a copy
+ *   GET /api/previews/demos/:sessionId  a continuously built game's versions, each with its play link
  *   GET /preview/:kind/:id/:token/…    the site itself
  *
  * An <iframe> cannot send the agent key, so the site is served under a token in
@@ -39,6 +40,7 @@ import { Verifier } from "../orchestrator/Verifier.js";
 import { Workspace } from "../orchestrator/Workspace.js";
 import { Catalog } from "../orders/Catalog.js";
 import { EcosystemStore } from "../ecosystem/EcosystemStore.js";
+import { GameDirector } from "../game/GameDirector.js";
 import { listProjectFiles } from "../ecosystem/ProjectBuilds.js";
 import { Logger } from "../utils/Logger.js";
 import { packageTool } from "../utils/packageTool.js";
@@ -70,8 +72,8 @@ const secret = (() => {
   return fresh;
 })();
 
-type Kind = "template" | "build" | "project";
-const KINDS: Kind[] = ["template", "build", "project"];
+type Kind = "template" | "build" | "project" | "demo";
+const KINDS: Kind[] = ["template", "build", "project", "demo"];
 
 const tokenFor = (kind: Kind, id: string): string =>
   crypto.createHmac("sha256", secret).update(`${kind}:${id}`).digest("base64url").slice(0, 32);
@@ -145,6 +147,14 @@ const STORAGE_SHIM = `<script data-agent-builder-storage>(function(){try{window.
  */
 export const withStorageShim = (html: string): string =>
   /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (head) => `${head}${STORAGE_SHIM}`) : `${STORAGE_SHIM}${html}`;
+
+/**
+ * A game version's page: its multiplayer plays through this server's rooms
+ * (ws(s)://<the address it was opened on>/net), so a link shared through the
+ * tunnel is an online game with nothing else to run.
+ */
+const NET_URL = `<script data-agent-builder-net>window.AB_NET_URL=(location.protocol==="https:"?"wss://":"ws://")+location.host+"/net";</script>`;
+const withNet = (html: string): string => (/<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (head) => `${head}${NET_URL}`) : `${NET_URL}${html}`);
 
 /** The error reporter goes first in <head>; the live editor's hands at the end of <body>. */
 const withReporter = (html: string): string => {
@@ -400,6 +410,20 @@ export const registerPreviewRoutes = (app: Express) => {
     );
   });
 
+  /** A game's versions, newest first, each with its play link (versions whose files were let go have none). */
+  app.get("/api/previews/demos/:sessionId", authenticateAgent("read"), (req: Request, res: Response) => {
+    const sessionId = req.params.sessionId;
+    if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) return res.status(400).json({ error: "Unknown session." });
+    const log = GameDirector.releases(sessionId);
+    res.json({
+      lastError: log.lastError,
+      releases: [...log.releases].reverse().map((release) => {
+        const id = `${sessionId}~v${release.version}`;
+        return { ...release, url: release.kept && GameDirector.demoFolder(id) ? `/preview/demo/${encodeURIComponent(id)}/${tokenFor("demo", id)}/` : null };
+      })
+    });
+  });
+
   /** Build a fresh preview of a project in a copy of it. The project itself is not touched. */
   app.post("/api/previews/project/:id/build", authenticateAgent("execute"), (req: Request, res: Response) => {
     const project = EcosystemStore.getProject(req.params.id);
@@ -420,6 +444,7 @@ export const registerPreviewRoutes = (app: Express) => {
     }
     let root: string | null;
     if (kind === "project") root = projectRoot(id).root;
+    else if (kind === "demo") root = GameDirector.demoFolder(id);
     else {
       const folder = kind === "template" ? templateFolder(id) : BuildService.view(id)?.outputDir ?? null;
       root = folder ? servable(folder).root : null;
@@ -446,7 +471,8 @@ export const registerPreviewRoutes = (app: Express) => {
       const file = path.resolve(root, `.${requested.endsWith("/") ? `${requested}index.html` : requested}`);
       const inside = file === root || file.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
       if (inside && fs.existsSync(file) && fs.statSync(file).isFile()) {
-        return res.type("html").send(withReporter(rebase(fs.readFileSync(file, "utf8"), root, requested)));
+        const page = withReporter(rebase(fs.readFileSync(file, "utf8"), root, requested));
+        return res.type("html").send(kind === "demo" ? withNet(page) : page);
       }
     }
     express.static(root, { index: "index.html", dotfiles: "deny", fallthrough: false })(req, res, next);

@@ -44,6 +44,7 @@ import { ContextPack } from "../ecosystem/ContextPack.js";
 import { EcosystemStore, type EcosystemProject } from "../ecosystem/EcosystemStore.js";
 import { commitPaths, copyForBuild, ProjectBuilds } from "../ecosystem/ProjectBuilds.js";
 import { ProjectScanner } from "../ecosystem/ProjectScanner.js";
+import { GameDirector } from "../game/GameDirector.js";
 import { BuildService } from "../orchestrator/BuildService.js";
 import { Verifier } from "../orchestrator/Verifier.js";
 import { Workspace } from "../orchestrator/Workspace.js";
@@ -118,6 +119,12 @@ export interface ImproveSession {
   liveBranch: string | null;
   /** The owner's goal and instructions. */
   goal: string;
+  /** A game: every step gets the game guide, the checks include the asset rules, and each milestone is released. */
+  kind?: "app" | "game";
+  /** The newest playable version (games). */
+  lastRelease?: { version: number; at: string; title: string } | null;
+  /** Why the last release did not build, if it did not. */
+  releaseError?: string | null;
   /** Kept for sessions started before goals: the old one-line focus. */
   focus: string;
   /** Later instructions, newest last. */
@@ -500,6 +507,15 @@ const runChecks = async (session: ImproveSession, dir: string): Promise<CheckRun
       outputs.push(`## ${command}\n${result.output.split("\n").slice(-60).join("\n")}`);
     }
   }
+  // A game's assets: free sources only, nothing from the internet, nothing from someone else's game.
+  if (session.kind === "game") {
+    verified = true;
+    const problems = GameDirector.assetProblems(dir);
+    if (problems.length) {
+      failing.push("assets and originality");
+      outputs.push(`## assets and originality\n${problems.map((p) => `- ${p}`).join("\n")}`);
+    }
+  }
   const output = outputs.join("\n\n").slice(-8000);
   // A tool that is missing or broken here fails the check whatever the code says: name it, so no step retries it.
   const environment = failing.length ? await MachineProfile.environmentProblem(output).catch(() => null) : null;
@@ -709,7 +725,7 @@ ${approach.arm.instruction}${instruction}
 
 Context: this is one step of a long-running build of "${session.projectName}".
 ${ownerWords(session)}
-${machine}
+${session.kind === "game" ? `${GameDirector.guide()}\n` : ""}${machine}
 Work in the existing code and keep everything that already works working.`;
   // Only this session works in its workspace: a stray build there (one carried on by something else) is stopped first.
   const strays = () => BuildService.active().filter((b) => path.resolve(b.outputDir) === path.resolve(dir));
@@ -859,6 +875,24 @@ const applyPendingRevert = async (sessionId: string) => {
 const MAJOR_FILE = /(^|\/)(package\.json|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.(toml|lock)|go\.(mod|sum)|requirements\.txt|pyproject\.toml|Makefile|CMakeLists\.txt|Dockerfile|tsconfig\.json|[^/]*\.config\.[cm]?[jt]s|\.github\/.*|.*\.sql|migrations?\/.*)$/i;
 
 /** When the workspace is clean and has something new: one delivery waiting for the owner, replacing any older one. */
+/** A game: what it has become is built and kept as the next playable version. */
+const releaseIfGame = async (sessionId: string, title: string) => {
+  const session = getSession(sessionId);
+  if (session?.kind !== "game" || !session.workspace) return;
+  patchSession(sessionId, { phase: `Releasing the next version: ${title}` });
+  const commit = await head(session.workspace.dir).catch(() => null);
+  const { release, error } = await GameDirector.release(sessionId, session.workspace.dir, title, commit);
+  patchSession(sessionId, release ? { lastRelease: { version: release.version, at: release.at, title: release.title }, releaseError: null } : { releaseError: error });
+  journal(sessionId, {
+    at: new Date().toISOString(),
+    stage: getSession(sessionId)?.stage ?? "building",
+    title: release ? `Released version ${release.version}: ${title}` : `Could not release: ${title}`,
+    outcome: release ? "kept" : "failed",
+    note: release ? `${release.sizeKb} KB, playable from the Game Maker` : (error ?? "").slice(0, 300),
+    commit
+  });
+};
+
 const deliverIfReady = async (sessionId: string, check: CheckRun) => {
   const session = getSession(sessionId);
   if (!session?.workspace || !check.passed) return;
@@ -1064,6 +1098,7 @@ ${roadmapText(session.plan, milestone)}${
       success: finished
     });
     await deliverIfReady(sessionId, check);
+    if (finished) await releaseIfGame(sessionId, milestone.title);
     return;
   }
 
@@ -1190,7 +1225,10 @@ ${roadmapText(session.plan, milestone)}${
       approachEpisodeId: changed && check.passed ? step.episodeId : undefined,
       success: changed && check.passed
     });
-    if (changed && check.passed) await deliverIfReady(sessionId, check);
+    if (changed && check.passed) {
+      await deliverIfReady(sessionId, check);
+      await releaseIfGame(sessionId, idea.title);
+    }
   }
 }
 
@@ -1358,6 +1396,10 @@ export interface StartOptions {
   goal?: string;
   mode?: Mode;
   checkCommand?: string | null;
+  /** A game (see GameDirector); by default when the goal describes one and the project is new. */
+  kind?: "app" | "game";
+  /** A new game: add the multiplayer kit (by default when the goal asks for players together). */
+  multiplayer?: boolean;
 }
 
 const slugName = (name: string) =>
@@ -1427,6 +1469,7 @@ export const ContinuousImprover = {
       liveBranch: project.gitBranch,
       goal,
       focus: goal.slice(0, 500),
+      kind: opts.kind === "game" ? "game" : "app",
       mode: opts.mode === "complete" ? "complete" : "forever",
       checkCommand: opts.checkCommand?.trim().slice(0, 500) || null,
       state: "running",
@@ -1451,12 +1494,16 @@ export const ContinuousImprover = {
     const dir = path.join(root, folder);
     if (fs.existsSync(dir) && fs.readdirSync(dir).length) throw new Error(`${dir} already exists. Pick it from your projects instead, or choose another name.`);
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, "README.md"), `# ${name.trim()}\n\n${(options.goal ?? "").trim()}\n`, "utf8");
+    // A game starts from the web starter with its asset ledger (and the multiplayer kit), and its goal becomes a production plan.
+    const game = options.kind === "game" || (options.kind !== "app" && GameDirector.isGame(`${name} ${options.goal ?? ""}`));
+    if (game) GameDirector.seed(dir, name.trim(), options.goal ?? "", { multiplayer: options.multiplayer });
+    else fs.writeFileSync(path.join(dir, "README.md"), `# ${name.trim()}\n\n${(options.goal ?? "").trim()}\n`, "utf8");
     await git(dir, ["init", "-q", "-b", "main"]);
     await git(dir, ["add", "-A"]);
     await git(dir, ["commit", "-q", "-m", "Start: the goal"]);
     const project = await ProjectScanner.addProject(dir.replace(/\\/g, "/"), root);
-    return ContinuousImprover.start(project.id, options, startedBy);
+    const goal = game ? GameDirector.goal(options.goal ?? "", { multiplayer: options.multiplayer }) : options.goal;
+    return ContinuousImprover.start(project.id, { ...options, goal, kind: game ? "game" : "app" }, startedBy);
   },
 
   /** New instructions for a running session: added to its notes, and the roadmap is revised. */
@@ -1561,7 +1608,7 @@ export const ContinuousImprover = {
   },
 
   /** For tests: the steps the loop takes, one at a time. */
-  testHooks: { prepareWorkspace, syncOwnerCommits, deliverIfReady, applyPendingRevert, getSession, patchSession, runChecks, cycle, itemsFrom }
+  testHooks: { prepareWorkspace, syncOwnerCommits, deliverIfReady, applyPendingRevert, getSession, patchSession, runChecks, cycle, itemsFrom, releaseIfGame }
 };
 
 /** The first version's single changes: applied whole, as before. */

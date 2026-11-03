@@ -12,8 +12,12 @@
  * GET /health answers "ok".
  *
  * Safety: messages over 64 KB are refused, each player may send 120 messages a
- * second, rooms hold at most MAX_PLAYERS (16), and a player who drops keeps
- * their seat for 30 seconds so a reconnect lands back in the same game.
+ * second, rooms hold at most MAX_PLAYERS (16), there are at most MAX_ROOMS
+ * (500) rooms, and a player who drops keeps their seat for 30 seconds so a
+ * reconnect lands back in the same game.
+ *
+ * Inside another server: attachRooms(httpServer, { path: '/net' }) serves the
+ * same rooms on ws://<that server>/net (and GET /net/rooms).
  */
 import http from 'node:http';
 import { randomBytes } from 'node:crypto';
@@ -24,6 +28,7 @@ const MAX_PLAYERS = Number(process.env.MAX_PLAYERS) || 16;
 const MAX_BYTES = 64 * 1024;
 const RATE_PER_SECOND = 120;
 const SEAT_GRACE_MS = Number(process.env.SEAT_GRACE_MS) || 30_000;
+const MAX_ROOMS = Number(process.env.MAX_ROOMS) || 500;
 const ROOM_NAME = /^[A-Za-z0-9_-]{1,40}$/;
 
 /** room id -> { id, public, created, hostId, players: Map<id, {id,name,token,socket,joinedAt,goneAt}> } */
@@ -53,25 +58,15 @@ const dropSeat = (room, player) => {
   if (room.players.size === 0) rooms.delete(room.id);
 };
 
-export function startRoomServer({ port = PORT, log = true } = {}) {
-  const server = http.createServer((req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    if (req.url === '/health') return res.end('ok');
-    if (req.url === '/rooms') {
-      res.setHeader('Content-Type', 'application/json');
-      return res.end(
-        JSON.stringify({
-          rooms: [...rooms.values()]
-            .filter((room) => room.public && present(room).length < MAX_PLAYERS)
-            .map((room) => ({ id: room.id, players: present(room).length, max: MAX_PLAYERS, created: room.created })),
-        }),
-      );
-    }
-    res.statusCode = 404;
-    res.end();
-  });
-  const wss = new WebSocketServer({ server, maxPayload: MAX_BYTES });
+/** GET /rooms: the open public rooms, for a lobby. */
+const listing = () => ({
+  rooms: [...rooms.values()]
+    .filter((room) => room.public && present(room).length < MAX_PLAYERS)
+    .map((room) => ({ id: room.id, players: present(room).length, max: MAX_PLAYERS, created: room.created })),
+});
 
+/** Serves rooms on a WebSocketServer. */
+function serveRooms(wss) {
   wss.on('connection', (socket) => {
     let room = null;
     let me = null;
@@ -100,6 +95,10 @@ export function startRoomServer({ port = PORT, log = true } = {}) {
         const roomId = typeof msg.room === 'string' && ROOM_NAME.test(msg.room) ? msg.room : newId();
         room = rooms.get(roomId);
         if (!room) {
+          if (rooms.size >= MAX_ROOMS) {
+            send(socket, { t: 'error', message: 'The server is full; try again soon.' });
+            return socket.close();
+          }
           room = { id: roomId, public: msg.public !== false, created: now, hostId: null, players: new Map() };
           rooms.set(roomId, room);
         }
@@ -155,6 +154,22 @@ export function startRoomServer({ port = PORT, log = true } = {}) {
     });
   });
 
+}
+
+export function startRoomServer({ port = PORT, log = true } = {}) {
+  const server = http.createServer((req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    if (req.url === '/health') return res.end('ok');
+    if (req.url === '/rooms') {
+      res.setHeader('Content-Type', 'application/json');
+      return res.end(JSON.stringify(listing()));
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  const wss = new WebSocketServer({ server, maxPayload: MAX_BYTES });
+  serveRooms(wss);
+
   return new Promise((resolve) => {
     server.listen(port, () => {
       if (log) console.log(`[rooms] listening on ${port}`);
@@ -168,6 +183,41 @@ export function startRoomServer({ port = PORT, log = true } = {}) {
       });
     });
   });
+}
+
+/**
+ * The same rooms inside an existing HTTP server, on one path: WebSocket
+ * upgrades to `path` join rooms, GET `path`/rooms lists them. Returns a
+ * request handler for that GET (call it first; it answers false for anything
+ * else) and a close().
+ */
+export function attachRooms(httpServer, { path = '/net' } = {}) {
+  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_BYTES });
+  serveRooms(wss);
+  const onUpgrade = (req, socket, head) => {
+    const pathname = (req.url ?? '').split('?')[0];
+    if (pathname !== path && pathname !== `${path}/`) return;
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  };
+  httpServer.on('upgrade', onUpgrade);
+  return {
+    handle(req, res) {
+      const pathname = (req.url ?? '').split('?')[0];
+      if (pathname !== `${path}/rooms` && pathname !== `${path}/health`) return false;
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      if (pathname.endsWith('/health')) res.end('ok');
+      else {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(listing()));
+      }
+      return true;
+    },
+    close() {
+      httpServer.off('upgrade', onUpgrade);
+      for (const client of wss.clients) client.terminate();
+      wss.close();
+    },
+  };
 }
 
 const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/').split('/').pop());

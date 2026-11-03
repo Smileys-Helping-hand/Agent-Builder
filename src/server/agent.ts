@@ -12,7 +12,7 @@
  *   POST   /api/agent/ground/enabled               { enabled }
  *   POST   /api/agent/ground/harder                ask the model for harder challenges
  *   GET    /api/agent/continuous                   sessions (roadmap, journal), deliveries waiting and decided
- *   POST   /api/agent/continuous/start             { projectId | newProject: name, goal?, mode?: "complete"|"forever", checkCommand? }
+ *   POST   /api/agent/continuous/start             { projectId | newProject: name, goal?, mode?: "complete"|"forever", checkCommand?, kind?: "app"|"game", multiplayer? }
  *   POST   /api/agent/continuous/:id/instruct      { text }  a new instruction; the roadmap is revised
  *   POST   /api/agent/continuous/:id/configure     { mode?, checkCommand? }
  *   POST   /api/agent/continuous/:id/stop
@@ -146,7 +146,9 @@ export const registerAgentRoutes = (app: Express) => {
     const options = {
       goal,
       mode: body.mode === "complete" ? ("complete" as const) : ("forever" as const),
-      checkCommand: typeof body.checkCommand === "string" ? body.checkCommand : null
+      checkCommand: typeof body.checkCommand === "string" ? body.checkCommand : null,
+      ...(body.kind === "game" || body.kind === "app" ? { kind: body.kind as "game" | "app" } : {}),
+      ...(typeof body.multiplayer === "boolean" ? { multiplayer: body.multiplayer } : {})
     };
     if (!projectId && !newProject) return res.status(400).json({ error: "Choose a project, or name a new one." });
     if (newProject && goal.trim().length < 10) return res.status(400).json({ error: "Say what to build: a new project starts from its goal." });

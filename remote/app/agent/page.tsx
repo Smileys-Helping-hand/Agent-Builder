@@ -34,6 +34,11 @@ export default function AgentPage() {
   const connected = useConnected();
   const profile = useRemote(() => api.agentProfile(), 20000, "agent-profile");
   const [tab, setTab] = useState<Tab>("growth");
+  // A link can open a tab: /agent/?tab=continuous.
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get("tab");
+    if (wanted && ["growth", "talk", "ground", "continuous", "reconstruct"].includes(wanted)) setTab(wanted as Tab);
+  }, []);
   if (connected === false) return <NotConnected />;
   const p = profile.data;
 

@@ -9,11 +9,13 @@
  *   - a dropped player gets their seat back with their token
  *   - full rooms, flooding and the lobby list
  *   - without a server, tabs of one browser play together
+ *   - inside another server, on one path (how Agent Builder hosts its demos' rooms)
  *   - NetKit puts the kit into a build and tells the model how to use it
  *
  *   npx tsx scripts/net-kit-smoketest.ts
  */
 import fs from "fs";
+import http from "http";
 import os from "os";
 import path from "path";
 import { pathToFileURL } from "url";
@@ -162,7 +164,34 @@ const main = async () => {
     await server.close();
   }
 
-  // 10. A build that asks for multiplayer gets the kit.
+  // 10. Inside another server (how Agent Builder serves its game demos' rooms): ws://…/net and GET /net/rooms.
+  const { attachRooms } = (await import(pathToFileURL(path.join(kit, "server", "room-server.mjs")).href)) as {
+    attachRooms: (server: http.Server, o: { path: string }) => { handle: (req: http.IncomingMessage, res: http.ServerResponse) => boolean; close: () => void };
+  };
+  let rooms: ReturnType<typeof attachRooms> | null = null;
+  const host = http.createServer((req, res) => {
+    if (!rooms?.handle(req, res)) res.writeHead(404).end("app");
+  });
+  rooms = attachRooms(host, { path: "/net" });
+  await new Promise<void>((resolve) => host.listen(0, "127.0.0.1", resolve));
+  const hostUrl = `ws://127.0.0.1:${(host.address() as { port: number }).port}/net`;
+  try {
+    const p1 = connect(rules, { url: hostUrl, room: "HOSTED", name: "One", tickHz: 50, snapshotHz: 25 });
+    const p2 = connect(rules, { url: hostUrl, room: "HOSTED", name: "Two", tickHz: 50, snapshotHz: 25 });
+    await until("both open", () => p1.status === "open" && p2.status === "open");
+    p2.send({ type: "inc", by: 4 });
+    await until("shared through /net", () => p1.state.count === 4 && p2.state.count === 4);
+    const listed = await listRooms(hostUrl);
+    if (!listed.some((room: { id: string }) => room.id === "HOSTED")) fail(`/net/rooms: ${JSON.stringify(listed)}`);
+    p1.leave();
+    p2.leave();
+  } finally {
+    rooms.close();
+    await new Promise((resolve) => host.close(resolve));
+  }
+  console.log("[PASS] inside another server, games play through its /net path");
+
+  // 11. A build that asks for multiplayer gets the kit.
   if (!NetKit.wanted("a co-op dungeon crawler for 4 players online") || !NetKit.wanted("PvP arena") || NetKit.wanted("a cozy farming game")) fail("NetKit.wanted misjudged a prompt");
   const build = fs.mkdtempSync(path.join(os.tmpdir(), "netkit-"));
   try {
