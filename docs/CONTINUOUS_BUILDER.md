@@ -55,6 +55,16 @@ parts you want.
 - **A new project from nothing** — a name and the goal; it creates the folder
   (in `E:/Projects`, or `CONTINUOUS_NEW_PROJECTS_DIR`) and a git repository.
 
+- **A game** — from the Game Maker (**Keep building a game**), or a new project
+  whose goal is a game: see [GAMES.md](GAMES.md). Every finished milestone is
+  released as a version you can play.
+- **Agent Builder itself** — Agent → Continuous → **Improve itself**: its own
+  record (parked milestones, repeating failures, lessons that do not help,
+  choices getting worse, features rebuilds miss, broken tools) becomes the
+  goal, and every step must pass its typecheck and smoketests
+  (`SELF_CHECK_COMMAND` to change that). Its changes wait for your approval
+  like any project's. Test: `npm run test:self-improve`.
+
 Settings: `CONTINUOUS_STEP_LIMIT_MS` (one build step, default 6 h),
 `CONTINUOUS_CHECK_LIMIT_MS` (the check command, default 60 min),
 `CONTINUOUS_MAX_FILES` / `CONTINUOUS_MAX_BYTES` (largest project it copies,

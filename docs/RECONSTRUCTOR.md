@@ -33,6 +33,18 @@ That number rising is the evidence it can build more things than before.
 - **A Git repository**: any public `https://` repository; it is cloned
   (shallow) into `builds/`. Its licence is read: code without an open licence
   teaches general lessons only and is never kept as an example.
+- **A live website**: any `http(s)://` address. With no code to read, what the
+  site shows is the specification: its own pages are walked (same site only,
+  one at a time, `robots.txt` respected, up to 20 —
+  `SITE_CAPTURE_MAX_PAGES`), each rendered in headless Chrome/Edge when there
+  is one so a JavaScript app shows what a visitor sees, and the headings,
+  navigation, forms and fields, buttons, picture descriptions and text become
+  the source to study. None of the site's code or pictures is kept, and it
+  teaches lessons only.
+
+Every blueprint's **techniques** (what makes the app work well) also become
+lessons later builds are given, so each app studied teaches more than the
+features its rebuild missed.
 
 Rebuilds are private study copies in `builds/`; nothing is published. Apps go
 one at a time, in a queue that survives restarts and waits while everything
