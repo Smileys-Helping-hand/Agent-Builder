@@ -1,0 +1,12 @@
+{
+  "name": "game-room-server",
+  "private": true,
+  "type": "module",
+  "description": "The game's multiplayer room server (see MULTIPLAYER.md).",
+  "scripts": {
+    "start": "node room-server.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}

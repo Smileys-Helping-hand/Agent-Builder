@@ -31,6 +31,7 @@ import {
 } from "./AutonomousOrchestrator.js";
 import { Logger } from "../utils/Logger.js";
 import { DbKit, isPlatform } from "../database/DbKit.js";
+import { NetKit } from "../game/NetKit.js";
 import type { AuditFinding } from "./SiteAudit.js";
 import { isWebsiteRequest, prepareSite } from "./SiteStarters.js";
 import { BuildGate, buildGateEvents, type BuildLane } from "../utils/BuildGate.js";
@@ -167,6 +168,8 @@ export type StarterChoice = "auto" | "site" | "web" | "none";
 export interface StartBuildOptions extends Partial<AutonomousConfig> {
   projectName: string;
   description: string;
+  /** Add the multiplayer kit (rooms, shared state, a room server); by default when the prompt asks for multiplayer. */
+  multiplayer?: boolean;
   startedBy?: string;
   orderId?: string | null;
   continuedFrom?: string | null;
@@ -536,6 +539,14 @@ export const BuildService = {
         DbKit.install(workingDir, database);
       } catch (error) {
         Logger.warn("Could not add the database kit", { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    // Players playing together: the multiplayer kit goes in before the first pass, like the database's.
+    if ((options.multiplayer ?? NetKit.wanted(`${options.projectName} ${options.description}`)) && workingDir && !NetKit.installed(workingDir)) {
+      try {
+        NetKit.install(workingDir);
+      } catch (error) {
+        Logger.warn("Could not add the multiplayer kit", { error: error instanceof Error ? error.message : String(error) });
       }
     }
 

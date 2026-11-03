@@ -38,6 +38,7 @@ import { SystemPromptPatcher } from "../repair/SystemPromptPatcher.js";
 import { ASTVerifier } from "./ASTVerifier.js";
 import { MicroPassExecutor } from "./MicroPassExecutor.js";
 import { DbKit, type DbPlatformId } from "../database/DbKit.js";
+import { NetKit } from "../game/NetKit.js";
 import { SharedKnowledge } from "../knowledge/SharedKnowledge.js";
 import { Reinforcement } from "../learning/Reinforcement.js";
 import { SuperPrompter } from "../media/SuperPrompter.js";
@@ -1114,6 +1115,7 @@ import to its last export: never a fragment or a single changed line. No other p
       this.exemplarPreamble(context.iteration) +
       this.artPreamble() +
       (this.config.workingDir ? DbKit.preamble(this.workspace.root) : "") +
+      NetKit.preamble(this.workspace.root) +
       // What Jarvis knows about the person this is for (cached; nothing when Jarvis is off).
       (await SharedKnowledge.ownerContext(`${this.config.projectName} ${this.config.description}`.slice(0, 800))) +
       this.approachPreamble();

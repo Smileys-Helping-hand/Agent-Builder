@@ -54,7 +54,8 @@
     "test:study": "tsx scripts/study-smoketest.ts",
     "test:rl": "tsx scripts/rl-smoketest.ts",
     "test:continuous": "tsx scripts/continuous-smoketest.ts",
-    "test:reconstruct": "tsx scripts/reconstruct-smoketest.ts"
+    "test:reconstruct": "tsx scripts/reconstruct-smoketest.ts",
+    "test:net-kit": "tsx scripts/net-kit-smoketest.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
