@@ -21,7 +21,7 @@
  *   POST   /api/agent/approvals/:id/approve        { files? } the parts to add; applied + committed on the live branch
  *   POST   /api/agent/approvals/:id/reject         { note? }
  *   GET    /api/agent/reconstruct                  the Reconstructor: runs and what it has learned
- *   POST   /api/agent/reconstruct                  { projectId } | { gitUrl }: study, rebuild, compare, learn
+ *   POST   /api/agent/reconstruct                  { projectId } | { gitUrl } | { siteUrl }: study, rebuild, compare, learn
  *   POST   /api/agent/reconstruct/:id/again        another round on what it still misses
  *   POST   /api/agent/reconstruct/:id/stop
  */
@@ -201,7 +201,8 @@ export const registerAgentRoutes = (app: Express) => {
     try {
       if (typeof req.body?.projectId === "string" && req.body.projectId) return res.json({ run: Reconstructor.fromProject(req.body.projectId, actor) });
       if (typeof req.body?.gitUrl === "string" && req.body.gitUrl) return res.json({ run: await Reconstructor.fromGit(req.body.gitUrl, actor) });
-      res.status(400).json({ error: "Choose one of your projects, or give a Git repository's https address." });
+      if (typeof req.body?.siteUrl === "string" && req.body.siteUrl) return res.json({ run: await Reconstructor.fromWebsite(req.body.siteUrl, actor) });
+      res.status(400).json({ error: "Choose one of your projects, or give a Git repository's or a website's address." });
     } catch (error) {
       res.status(400).json({ error: message(error) });
     }

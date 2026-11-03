@@ -1,7 +1,8 @@
 /**
  * Reconstructor — learning to build anything by rebuilding real apps.
  *
- * Give it an app (one of your projects, or a public Git repository) and it:
+ * Give it an app (one of your projects, a public Git repository, or a live
+ * website, studied from what its pages show) and it:
  *
  *   study      reads the code and writes a blueprint: what the app is for,
  *              every user-facing feature (each with how to check it), screens,
@@ -31,6 +32,7 @@ import { promisify } from "util";
 
 import { EcosystemStore } from "../ecosystem/EcosystemStore.js";
 import { ExemplarMemory } from "../learning/ExemplarMemory.js";
+import { SiteCapture } from "./SiteCapture.js";
 import { LessonMemory } from "../learning/LessonMemory.js";
 import { BuildService } from "../orchestrator/BuildService.js";
 import { ModelRouter } from "../tools/ModelRouter.js";
@@ -73,7 +75,7 @@ export interface Round {
 export interface ReconstructRun {
   id: string;
   source: {
-    kind: "project" | "git";
+    kind: "project" | "git" | "website";
     label: string;
     path: string;
     url: string | null;
@@ -222,10 +224,15 @@ const licenseOf = async (root: string): Promise<string | null> => {
 
 const study = async (runId: string): Promise<Blueprint> => {
   const current = get(runId)!;
-  patch(runId, { state: "studying", phase: "Reading the code and writing its blueprint" });
+  const site = current.source.kind === "website";
+  patch(runId, { state: "studying", phase: site ? "Reading what the site shows and writing its blueprint" : "Reading the code and writing its blueprint" });
   const digest = await digestOf(current.source.path);
   const answer = await ModelRouter.generate(
-    `Study this app's code and write its blueprint: everything someone would need to build the same app again WITHOUT seeing this code.
+    `${
+      site
+        ? "Study this live website from what its pages show (their headings, navigation, forms, buttons and text) and write its blueprint: everything someone would need to build the same site again. Infer what happens behind the forms and buttons."
+        : "Study this app's code and write its blueprint: everything someone would need to build the same app again WITHOUT seeing this code."
+    }
 
 ${digest}
 
@@ -354,6 +361,14 @@ Answer with JSON only: {"lessons": [{"feature": "<name>", "lesson": "<the lesson
       learned.push(item.lesson);
     }
     patch(runId, { lessons: [...get(runId)!.lessons, ...learned].slice(-60) });
+  }
+  // What makes it work well is worth knowing in any app of its kind: each technique becomes a lesson later builds are given.
+  if (!current.lessons.some((l) => l.startsWith("Technique: "))) {
+    const techniques = blueprint.techniques.filter((t) => t.trim().length > 15).slice(0, 8);
+    for (const technique of techniques) {
+      LessonMemory.recordTaught("build", `technique: ${blueprint.kind}: ${technique.slice(0, 80)}`, `In a ${blueprint.kind}: ${technique}`, null);
+    }
+    if (techniques.length) patch(runId, { lessons: [...get(runId)!.lessons, ...techniques.map((t) => `Technique: ${t}`)].slice(-60) });
   }
   // The original as a worked example for similar briefs, when it is ours or openly licensed.
   if (current.source.canKeep && !get(runId)!.keptAsExample) {
@@ -488,6 +503,26 @@ export const Reconstructor = {
       { kind: "git", label: clean.replace(/^https?:\/\/(www\.)?/, "").replace(/\.git$/, ""), path: dir, url: clean, license, canKeep: Boolean(license && OPEN_LICENSES.test(license)) },
       startedBy
     );
+  },
+
+  /** Queue a live website: what its pages show is captured into builds/ first (SiteCapture). Lessons only, never kept as an example. */
+  async fromWebsite(url: string, startedBy = "owner"): Promise<ReconstructRun> {
+    const clean = url.trim();
+    let address: URL;
+    try {
+      address = new URL(clean);
+    } catch {
+      throw new Error("Give the website's address, e.g. https://example.com.");
+    }
+    if (!/^https?:$/.test(address.protocol)) throw new Error("Give the website's http(s) address.");
+    const dir = path.resolve("builds", `reconstruct_site_${slug(address.hostname)}_${Date.now()}`);
+    try {
+      await SiteCapture.capture(address.href, dir);
+    } catch (error) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      throw error;
+    }
+    return queue({ kind: "website", label: address.hostname + (address.pathname === "/" ? "" : address.pathname), path: dir, url: address.href, license: null, canKeep: false }, startedBy);
   },
 
   /** Another round on a finished run: rebuild what it still misses. */

@@ -892,9 +892,10 @@ function Reconstruct() {
   const toast = useToast();
   const data = useRemote(() => api.reconstruct(), 15000, "agent-reconstruct");
   const projects = useRemote(() => api.projects(), 0, "projects");
-  const [kind, setKind] = useState<"project" | "git">("project");
+  const [kind, setKind] = useState<"project" | "git" | "website">("project");
   const [projectId, setProjectId] = useState("");
   const [gitUrl, setGitUrl] = useState("");
+  const [siteUrl, setSiteUrl] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
 
@@ -919,7 +920,7 @@ function Reconstruct() {
     <>
       <div className="card">
         <p className="small" style={{ marginTop: 0 }}>
-          Give it any app and it learns to build things like it: it studies the code into a blueprint of every feature, rebuilds the app from
+          Give it any app (a project, a Git repository or a live website) and it learns to build things like it: it studies it into a blueprint of every feature, rebuilds the app from
           that blueprint alone (it never sees the code while building), checks the rebuild feature by feature, and turns everything it missed
           into lessons every later build uses. Rebuilds are private study copies; code without an open licence teaches lessons only.
         </p>
@@ -929,6 +930,9 @@ function Reconstruct() {
           </button>
           <button className={`btn small ${kind === "git" ? "primary" : "ghost"}`} onClick={() => setKind("git")}>
             A Git repository
+          </button>
+          <button className={`btn small ${kind === "website" ? "primary" : "ghost"}`} onClick={() => setKind("website")}>
+            A live website
           </button>
         </div>
         <div className="learn-plan">
@@ -941,21 +945,23 @@ function Reconstruct() {
                 </option>
               ))}
             </select>
-          ) : (
+          ) : kind === "git" ? (
             <input className="input" style={{ flex: 1, minWidth: 220 }} value={gitUrl} placeholder="https://github.com/owner/repo" onChange={(e) => setGitUrl(e.target.value)} />
+          ) : (
+            <input className="input" style={{ flex: 1, minWidth: 220 }} value={siteUrl} placeholder="https://example.com (studied from what its pages show)" onChange={(e) => setSiteUrl(e.target.value)} />
           )}
           <button
             className="btn primary"
-            disabled={busy !== null || (kind === "project" ? !projectId : !gitUrl.trim())}
+            disabled={busy !== null || (kind === "project" ? !projectId : kind === "git" ? !gitUrl.trim() : !siteUrl.trim())}
             onClick={() =>
               void act(
                 "start",
-                () => api.reconstructStart(kind === "project" ? { projectId } : { gitUrl: gitUrl.trim() }),
+                () => api.reconstructStart(kind === "project" ? { projectId } : kind === "git" ? { gitUrl: gitUrl.trim() } : { siteUrl: siteUrl.trim() }),
                 "Queued. It studies the app first, then rebuilds it."
               )
             }
           >
-            {busy === "start" ? <Busy label={kind === "git" ? "Cloning…" : "Queueing…"} /> : "Reconstruct and learn"}
+            {busy === "start" ? <Busy label={kind === "git" ? "Cloning…" : kind === "website" ? "Reading the site…" : "Queueing…"} /> : "Reconstruct and learn"}
           </button>
         </div>
       </div>

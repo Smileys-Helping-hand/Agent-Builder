@@ -1082,7 +1082,7 @@ export interface ImproveSession {
 /** One app through the Reconstructor (src/agent/Reconstructor.ts). */
 export interface ReconstructRun {
   id: string;
-  source: { kind: "project" | "git"; label: string; path: string; url: string | null; license: string | null; canKeep: boolean };
+  source: { kind: "project" | "git" | "website"; label: string; path: string; url: string | null; license: string | null; canKeep: boolean };
   state: "queued" | "studying" | "rebuilding" | "comparing" | "learning" | "done" | "failed" | "stopped";
   phase: string;
   createdAt: string;
@@ -1555,7 +1555,7 @@ export const api = {
   continuousInstruct: (id: string, text: string) =>
     request<{ session: ImproveSession }>(`/api/agent/continuous/${encodeURIComponent(id)}/instruct`, { method: "POST", body: JSON.stringify({ text }) }),
   reconstruct: () => request<{ runs: ReconstructRun[]; skills: ReconstructSkills }>("/api/agent/reconstruct"),
-  reconstructStart: (input: { projectId?: string; gitUrl?: string }) =>
+  reconstructStart: (input: { projectId?: string; gitUrl?: string; siteUrl?: string }) =>
     request<{ run: ReconstructRun }>("/api/agent/reconstruct", { method: "POST", body: JSON.stringify(input) }, 120000),
   reconstructAgain: (id: string) => request<{ run: ReconstructRun }>(`/api/agent/reconstruct/${encodeURIComponent(id)}/again`, { method: "POST" }),
   reconstructStop: (id: string) => request<{ run: ReconstructRun }>(`/api/agent/reconstruct/${encodeURIComponent(id)}/stop`, { method: "POST" }),

@@ -7,11 +7,13 @@
  *   - keeps the original as a worked example (it is the owner's)
  *   - reports what it has learned (kinds of apps, first-try coverage)
  *   - reads a Git source's licence: open ones may be kept, others teach lessons only
+ *   - a live website: its pages walked (robots.txt respected), what they show becomes the source
  *
  *   npx tsx scripts/reconstruct-smoketest.ts
  */
 import { execFileSync } from "child_process";
 import fs from "fs";
+import http from "http";
 import os from "os";
 import path from "path";
 import { pathToFileURL } from "url";
@@ -25,6 +27,7 @@ process.env.LMSTUDIO_BASE_URL = "http://127.0.0.1:9";
 process.env.MODEL_WAIT_MS = "0";
 process.env.RECONSTRUCT_NO_LOOP = "1";
 process.env.RECONSTRUCT_ALLOW_LOCAL_GIT = "1";
+process.env.SITE_CAPTURE_RENDER = "off";
 process.env.GIT_AUTHOR_NAME = process.env.GIT_COMMITTER_NAME = "Smoketest";
 process.env.GIT_AUTHOR_EMAIL = process.env.GIT_COMMITTER_EMAIL = "smoketest@example.com";
 
@@ -75,7 +78,7 @@ const main = async () => {
         ],
         screens: ["The list"],
         data: ["tasks"],
-        techniques: ["derived lists"]
+        techniques: ["derived lists", "keep the open list derived from the full task list instead of stored twice"]
       });
     }
     if (/Check the rebuilt code below/.test(prompt)) {
@@ -128,9 +131,11 @@ const main = async () => {
   console.log("[PASS] compare: round one covered 67% (missed Filter open tasks); round two rebuilt the gap: 100%");
 
   if (!LessonMemory.list("build").some((l) => /still open, derived from the full list/.test(l.lesson))) fail("the lesson was not kept");
+  if (!LessonMemory.list("build").some((l) => l.lesson === "In a web app: keep the open list derived from the full task list instead of stored twice")) fail("the blueprint's technique was not kept as a lesson");
+  if (LessonMemory.list("build").some((l) => /In a web app: derived lists$/.test(l.lesson))) fail("a too-short technique became a lesson");
   if (!done.keptAsExample) fail("the owner's app was not kept as a worked example");
   if (done.state !== "done") fail(`state ${done.state}`);
-  console.log("[PASS] learn: the missed feature became a lesson for every build; the original is kept as a worked example");
+  console.log("[PASS] learn: the missed feature and the app's techniques became lessons for every build; the original is kept as a worked example");
 
   const skills = Reconstructor.skills();
   if (skills.appsRebuilt !== 1 || skills.kinds[0]?.kind !== "web app" || skills.firstTryCoverage.recent !== 0.67) fail(`skills: ${JSON.stringify(skills)}`);
@@ -148,6 +153,42 @@ const main = async () => {
   await Reconstructor.fromGit("ftp://example.com/repo").catch(() => (refused = true));
   if (!refused) fail("a non-https address was accepted");
   console.log("[PASS] Git sources: cloned; MIT may be kept as an example, GPL teaches lessons only; only https addresses");
+
+  // A live website: its pages are walked (same site only, robots.txt respected) and what they show becomes the source.
+  const site: Record<string, string> = {
+    "/robots.txt": "User-agent: *\nDisallow: /admin\n",
+    "/": `<html><head><title>Bloom Florist</title></head><body><nav><a href="/shop">Shop</a> <a href="/contact">Contact</a> <a href="/admin">Admin</a> <a href="https://elsewhere.example/x">Partner</a></nav>
+      <h1>Fresh flowers, delivered today</h1><img src="a.jpg" alt="A bouquet of tulips"><button>Order now</button><script>var secret = 1;</script></body></html>`,
+    "/shop": `<html><head><title>Shop</title></head><body><h2>Bouquets</h2><p>Roses from R350</p><button aria-label="Add to basket"></button><a href="/">Home</a></body></html>`,
+    "/contact": `<html><head><title>Contact</title></head><body><h1>Talk to us</h1><form action="/send"><input name="email" type="email" placeholder="Your email" required><textarea name="message"></textarea><input type="submit" value="Send"></form></body></html>`,
+    "/admin": `<html><head><title>Admin</title></head><body>private</body></html>`
+  };
+  const server = http.createServer((req, res) => {
+    const body = site[(req.url ?? "/").split("?")[0]];
+    if (!body) return res.writeHead(404).end();
+    res.writeHead(200, { "content-type": req.url === "/robots.txt" ? "text/plain" : "text/html; charset=utf-8" }).end(body);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = `http://127.0.0.1:${(server.address() as { port: number }).port}/`;
+  try {
+    const fromSite = await Reconstructor.fromWebsite(address);
+    if (fromSite.source.kind !== "website" || fromSite.source.canKeep) fail(`website source: ${JSON.stringify(fromSite.source)}`);
+    const pages = fs.readdirSync(path.join(fromSite.source.path, "pages"));
+    const all = pages.map((p) => fs.readFileSync(path.join(fromSite.source.path, "pages", p), "utf8")).join("\n");
+    if (pages.length !== 3) fail(`pages read: ${pages.join(", ")}`);
+    if (/private/.test(all)) fail("robots.txt was not respected");
+    if (/secret/.test(all)) fail("the site's scripts were kept");
+    for (const shown of ["Fresh flowers, delivered today", "A bouquet of tulips", "Order now", "Add to basket", "Your email [email, required]", "message [textarea]", "Roses from R350"]) {
+      if (!all.includes(shown)) fail(`the capture missed "${shown}"`);
+    }
+    if (!/Bloom Florist/.test(fs.readFileSync(path.join(fromSite.source.path, "README.md"), "utf8"))) fail("no README for the site");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+  let badSite = false;
+  await Reconstructor.fromWebsite("file:///C:/Windows").catch(() => (badSite = true));
+  if (!badSite) fail("a file:// address was accepted as a website");
+  console.log("[PASS] websites: the same site's pages walked, robots.txt respected, no code kept; what each page shows is the source");
 
   console.log("All Reconstructor checks passed.");
 };
