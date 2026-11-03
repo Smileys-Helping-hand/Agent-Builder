@@ -270,6 +270,49 @@ const main = async () => {
   ContinuousImprover.stop(repair.id);
   console.log("[PASS] a project whose checks already fail gets that fixed first");
 
+  // 13. Stuck on the machine: a check that needs a broken tool. It is named as the PC's problem, diagnosed, and approached differently.
+  const { MachineProfile } = await import("../src/learning/MachineProfile.js");
+  MachineProfile.setForTest({
+    platform: "test",
+    measuredAt: new Date().toISOString(),
+    tools: [
+      { name: "node", state: "works", detail: "v24" },
+      { name: "bash", state: "broken", detail: "WSL cannot start" }
+    ]
+  });
+  const descriptions: string[] = [];
+  let diagnosed = 0;
+  (ModelRouter as unknown as { generate: (p: string) => Promise<string> }).generate = async (prompt: string) => {
+    if (/list every distinct thing they ask for/.test(prompt)) return JSON.stringify({ requirements: ["Check the shell scripts"] });
+    if (/Write the roadmap/.test(prompt)) return JSON.stringify({ milestones: [{ title: "Script checks", detail: "check the scripts", covers: ["R1"] }] });
+    if (/Find the ROOT CAUSE/.test(prompt)) {
+      diagnosed += 1;
+      return "bash does not work on this PC, so `bash -n` always fails; check the scripts with a Node parser instead.";
+    }
+    return "{}";
+  };
+  builds.start = (options: { workingDir: string; description?: string }) => {
+    descriptions.push(options.description ?? "");
+    fs.writeFileSync(path.join(options.workingDir, `attempt-${descriptions.length}.txt`), "x");
+    return { buildId: "stand-in" };
+  };
+  const machineStuck = await ContinuousImprover.startNew("Stuck", {
+    goal: "Check the shell scripts",
+    mode: "complete",
+    checkCommand: `node -e "console.error('Error: Command failed: bash -n build.sh'); process.exit(1)"`
+  });
+  for (let i = 0; i < 5; i++) await hooks.cycle(machineStuck.id);
+  const ms = hooks.getSession(machineStuck.id)!.plan[0];
+  if (!hooks.getSession(machineStuck.id)!.lastCheck?.environment?.includes("bash")) fail(`environment not named: ${JSON.stringify(hooks.getSession(machineStuck.id)!.lastCheck)}`);
+  if (!descriptions.some((d) => /This PC \(measured\)/.test(d) && /NOT working: bash/.test(d))) fail("the machine's facts were not given to the step");
+  if (!descriptions.slice(1).some((d) => /the PC's, not the code's: bash/.test(d))) fail("the step was not told the failure is the machine's");
+  if (diagnosed !== 1 || !ms.diagnosis?.includes("Node parser")) fail(`diagnosis: ${diagnosed} ${ms.diagnosis}`);
+  if (!descriptions.some((d) => /failed the same way \d+ times/.test(d) && /Root cause, diagnosed/.test(d))) fail("the stuck step was not told to do it differently");
+  if ((ms.repeats ?? 0) < 3 || !(ms.failedApproaches ?? []).length) fail(`repeats ${ms.repeats} approaches ${JSON.stringify(ms.failedApproaches)}`);
+  ContinuousImprover.stop(machineStuck.id);
+  MachineProfile.setForTest(null);
+  console.log(`[PASS] stuck on the machine: named as the PC's (bash broken), diagnosed once, ${ms.repeats} repeats, ${ms.failedApproaches!.length} approach(es) ruled out`);
+
   console.log("All continuous-builder checks passed.");
 };
 

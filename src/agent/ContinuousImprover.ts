@@ -48,6 +48,9 @@ import { BuildService } from "../orchestrator/BuildService.js";
 import { Verifier } from "../orchestrator/Verifier.js";
 import { Workspace } from "../orchestrator/Workspace.js";
 import { LessonMemory } from "../learning/LessonMemory.js";
+import { MachineProfile } from "../learning/MachineProfile.js";
+import { EpisodicMemory } from "../learning/EpisodicMemory.js";
+import { SystemPromptPatcher } from "../repair/SystemPromptPatcher.js";
 import { Reinforcement } from "../learning/Reinforcement.js";
 import { ResearchEngine } from "../research/ResearchEngine.js";
 import { ResearchStore } from "../research/ResearchStore.js";
@@ -69,6 +72,13 @@ export interface Milestone {
   attempts: number;
   note: string | null;
   doneAt: string | null;
+  /** The last failure's signature and how many attempts in a row ended with it. */
+  lastSignature?: string | null;
+  repeats?: number;
+  /** The approaches (continuous.step arms) that already failed it the same way. */
+  failedApproaches?: string[];
+  /** The root cause, diagnosed once it kept failing the same way. */
+  diagnosis?: string | null;
 }
 
 export interface Step {
@@ -95,6 +105,8 @@ export interface CheckRun {
   /** The failing checks' output, for the next fix. */
   output: string;
   command: string | null;
+  /** When the failure comes from this PC (a tool missing or broken), not the code: why. */
+  environment?: string | null;
 }
 
 export interface ImproveSession {
@@ -488,7 +500,10 @@ const runChecks = async (session: ImproveSession, dir: string): Promise<CheckRun
       outputs.push(`## ${command}\n${result.output.split("\n").slice(-60).join("\n")}`);
     }
   }
-  return { at: new Date().toISOString(), passed: failing.length === 0, verified, failing, output: outputs.join("\n\n").slice(-8000), command };
+  const output = outputs.join("\n\n").slice(-8000);
+  // A tool that is missing or broken here fails the check whatever the code says: name it, so no step retries it.
+  const environment = failing.length ? await MachineProfile.environmentProblem(output).catch(() => null) : null;
+  return { at: new Date().toISOString(), passed: failing.length === 0, verified, failing, output, command, environment };
 };
 
 /* ─── the model ─── */
@@ -656,23 +671,45 @@ Answer with JSON only: {"title": "<short commit-style title>", "instruction": "<
 const buildStep = async (
   session: ImproveSession,
   title: string,
-  instruction: string
-): Promise<{ before: string; after: string; stopped: boolean; episodeId: number }> => {
+  instruction: string,
+  avoid: string[] = []
+): Promise<{ before: string; after: string; stopped: boolean; episodeId: number; approach: string }> => {
   const dir = session.workspace!.dir;
   const before = await head(dir);
-  // How to work through it is learned per stage, from what the steps achieve and what the owner approves.
+  // How to work through it is learned per stage, from what the steps achieve and what the owner approves;
+  // a step that keeps failing the same way must try a way that has not failed it yet.
   const approach = Reinforcement.choose("continuous.step", {
     bucket: session.stage,
     agent: "continuous-builder",
     ref: `step:${session.id}:${Date.now()}`,
-    prompt: title
+    prompt: title,
+    avoid
   });
-  const description = `${title.replace(/^(Building|Fixing|Improving): /, "")}
+  const machine = await MachineProfile.promptText().catch(() => "");
+  let antiStagnation = "";
+  if (SystemPromptPatcher.shouldMutate(session.projectName)) {
+    antiStagnation = SystemPromptPatcher.mutatePrompt(
+      session.projectName,
+      session.lastCheck?.output ?? "",
+      session.lastCheck?.passed ? 100 : 38
+    );
+  } else {
+    const banned = EpisodicMemory.getBannedApproaches(session.projectName);
+    const counters = session.lastCheck
+      ? EpisodicMemory.getCounterStrategies(session.projectName, session.lastCheck.output)
+      : [];
+    if (banned.length || counters.length) {
+      antiStagnation = `\n[ANTI-STAGNATION MEMORY]\nBANNED STRATEGIES: ${banned.join("; ")}\nCOUNTER-STRATEGIES: ${counters.join("; ")}\n`;
+    }
+  }
+
+  const description = `${antiStagnation ? antiStagnation + "\n" : ""}${title.replace(/^(Building|Fixing|Improving): /, "")}
 
 ${approach.arm.instruction}${instruction}
 
 Context: this is one step of a long-running build of "${session.projectName}".
 ${ownerWords(session)}
+${machine}
 Work in the existing code and keep everything that already works working.`;
   // Only this session works in its workspace: a stray build there (one carried on by something else) is stopped first.
   const strays = () => BuildService.active().filter((b) => path.resolve(b.outputDir) === path.resolve(dir));
@@ -705,7 +742,25 @@ Work in the existing code and keep everything that already works working.`;
   const after = await head(dir);
   // A step cut off by a stop says nothing about the approach.
   if (stopped && getSession(session.id)?.state === "stopped") Reinforcement.forget(approach.episodeId);
-  return { before, after, stopped, episodeId: approach.episodeId };
+  return { before, after, stopped, episodeId: approach.episodeId, approach: approach.arm.id };
+};
+
+/** Why a milestone keeps failing the same way: the root cause, in a few sentences. */
+const diagnose = async (session: ImproveSession, milestone: Milestone, failure: CheckRun): Promise<string | null> => {
+  const answer = await ModelRouter.generate(
+    `A build step for "${session.projectName}" has failed the same way ${milestone.repeats} times in a row while building "${milestone.title}".
+Do not write code. Find the ROOT CAUSE: read the failure carefully and say what is really wrong and what must change. Consider that
+the cause may be the machine (a tool missing or broken here), the check itself, or a wrong assumption the attempts kept making.
+
+${await MachineProfile.promptText().catch(() => "")}
+${failure.environment ? `Known: ${failure.environment}.\n` : ""}
+The failure:
+${failure.output.slice(-5000)}
+
+Answer in 2-4 sentences: the root cause, then what to do differently.`
+  );
+  const text = answer.trim().slice(0, 800);
+  return text.length > 20 ? text : null;
 };
 
 /** Rewards a step's approach by what it achieved (0..1). */
@@ -936,14 +991,26 @@ ${baseline.output.slice(-3000)}`,
     const mid = milestone.id;
     update((s) => Object.assign(s.sessions.find((x) => x.id === sessionId)!.plan.find((m) => m.id === mid)!, { status: "doing" }));
     const lastFailure = milestone.attempts > 0 && session.lastCheck && !session.lastCheck.passed ? session.lastCheck : null;
+    // Stuck: the same failure again and again. Find the root cause once, and stop repeating the ways that failed.
+    const stuck = (milestone.repeats ?? 0) >= 2 && lastFailure;
+    let diagnosis = milestone.diagnosis ?? null;
+    if (stuck && !diagnosis) {
+      patchSession(sessionId, { phase: `Diagnosing why "${milestone.title}" keeps failing` });
+      diagnosis = await diagnose(session, milestone, lastFailure).catch(() => null);
+      if (diagnosis) update((s) => Object.assign(s.sessions.find((x) => x.id === sessionId)!.plan.find((m) => m.id === mid)!, { diagnosis }));
+    }
     const instruction = `Build this milestone of the roadmap: ${milestone.title}
 ${milestone.detail}
 
 Roadmap (✓ done, → this one):
 ${roadmapText(session.plan, milestone)}${
       lastFailure ? `\n\nThe last attempt left these checks failing; fix them as part of this:\n${lastFailure.output.slice(-4000)}` : ""
-    }`;
-    const step = await buildStep(session, `Building: ${milestone.title}`, instruction);
+    }${
+      lastFailure?.environment
+        ? `\n\nThis failure is the PC's, not the code's: ${lastFailure.environment}. Change the check or script so it does not need that here (see "This PC"); do not try it again.`
+        : ""
+    }${stuck ? `\n\nThis has failed the same way ${milestone.repeats} times in a row; the earlier attempts did not work, so do it differently.${diagnosis ? `\nRoot cause, diagnosed: ${diagnosis}` : ""}` : ""}`;
+    const step = await buildStep(session, `Building: ${milestone.title}`, instruction, stuck ? milestone.failedApproaches ?? [] : []);
     if (step.stopped && getSession(sessionId)?.state === "stopped") return;
     patchSession(sessionId, { phase: `Checking: ${milestone.title}` });
     const check = await runChecks(session, dir);
@@ -952,11 +1019,39 @@ ${roadmapText(session.plan, milestone)}${
     update((s) => {
       const m = s.sessions.find((x) => x.id === sessionId)!.plan.find((x) => x.id === mid)!;
       m.attempts += 1;
+      // The same failure as last time: count it, and remember the approach that did not get past it.
+      const signature = finished || check.passed ? null : LessonMemory.errorSignature(check.failing[0] ?? "checks", check.output);
+      if (signature && signature === m.lastSignature) {
+        m.repeats = (m.repeats ?? 1) + 1;
+        m.failedApproaches = [...new Set([...(m.failedApproaches ?? []), step.approach])];
+      } else {
+        m.repeats = signature ? 1 : 0;
+        m.failedApproaches = signature ? [step.approach] : [];
+        if (!signature) m.diagnosis = null;
+        else if (signature !== m.lastSignature) m.diagnosis = null;
+      }
+      m.lastSignature = signature;
       if (finished) Object.assign(m, { status: "done", doneAt: new Date().toISOString(), note: null });
       else if (m.attempts % ATTEMPTS_BEFORE_PARKING === 0) Object.assign(m, { status: "parked", note: changed ? `checks failing: ${check.failing.join(", ")}` : "no progress" });
       else m.status = "doing";
       s.sessions.find((x) => x.id === sessionId)!.lastCheck = check;
     });
+    const bScore = check.passed ? 100 : Math.max(10, Math.round(((check.failing.length === 0 ? 1 : 0) / (check.failing.length + 1)) * 100));
+    const bDelta = finished ? 50 : changed ? 10 : 0;
+    EpisodicMemory.recordRun(session.projectName, {
+      runId: `run_${session.cycles}`,
+      pass: session.cycles,
+      score: bScore,
+      delta: bDelta,
+      failureReason: check.passed ? undefined : `checks failing: ${check.failing.join(", ")}`
+    });
+    if (finished) {
+      EpisodicMemory.recordSuccessPattern(session.projectName, {
+        signature: milestone.title,
+        diffSummary: `Completed milestone ${milestone.title}`,
+        scoreDelta: 50
+      });
+    }
     rewardStep(step.episodeId, finished ? 1 : changed ? 0.4 : 0.1, finished ? "milestone done" : changed ? "progress, checks failing" : "no change");
     journal(sessionId, {
       at: new Date().toISOString(),
@@ -1005,7 +1100,9 @@ ${roadmapText(session.plan, milestone)}${
     const step = await buildStep(
       session,
       `Fixing: ${check.failing.join(", ")}`,
-      `Make every check pass. These are failing:\n\n${check.output}${lessons.length ? `\n\nWhat fixed failures like this before:\n${LessonMemory.formatForPrompt(lessons)}` : ""}`
+      `Make every check pass. These are failing:\n\n${check.output}${lessons.length ? `\n\nWhat fixed failures like this before:\n${LessonMemory.formatForPrompt(lessons)}` : ""}${
+        check.environment ? `\n\nThis failure is the PC's, not the code's: ${check.environment}. Change the check or script so it does not need that here; do not try it again.` : ""
+      }`
     );
     if (step.stopped && getSession(sessionId)?.state === "stopped") return;
     const after = await runChecks(session, dir);
@@ -1016,6 +1113,22 @@ ${roadmapText(session.plan, milestone)}${
     if (lessons.length) LessonMemory.recordOutcome(lessons.map((l) => l.id), better && !worse);
     rewardStep(step.episodeId, worse ? 0 : after.passed ? 1 : better ? 0.6 : 0.2, worse ? "made it worse" : after.passed ? "checks green" : better ? "fewer failing" : "no better");
     if (after.passed && !worse && step.after !== step.before) await learnFromFix(session, check, step.before, step.after);
+    const fScore = after.passed ? 100 : Math.max(10, Math.round(((after.failing.length === 0 ? 1 : 0) / (after.failing.length + 1)) * 100));
+    const fDelta = after.passed ? 60 : better ? 20 : worse ? -20 : 0;
+    EpisodicMemory.recordRun(session.projectName, {
+      runId: `run_${session.cycles}`,
+      pass: session.cycles,
+      score: fScore,
+      delta: fDelta,
+      failureReason: after.passed ? undefined : `checks failing: ${after.failing.join(", ")}`
+    });
+    if (after.passed && !worse && step.after !== step.before) {
+      EpisodicMemory.recordSuccessPattern(session.projectName, {
+        signature: `Fixed: ${check.failing.join(", ")}`,
+        diffSummary: `Fixed ${check.failing.join(", ")}`,
+        scoreDelta: 60
+      });
+    }
     patchSession(sessionId, { lastCheck: worse ? check : after });
     journal(sessionId, {
       at: new Date().toISOString(),

@@ -294,13 +294,16 @@ export const Reinforcement = {
    * instruction for the prompt and the episode id to reward later. With
    * RL=off it always takes the first arm (and still records, so it can be compared).
    */
-  choose(policyId: string, input: { bucket?: string; agent?: string; ref?: string; prompt?: string }): { episodeId: number; arm: Arm } {
+  choose(policyId: string, input: { bucket?: string; agent?: string; ref?: string; prompt?: string; avoid?: string[] }): { episodeId: number; arm: Arm } {
     const policy = policyOf(policyId);
     const bucket = (input.bucket ?? "*").toLowerCase().slice(0, 60) || "*";
-    let arm = policy.arms[0];
+    // avoid: approaches that just failed at this (a stuck step must try another way); ignored when it would leave none.
+    const candidates = policy.arms.filter((a) => !(input.avoid ?? []).includes(a.id));
+    const pool = candidates.length ? candidates : policy.arms;
+    let arm = pool[0];
     if ((process.env.RL ?? "on").toLowerCase() !== "off") {
       let best = -1;
-      for (const candidate of policy.arms) {
+      for (const candidate of pool) {
         const local = armRow(policy.id, bucket, candidate.id);
         const global = armRow(policy.id, "*", candidate.id);
         const a = bucket === "*" ? local.alpha : local.alpha + SHRINK * (global.alpha - 1);
