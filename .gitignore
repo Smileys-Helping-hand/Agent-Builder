@@ -27,3 +27,7 @@ remote/.next/
 remote/out/
 remote/android/
 remote/.env*.local
+
+# Runtime memory written while building (EpisodicMemory, SystemPromptPatcher)
+app_memory/
+agents/projects/

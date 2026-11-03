@@ -33,6 +33,10 @@ import { StuckDoctor } from "../repair/StuckDoctor.js";
 import { FixPlaybook } from "../repair/FixPlaybook.js";
 import { fingerprint, groupErrors, parseErrors } from "../repair/ErrorFingerprint.js";
 import { SuperModelSynthesizer } from "../agents/builder/SuperModelSynthesizer.js";
+import { EpisodicMemory } from "../learning/EpisodicMemory.js";
+import { SystemPromptPatcher } from "../repair/SystemPromptPatcher.js";
+import { ASTVerifier } from "./ASTVerifier.js";
+import { MicroPassExecutor } from "./MicroPassExecutor.js";
 import { DbKit, type DbPlatformId } from "../database/DbKit.js";
 import { SharedKnowledge } from "../knowledge/SharedKnowledge.js";
 import { Reinforcement } from "../learning/Reinforcement.js";
@@ -733,6 +737,22 @@ export class AutonomousOrchestrator extends EventEmitter {
       // Ratchet: never let the workspace end an iteration worse than its best-known state.
       const headHash = await this.workspace.getHead();
       iteration.commit = headHash;
+      const previousBest = this.bestObjectiveScore;
+      const delta = iteration.qualityScore - (previousBest < 0 ? 0 : previousBest);
+      EpisodicMemory.recordRun(this.config.projectName, {
+        runId: `iter_${iterationNum}`,
+        pass: iterationNum,
+        score: iteration.qualityScore,
+        delta,
+        failureReason: verification.passed ? undefined : `Blocking check: ${verification.blockingCheck?.name ?? "unknown"}`
+      });
+      if (delta > 0) {
+        EpisodicMemory.recordSuccessPattern(this.config.projectName, {
+          signature: `Iteration ${iterationNum} Improvement`,
+          diffSummary: `Iteration ${iterationNum} achieved score ${iteration.qualityScore} (+${delta})`,
+          scoreDelta: delta
+        });
+      }
       if (iteration.qualityScore > this.bestObjectiveScore) {
         this.bestObjectiveScore = iteration.qualityScore;
         this.bestCommitHash = headHash;
@@ -992,7 +1012,13 @@ error) and the specific change needed to fix it. Do not write code.`;
       lessons.length > 0
         ? `\nLessons learned from earlier builds that match this failure (apply any that fit):\n${LessonMemory.formatForPrompt(lessons)}\n`
         : "";
+    const episodicCounters = EpisodicMemory.getCounterStrategies(this.config.projectName, failing.output);
+    const episodicCounterHint =
+      episodicCounters.length > 0
+        ? `\nCounter-Strategies from earlier runs of ${this.config.projectName}:\n${episodicCounters.map((c) => `- ${c}`).join("\n")}\n`
+        : "";
     const builtInHint =
+      episodicCounterHint +
       (lessons.some((lesson) => /require\.main|import\.meta\.url/.test(lesson.lesson)) ? "" : eagerExecutionHint) +
       (await AutoFix.missingModules(this.workspace.root, failing.output).catch(() => "")) +
       (this.adoptedEngine.length
@@ -1074,7 +1100,13 @@ import to its last export: never a fragment or a single changed line. No other p
     // says little about any single lesson — only in the repair loop, where the
     // failure a lesson targets is known.
     const lessons = LessonMemory.relevant("build", `${this.config.projectName} ${this.config.description}`, 5);
+    const bannedApproaches = EpisodicMemory.getBannedApproaches(this.config.projectName);
+    const episodicPreamble =
+      bannedApproaches.length > 0
+        ? `\nAnti-Stagnation Laws (Banned Approaches from Previous Failures):\n${bannedApproaches.map((b) => `- FORBIDDEN: ${b}`).join("\n")}\n\n`
+        : "";
     const lessonPreamble =
+      episodicPreamble +
       (lessons.length > 0
         ? `Lessons learned from earlier builds on this machine — apply them:\n${LessonMemory.formatForPrompt(lessons)}\n\n`
         : "") +

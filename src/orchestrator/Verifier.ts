@@ -15,6 +15,7 @@ import { TypeFixer } from "./TypeFixer.js";
 import { findBrowser, renderPage } from "./SiteAudit.js";
 import { pathToFileURL } from "url";
 import { CodeGuard } from "./CodeGuard.js";
+import { ASTVerifier } from "./ASTVerifier.js";
 import { Logger } from "../utils/Logger.js";
 
 /** "tailoring": a template build still showing the template's sample content (added by the orchestrator). */
@@ -263,12 +264,23 @@ export class Verifier {
     }
     if (hasTsconfig) {
       const result = await Executor.run("npx", ["tsc", "--noEmit"], { cwd: root, timeoutMs: CHECK_TIMEOUT_MS });
+      let outputText = trim(`${result.stdout}\n${result.stderr}`);
+      if (result.exitCode !== 0) {
+        const astResult = await ASTVerifier.verifyWorkspace(root).catch(() => null);
+        if (astResult && astResult.diagnostics.length > 0) {
+          const formatted = astResult.diagnostics
+            .slice(0, 15)
+            .map((d) => `${d.file}(${d.line},${d.column}): [${d.code}] ${d.message}`)
+            .join("\n");
+          outputText = trim(`${outputText}\n\nAST Diagnostics:\n${formatted}`);
+        }
+      }
       checks.push({
         name: "typecheck",
         applicable: true,
         passed: result.exitCode === 0,
         durationMs: result.durationMs,
-        output: trim(`${result.stdout}\n${result.stderr}`)
+        output: outputText
       });
     } else {
       checks.push(skip("typecheck", "no tsconfig.json"));

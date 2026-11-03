@@ -66,39 +66,102 @@ let busy = false;
 let schemaCache: { templateSpec: unknown; templateMeta: unknown } | null = null;
 const state = { lastClaimAt: null as string | null, lastJob: null as null | { id: string; kind: JobKind; ok: boolean; at: string; detail: string }, done: 0, failed: 0 };
 
-async function app<T>(route: string, body?: unknown, method = body === undefined ? "GET" : "POST"): Promise<T> {
+async function app<T>(route: string, body?: unknown, method = body === undefined ? "GET" : "POST", timeoutMs = 60_000): Promise<T> {
   const res = await fetch(`${base()}${route}`, {
     method,
     headers: { "x-studio-key": key(), ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000)
+    signal: AbortSignal.timeout(timeoutMs)
   });
   const json = (await res.json().catch(() => ({}))) as T & { error?: string };
   if (!res.ok) throw new Error(json.error ?? `the invites app answered ${res.status}`);
   return json;
 }
 
-/** One JSON answer from the local model, constrained to a schema. */
+/**
+ * A JSON Schema llama.cpp's grammar converter accepts. The app's schemas come
+ * from Zod and carry what the converter chokes on — regex patterns, length
+ * bounds, $schema and "oneOf" with consts — none of which shape the answer
+ * enough to matter, because the app validates the result exactly anyway.
+ */
+export function grammarSafe(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(grammarSafe);
+  if (!schema || typeof schema !== "object") return schema;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(schema as Record<string, unknown>)) {
+    if (["$schema", "pattern", "format", "minLength", "maxLength", "minItems", "maxItems", "default", "exclusiveMinimum", "exclusiveMaximum", "$id"].includes(k)) continue;
+    out[k === "oneOf" ? "anyOf" : k] = grammarSafe(v);
+  }
+  if ("const" in out && !("type" in out)) {
+    out.enum = [out.const];
+    delete out.const;
+  }
+  return out;
+}
+
+const isGrammarError = (text: string) => /grammar|sampler|schema/i.test(text);
+
+type JsonSchema = { type?: string | string[]; properties?: Record<string, JsonSchema>; items?: JsonSchema; anyOf?: JsonSchema[]; oneOf?: JsonSchema[]; maxLength?: number; maxItems?: number; const?: unknown; enum?: unknown[] };
+
+/**
+ * Bring a model's answer within the limits the grammar could not enforce:
+ * strings and lists trimmed to their maximums, each union member (a section)
+ * checked against the branch its "type" names. What still fails, the app's
+ * own validation reports.
+ */
+export function fitToSchema(value: unknown, schema: JsonSchema | undefined): unknown {
+  if (!schema || value === null || value === undefined) return value;
+  const branches = schema.anyOf ?? schema.oneOf;
+  if (branches) {
+    const tag = value && typeof value === "object" && "type" in value ? (value as { type: unknown }).type : undefined;
+    const branch = branches.find((b) => b.properties?.type && (b.properties.type.const === tag || b.properties.type.enum?.includes(tag))) ?? branches.find((b) => b.type === (Array.isArray(value) ? "array" : typeof value)) ?? branches[0];
+    return fitToSchema(value, branch);
+  }
+  if (typeof value === "string") return schema.maxLength !== undefined ? value.slice(0, schema.maxLength) : value;
+  if (Array.isArray(value)) {
+    const list = value.map((v) => fitToSchema(v, schema.items));
+    return schema.maxItems !== undefined ? list.slice(0, schema.maxItems) : list;
+  }
+  if (typeof value === "object" && schema.properties) {
+    const out: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+    for (const [k, sub] of Object.entries(schema.properties)) if (k in out) out[k] = fitToSchema(out[k], sub);
+    return out;
+  }
+  return value;
+}
+
+/**
+ * One JSON answer from the local model, constrained to a schema. When even the
+ * simplified schema cannot become a grammar, the model answers in plain JSON
+ * mode with the schema in the prompt instead.
+ */
 async function askJson<T>(system: string, prompt: string, schema: unknown, temperature = 0.8): Promise<T> {
-  return gpuLock.run(async () => {
-    const res = await undiciFetch(`${ollamaUrl()}/api/chat`, {
+  const call = async (format: unknown, userPrompt: string) =>
+    undiciFetch(`${ollamaUrl()}/api/chat`, {
       dispatcher: patient,
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: model(),
         stream: false,
-        format: schema,
+        format,
         // A schema-shaped answer needs no visible reasoning first, and thinking models are much slower with it.
         think: false,
         keep_alive: process.env.OLLAMA_KEEP_ALIVE ?? "30m",
         options: { temperature, num_ctx: 16384, num_predict: 6000 },
         messages: [
           { role: "system", content: system },
-          { role: "user", content: prompt }
+          { role: "user", content: userPrompt }
         ]
       })
     });
+  return gpuLock.run(async () => {
+    let res = await call(grammarSafe(schema), prompt);
+    if (res.status === 400) {
+      const detail = await res.text();
+      if (!isGrammarError(detail)) throw new Error(`the local model answered 400: ${detail.slice(0, 200)}`);
+      res = await call("json", `${prompt}\n\nAnswer with one JSON object that follows this JSON Schema exactly:\n${JSON.stringify(grammarSafe(schema))}`);
+    }
     if (!res.ok) throw new Error(`the local model answered ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const body = (await res.json()) as { message?: { content?: string } };
     return JSON.parse(body.message?.content ?? "{}") as T;
@@ -202,11 +265,17 @@ async function doTemplate(job: Job, progress: (p: number, m: string) => Promise<
       `Brief: ${brief}\nOccasions: ${eventTypes.join(", ")}${culture ? `\nCulture: ${culture}` : ""}\nThis is variant ${i + 1} of ${variants}: make it clearly different from the others (palette, ornament, layout) while fitting the brief.${templates.length ? `\nAlready made: ${templates.map((t) => `${t.meta.name} (${t.spec?.theme?.ornament}, ${t.spec?.theme?.palette?.accent})`).join("; ")}` : ""}`,
       schema
     );
-    const p = made.spec?.theme?.palette as Palette | undefined;
-    if (p && Object.values(p).every(isHex)) made.spec.theme.palette = readablePalette(p);
-    made.spec.version = 1;
-    made.meta = { ...made.meta, eventTypes, culture: culture || undefined, tier: made.meta?.tier === "free" ? "free" : "premium", rank: 200 };
-    templates.push(made);
+    const fitted = fitToSchema(made, schema as JsonSchema) as typeof made;
+    const p = fitted.spec?.theme?.palette as Palette | undefined;
+    if (p && Object.values(p).every(isHex)) fitted.spec.theme.palette = readablePalette(p);
+    fitted.spec.version = 1;
+    const slug = String(fitted.meta?.id ?? fitted.meta?.name ?? `studio-${job.id}-${i + 1}`)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60);
+    fitted.meta = { ...fitted.meta, id: slug.length >= 3 ? slug : `studio-${i + 1}`, eventTypes, culture: culture || undefined, tier: fitted.meta?.tier === "free" ? "free" : "premium", rank: 200 };
+    templates.push(fitted);
   }
   if (images) {
     // One cover picture per template, in its own colours, placed in an arched frame on the cover.
@@ -255,7 +324,12 @@ async function run(job: Job) {
   const started = Date.now();
   try {
     const result = job.kind === "copy" ? await doCopy(job) : job.kind === "template" ? await doTemplate(job, progress) : await doImageSet(job, progress);
-    const { accepted } = await app<{ accepted: boolean }>(`/api/studio/jobs/${job.id}/complete`, { worker: worker(), result });
+    // Minutes of GPU work are not lost to one slow answer: the result is sent with a long wait, and once more if that fails.
+    const send = () => app<{ accepted: boolean }>(`/api/studio/jobs/${job.id}/complete`, { worker: worker(), result }, "POST", 5 * 60_000);
+    const { accepted } = await send().catch(async () => {
+      await new Promise((r) => setTimeout(r, 10_000));
+      return send();
+    });
     state.done++;
     state.lastJob = { id: job.id, kind: job.kind, ok: accepted, at: new Date().toISOString(), detail: accepted ? `done in ${Math.round((Date.now() - started) / 1000)}s` : "the app did not accept the result; it will be retried" };
     if (accepted && job.kind === "template") {

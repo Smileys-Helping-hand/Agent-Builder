@@ -159,3 +159,27 @@ Both listen on port 4000, so only one runs at a time anyway.
   web UI does not show projects or issues.
 - **This key is powerful.** It can read every line of source on these drives and
   start processes. Treat it like an SSH key: local only, rotate it if it leaks.
+
+## 6. ARP Invites — the builder as a design studio
+
+`src/integrations/InviteStudio.ts` makes this PC the studio for the invites
+platform (`E:\Projects\Mixed invite app`). The app runs on Vercel and cannot
+reach this machine, so the studio pulls work from it. Every 15 seconds, when
+the GPU is free and game mode is off, it claims a job from
+`POST <INVITES_URL>/api/studio/claim`, does it, and posts the result back:
+
+- **copy**: wording suggestions, from the local model with schema-constrained JSON.
+- **template**: whole templates from a brief, filled against the app's
+  TemplateSpec JSON Schema, with cover art from ComfyUI uploaded to the NAS
+  through the app's media gateway. They land in the app's admin review
+  queue, never live on their own.
+- **imageSet**: artwork in a celebration's colours.
+
+Configure it with `INVITES_URL` and `INVITES_STUDIO_KEY`, and optionally
+`INVITES_OPS_KEY`, `INVITES_STUDIO_MODEL` and `INVITES_STUDIO_TICK_MS`.
+`INVITES_STUDIO=off` stops it.
+
+Routes: `GET /api/invites/status`, `GET /api/invites/platform` (the invites
+app's ops briefing) and `POST /api/invites/templates`. Jarvis reaches them
+through the bridge as `invites.status`, `invites.briefing` and
+`invites.templates`.
