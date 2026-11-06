@@ -14,6 +14,7 @@ import express, { Request, Response } from "express";
 import cors from "cors";
 import { Server } from "socket.io";
 import { registerUpdateRoute } from "./update.js";
+import { registerLabRoutes } from "./lab.js";
 import { eventBus, emitServerEvent, type ServerEvent } from "./eventBus.js";
 import { MemoryStore } from "../state/MemoryStore.js";
 import { authenticate, authorizeRoles, registerAuthRoutes } from "./auth.js";
@@ -165,6 +166,8 @@ if (process.env.NET_RELAY !== "off") {
 app.get(["/net/rooms", "/net/health"], (req: Request, res: Response, next) => {
   if (!netRooms?.handle(req, res)) next();
 });
+
+registerLabRoutes(app, server);
 
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token as string | undefined;

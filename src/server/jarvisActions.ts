@@ -389,6 +389,32 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
     params: { "projectId?": "one of the owner's projects", "gitUrl?": "or a public Git repository's https address", "siteUrl?": "or a live website's address (studied from what its pages show)" },
     call: (p) => ["POST", "/api/agent/reconstruct", pick(p, "projectId", "gitUrl", "siteUrl")]
   },
+  { name: "lab.status", area: "agent", label: "Virtual Test Lab: VMs, ISOs, test profiles and recent test runs", scope: "read", params: {}, call: () => ["GET", "/api/lab"] },
+  {
+    name: "lab.vm.create",
+    area: "agent",
+    label: "Create a real virtual machine in the Virtual Test Lab",
+    scope: "execute",
+    params: { name: "its name", "iso?": "the ISO's path", "cpus?": "CPUs", "memoryMb?": "memory", "diskGb?": "disk size", "network?": "none | isolated | internet", "purpose?": "what it is for" },
+    call: (p) => ["POST", "/api/lab/vms", pick(p, "name", "iso", "cpus", "memoryMb", "diskGb", "network", "purpose")]
+  },
+  {
+    name: "lab.vm.action",
+    area: "agent",
+    label: "Start, stop, pause, resume, restart or clone a VM",
+    scope: "execute",
+    params: { vmId: "the VM", action: "start | stop | pause | resume | restart | clone" },
+    call: (p) => ["POST", `/api/lab/vms/${enc(str(p.vmId))}/${enc(str(p.action))}`, {}]
+  },
+  {
+    name: "lab.test",
+    area: "agent",
+    label: "Run test profiles on a VM (boot, login, basics, services, network, packages, graphics, audio, security, performance, stability, restart): real evidence for each step",
+    scope: "execute",
+    params: { vmId: "the VM", "profiles?": "the profile ids (all of them by default)", "login?": "{ user, password }" },
+    call: (p) => ["POST", "/api/lab/runs", pick(p, "vmId", "profiles", "login")]
+  },
+  { name: "lab.stopAll", area: "agent", label: "Emergency stop of every VM in the lab", scope: "execute", params: {}, call: () => ["POST", "/api/lab/stop-all", {}] },
   { name: "self.report", area: "agent", label: "What Agent Builder has learned about itself: where it keeps failing, lessons that do not help, choices getting worse — and what to change", scope: "read", params: {}, call: () => ["GET", "/api/agent/self"] },
   {
     name: "self.improve",

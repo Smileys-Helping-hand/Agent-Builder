@@ -123,6 +123,30 @@ CREATE TABLE IF NOT EXISTS brain_sync_queue (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS evidence (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,
+  ref TEXT NOT NULL,
+  task TEXT,
+  agent TEXT,
+  title TEXT NOT NULL,
+  outcome TEXT,
+  data TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_ref ON evidence(ref, id);
+CREATE INDEX IF NOT EXISTS idx_evidence_task ON evidence(task, id);
+CREATE INDEX IF NOT EXISTS idx_evidence_kind ON evidence(kind, id);
+
+CREATE TABLE IF NOT EXISTS evidence_links (
+  from_ref TEXT NOT NULL,
+  to_ref TEXT NOT NULL,
+  relation TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(from_ref, to_ref, relation)
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_links_to ON evidence_links(to_ref);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
   kind UNINDEXED,
   ref_id UNINDEXED,

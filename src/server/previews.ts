@@ -78,6 +78,9 @@ const KINDS: Kind[] = ["template", "build", "project", "demo"];
 const tokenFor = (kind: Kind, id: string): string =>
   crypto.createHmac("sha256", secret).update(`${kind}:${id}`).digest("base64url").slice(0, 32);
 
+/** A signature with this builder's link secret, for other signed links (the lab's console and pictures). */
+export const signLink = (text: string): string => crypto.createHmac("sha256", secret).update(text).digest("base64url").slice(0, 32);
+
 const tokenMatches = (kind: Kind, id: string, token: string): boolean => {
   const expected = Buffer.from(tokenFor(kind, id));
   const given = Buffer.from(token);
