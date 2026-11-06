@@ -99,8 +99,9 @@ export const DesktopPackage = {
         const built = fs.readdirSync(path.join(dir, "out")).find((entry) => entry.startsWith(slug));
         if (!built || !fs.existsSync(path.join(dir, "out", built, `${slug}.exe`))) throw new Error("The packager made no .exe.");
         const target = zipFile(sessionId, version);
-        // Windows' own tar writes zips, in its own process: this much data would stall the builder.
-        await run(`tar -a -c -f "${target}" -C out "${built}"`, dir);
+        // Windows' own tar writes zips, in its own process: this much data would stall the builder. (Git's tar, also on PATH, cannot.)
+        const tar = path.join(process.env.SystemRoot ?? "C:\Windows", "System32", "tar.exe");
+        await run(`"${tar}" -a -c -f "${target}" -C out "${built}"`, dir);
         write({ state: "done", at: new Date().toISOString(), error: null, sizeMb: Math.round(fs.statSync(target).size / 1048576) });
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });

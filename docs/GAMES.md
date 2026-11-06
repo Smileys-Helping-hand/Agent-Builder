@@ -41,12 +41,15 @@ finished milestone becomes a version you can play.
 - **In the app:** **▶ Play here** on the game's card, full window, any version.
 - **In a tab:** **Open in a tab**; the link works for anyone you send it to.
 - **Download:** a zip of that version. `Play.bat` (Windows) or `play.sh` starts a small
-  server on that computer and opens the game. There is no installer or `.exe` yet.
+  server on that computer and opens the game.
+- **Windows app:** **Make a Windows app** builds that version into a folder with an `.exe`
+  (Electron, about 105 MB zipped, a few minutes the first time). It is not an installer and
+  is not code-signed, so Windows may warn before running it.
 - **SaveState:** the newest version goes to `games/made-<name>/`, where SaveState's Mini
   Games lists Agent Builder's finished games (Mini Games → the Agent Builder list → add).
 
-These are web games on real engines. Native engines (Godot, Unity export) are not part
-of this flow; Unity levels have their own panel.
+These are web games on real engines, also packaged for Windows. Native engines (Godot,
+Unity export) are not part of this flow; Unity levels have their own panel.
 
 Approvals work as for every project: the game's own folder only changes when
 you approve a delivery (Agent → Continuous). The versions are playable before

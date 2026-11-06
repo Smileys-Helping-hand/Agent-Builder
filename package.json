@@ -63,6 +63,7 @@
     "test:investigation": "tsx scripts/investigation-smoketest.ts",
     "test:learning": "tsx scripts/learning-smoketest.ts",
     "test:platform": "tsx scripts/platform-smoketest.ts",
+    "test:acceptance": "tsx scripts/acceptance.ts",
     "check:game-engines": "tsx scripts/game-engine-check.ts"
   },
   "dependencies": {
