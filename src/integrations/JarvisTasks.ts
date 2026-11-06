@@ -2,12 +2,13 @@
  * JarvisTasks — long-running work on Jarvis's own task list.
  *
  * Continuous-builder sessions, deep investigations, evaluations and VM test runs
- * each appear as one task in Jarvis (POST/PATCH /api/jarvis/tasks), kept up to date:
+ * each appear as one task in Jarvis (POST /api/jarvis/peers/work), kept up to date:
  * what it is doing now, how far it has got, blocked when it is stuck, done when it
  * ends. Jarvis's tasks have four states (todo, in_progress, blocked, done), so
  * the phase and the progress go in the notes.
  *
- * Needs JARVIS_HOST and JARVIS_API_KEY (or JARVIS_CLOUD_URL and JARVIS_PEER_KEY).
+ * Uses the builder's own peer key (JARVIS_CLOUD_URL and JARVIS_PEER_KEY), the same as its
+ * heartbeat, which reaches only its own tasks.
  * Nothing is lost when Jarvis cannot be reached: the next tick says the latest.
  * Which task is which is kept in data/agent/jarvis-tasks.json. JARVIS_TASKS=off turns it off.
  */
@@ -51,8 +52,8 @@ const write = (state: Record<string, Tracked>) => {
 };
 
 const target = (): { host: string; key: string } | null => {
-  const host = (process.env.JARVIS_HOST || process.env.JARVIS_CLOUD_URL || "").replace(/\/+$/, "");
-  const key = process.env.JARVIS_API_KEY || process.env.JARVIS_PEER_KEY || "";
+  const host = (process.env.JARVIS_CLOUD_URL || process.env.JARVIS_HOST || "").replace(/\/+$/, "");
+  const key = process.env.JARVIS_PEER_KEY || process.env.JARVIS_API_KEY || "";
   return host && key ? { host, key } : null;
 };
 
@@ -103,7 +104,7 @@ export const JarvisTasks = {
   async sync(): Promise<{ created: number; updated: number; skipped: string | null }> {
     const jarvis = target();
     if (!jarvis) return { created: 0, updated: 0, skipped: "JARVIS_HOST and its key are not set" };
-    const headers = { Authorization: `Bearer ${jarvis.key}`, "Content-Type": "application/json" };
+    const headers = { Authorization: `Bearer ${jarvis.key}`, "X-Jarvis-Api-Key": jarvis.key, "Content-Type": "application/json" };
     const state = read();
     let created = 0;
     let updated = 0;
@@ -112,9 +113,12 @@ export const JarvisTasks = {
       // Finished before anyone asked Jarvis to track it: no need to fill his list with old work.
       if (!known && item.status === "done") continue;
       if (known && known.status === item.status && known.notes === item.notes) continue;
-      const response = known
-        ? await fetch(`${jarvis.host}/api/jarvis/tasks/${known.taskId}`, { method: "PATCH", headers, body: JSON.stringify({ status: item.status, notes: item.notes }), signal: AbortSignal.timeout(20_000) })
-        : await fetch(`${jarvis.host}/api/jarvis/tasks`, { method: "POST", headers, body: JSON.stringify({ title: item.title, status: item.status, notes: item.notes, category: "Agent Builder" }), signal: AbortSignal.timeout(20_000) });
+      const response = await fetch(`${jarvis.host}/api/jarvis/peers/work`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(known ? { taskId: known.taskId, status: item.status, notes: item.notes } : { title: item.title, status: item.status, notes: item.notes }),
+        signal: AbortSignal.timeout(20_000)
+      });
       if (!response.ok) throw new Error(`Jarvis answered ${response.status} for ${item.ref}`);
       if (known) {
         state[item.ref] = { ...known, status: item.status, notes: item.notes };

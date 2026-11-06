@@ -113,7 +113,7 @@ const main = async () => {
     } else console.log("[skip] no running VM to open a console on");
 
     for (const [tab, label, expect] of [
-      ["overview", "Overview", /Working now/],
+      ["overview", "Overview", /Working now/i],
       ["continuous", "Agent Builder", /Improve itself/],
       ["iterations", "Iterations", /iterations/i],
       ["simulation", "Simulation Lab", /Computed experiments/],
@@ -139,11 +139,11 @@ const main = async () => {
     }
     await visit("Research", "/research/", 8000);
     body = await textOf();
-    check("Research shows the investigations", /Deep investigation/.test(body));
+    check("Research shows the investigations", /Deep investigation/i.test(body));
     await shot("research");
     await visit("Games", "/gamemaker/", 8000);
     body = await textOf();
-    check("Games shows keep building", /Keep building a game/.test(body));
+    check("Games shows keep building", /Keep building a game/i.test(body));
     await shot("games");
 
     console.log(`\nScreenshots in ${OUT}`);
