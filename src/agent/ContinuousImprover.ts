@@ -45,6 +45,8 @@ import { EcosystemStore, type EcosystemProject } from "../ecosystem/EcosystemSto
 import { commitPaths, copyForBuild, ProjectBuilds } from "../ecosystem/ProjectBuilds.js";
 import { ProjectScanner } from "../ecosystem/ProjectScanner.js";
 import { GameDirector } from "../game/GameDirector.js";
+import { Evidence } from "../knowledge/Evidence.js";
+import { VmCheck, type VmTestConfig } from "../lab/VmCheck.js";
 import { BuildService } from "../orchestrator/BuildService.js";
 import { Verifier } from "../orchestrator/Verifier.js";
 import { Workspace } from "../orchestrator/Workspace.js";
@@ -94,6 +96,15 @@ export interface Step {
   approachEpisodeId?: number;
   /** The step did what it set out to do (a milestone done, checks greener, an improvement kept). */
   success?: boolean;
+  /** Its number in the session, for good. */
+  n?: number;
+  startedAt?: string;
+  /** The commit it started from. */
+  from?: string | null;
+  /** The build that ran it. */
+  buildId?: string | null;
+  /** The checks as they stood when it ended. */
+  check?: { at: string; passed: boolean; verified: boolean; failing: string[]; vmRun?: string | null } | null;
 }
 
 export interface CheckRun {
@@ -108,6 +119,8 @@ export interface CheckRun {
   command: string | null;
   /** When the failure comes from this PC (a tool missing or broken), not the code: why. */
   environment?: string | null;
+  /** The VM test run behind this check, when the project's OS was booted and tested. */
+  vmRun?: string | null;
 }
 
 export interface ImproveSession {
@@ -125,6 +138,8 @@ export interface ImproveSession {
   lastRelease?: { version: number; at: string; title: string } | null;
   /** Why the last release did not build, if it did not. */
   releaseError?: string | null;
+  /** An operating system: its ISO must build, boot in a real VM and pass these test profiles. */
+  vmTest?: VmTestConfig | null;
   /** Kept for sessions started before goals: the old one-line focus. */
   focus: string;
   /** Later instructions, newest last. */
@@ -279,11 +294,48 @@ const update = (fn: (store: Store) => void) => {
 const getSession = (id: string) => read().sessions.find((s) => s.id === id) ?? null;
 const patchSession = (id: string, patch: Partial<ImproveSession>) => update((s) => Object.assign(s.sessions.find((x) => x.id === id) ?? {}, patch));
 const patchCandidate = (id: string, patch: Partial<Candidate>) => update((s) => Object.assign(s.candidates.find((x) => x.id === id) ?? {}, patch));
-const journal = (id: string, step: Step) =>
+const JOURNAL_LIMIT = 2000;
+
+/** Where the step in progress began, for its journal entry. */
+const stepStarts = new Map<string, { at: string; from: string | null; buildId: string | null }>();
+
+const journal = (id: string, step: Step) => {
+  let n = 0;
   update((s) => {
     const session = s.sessions.find((x) => x.id === id);
-    if (session) session.journal = [...session.journal, step].slice(-80);
+    if (!session) return;
+    const last = session.journal[session.journal.length - 1];
+    n = (last?.n ?? session.journal.length) + 1;
+    const started = stepStarts.get(id);
+    stepStarts.delete(id);
+    const check = session.lastCheck;
+    session.journal = [
+      ...session.journal,
+      {
+        ...step,
+        n,
+        startedAt: step.startedAt ?? started?.at,
+        from: step.from ?? started?.from ?? null,
+        buildId: step.buildId ?? started?.buildId ?? null,
+        check: check ? { at: check.at, passed: check.passed, verified: check.verified, failing: check.failing, vmRun: check.vmRun ?? null } : null
+      }
+    ].slice(-JOURNAL_LIMIT);
   });
+  // The ledger: every step, for good, linked to its session and to the VM run that tested it.
+  const vmRun = getSession(id)?.lastCheck?.vmRun;
+  if (n) {
+    Evidence.record({
+      kind: "step",
+      ref: `step:${id}:${n}`,
+      task: `session:${id}`,
+      agent: "continuous-builder",
+      title: step.title,
+      outcome: step.outcome,
+      data: { stage: step.stage, note: step.note, commit: step.commit, success: step.success ?? null },
+      links: [{ to: `session:${id}`, relation: "part-of" }, ...(vmRun ? [{ to: `vmrun:${vmRun}`, relation: "tested-by" }] : [])]
+    });
+  }
+};
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const loops = new Set<string>();
@@ -516,10 +568,30 @@ const runChecks = async (session: ImproveSession, dir: string): Promise<CheckRun
       outputs.push(`## assets and originality\n${problems.map((p) => `- ${p}`).join("\n")}`);
     }
   }
+  // An operating system must really boot: built, run in a VM and tested, once everything else passes.
+  let vmRun: string | null = null;
+  if (session.vmTest && failing.length === 0) {
+    verified = true;
+    const config = getSession(session.id)?.vmTest ?? session.vmTest;
+    const result = await VmCheck.run(config, dir, {
+      name: session.projectName,
+      task: `session:${session.id}`,
+      projectId: session.projectId,
+      onPhase: (phase) => patchSession(session.id, { phase })
+    }).catch((error: Error) => ({ passed: false, report: `The VM test could not run: ${error.message}`, runId: null, reused: false, tree: null, failure: "test" as const }));
+    vmRun = result.runId;
+    if (!result.reused && getSession(session.id)) {
+      patchSession(session.id, { vmTest: { ...config, lastTree: result.tree, lastRun: result.runId, lastPassed: result.passed, lastReport: result.report.slice(0, 6000) } });
+    }
+    if (!result.passed) {
+      failing.push(result.failure === "build" || result.failure === "iso" ? "OS image build" : "VM test");
+      outputs.push(`## ${failing[failing.length - 1]}\n${result.report}`);
+    }
+  }
   const output = outputs.join("\n\n").slice(-8000);
   // A tool that is missing or broken here fails the check whatever the code says: name it, so no step retries it.
   const environment = failing.length ? await MachineProfile.environmentProblem(output).catch(() => null) : null;
-  return { at: new Date().toISOString(), passed: failing.length === 0, verified, failing, output, command, environment };
+  return { at: new Date().toISOString(), passed: failing.length === 0, verified, failing, output, command, environment, vmRun };
 };
 
 /* ─── the model ─── */
@@ -742,6 +814,7 @@ Work in the existing code and keep everything that already works working.`;
     startedBy: `continuous:${session.id}`
   });
   patchSession(session.id, { currentBuildId: build.buildId, phase: title });
+  stepStarts.set(session.id, { at: new Date().toISOString(), from: before, buildId: build.buildId });
   const started = Date.now();
   let stopped = false;
   while (BuildService.isRunning(build.buildId)) {
@@ -1519,12 +1592,13 @@ export const ContinuousImprover = {
   },
 
   /** Change how it runs: finish and stop, or keep going forever; the check command. */
-  configure(sessionId: string, options: { mode?: Mode; checkCommand?: string | null }): ImproveSession {
+  configure(sessionId: string, options: { mode?: Mode; checkCommand?: string | null; vmTest?: VmTestConfig | null }): ImproveSession {
     const session = getSession(sessionId);
     if (!session) throw new Error("Unknown session.");
     patchSession(sessionId, {
       ...(options.mode ? { mode: options.mode === "complete" ? "complete" : "forever" } : {}),
-      ...(options.checkCommand !== undefined ? { checkCommand: options.checkCommand?.trim().slice(0, 500) || null } : {})
+      ...(options.checkCommand !== undefined ? { checkCommand: options.checkCommand?.trim().slice(0, 500) || null } : {}),
+      ...(options.vmTest !== undefined ? { vmTest: options.vmTest } : {})
     });
     return getSession(sessionId)!;
   },
@@ -1608,7 +1682,7 @@ export const ContinuousImprover = {
   },
 
   /** For tests: the steps the loop takes, one at a time. */
-  testHooks: { prepareWorkspace, syncOwnerCommits, deliverIfReady, applyPendingRevert, getSession, patchSession, runChecks, cycle, itemsFrom, releaseIfGame }
+  testHooks: { prepareWorkspace, syncOwnerCommits, deliverIfReady, applyPendingRevert, getSession, patchSession, runChecks, cycle, itemsFrom, releaseIfGame, journal }
 };
 
 /** The first version's single changes: applied whole, as before. */

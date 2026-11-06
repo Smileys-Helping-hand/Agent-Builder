@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { api, type AgentMessage, type ChatPending, type Delivery, type ImproveCandidate, type ImproveSession, type ReconstructRun } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
+import IterationExplorer from "./IterationExplorer";
 
 type Tab = "growth" | "talk" | "ground" | "continuous" | "reconstruct";
 const TABS: Array<{ id: Tab; label: string }> = [
@@ -751,25 +752,7 @@ function SessionCard({ s, busy, act }: { s: ImproveSession; busy: string | null;
             </ol>
           ) : null}
 
-          {s.journal.length ? (
-            <>
-              <div className="muted small" style={{ marginTop: 8 }}>
-                Recent steps
-              </div>
-              {[...s.journal]
-                .reverse()
-                .slice(0, 10)
-                .map((step, i) => (
-                  <div key={`${step.at}-${i}`} className="small">
-                    <span className={`tag ${step.outcome === "kept" ? "ok" : step.outcome === "failed" || step.outcome === "rolled-back" ? "bad" : "info"}`}>{step.outcome}</span> {step.title}{" "}
-                    <span className="muted">
-                      · {ago(step.at)}
-                      {step.note ? ` · ${step.note}` : ""}
-                    </span>
-                  </div>
-                ))}
-            </>
-          ) : null}
+          <IterationExplorer sessionId={s.id} />
           {s.lastCheck && !s.lastCheck.passed ? <pre className="agent-diff">{s.lastCheck.output || "(no output)"}</pre> : null}
         </div>
       ) : null}

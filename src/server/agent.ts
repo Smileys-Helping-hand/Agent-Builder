@@ -20,6 +20,11 @@
  *   GET    /api/agent/approvals/:id/diff           ?file=… one file
  *   POST   /api/agent/approvals/:id/approve        { files? } the parts to add; applied + committed on the live branch
  *   POST   /api/agent/approvals/:id/reject         { note? }
+ *   GET    /api/agent/continuous/:id/iterations    the iteration explorer: the one in progress, then every one
+ *   GET    /api/agent/continuous/:id/iterations/compare?a=&b=   two iterations side by side
+ *   GET    /api/agent/continuous/:id/iterations/:n  one in full (n = current for the one in progress): changes, why, learning, tests, feedback
+ *   GET    /api/agent/continuous/:id/iterations/:n/diff?file=   one file's diff
+ *   POST   /api/agent/continuous/:id/iterations/:n/feedback     { text, kind? }
  *   GET    /api/agent/self                         what it has learned about itself: findings, and its self-improvement session
  *   POST   /api/agent/self/start                   improve its own code from them (approval-gated, like any project)
  *   GET    /api/agent/reconstruct                  the Reconstructor: runs and what it has learned
@@ -32,6 +37,8 @@ import type { Express, Request, Response } from "express";
 import { AgentChat, setAgentActions } from "../agent/AgentChat.js";
 import { AgentProfile, registerProfileSources } from "../agent/AgentProfile.js";
 import { ContinuousImprover } from "../agent/ContinuousImprover.js";
+import { Iterations } from "../agent/Iterations.js";
+import type { VmTestConfig } from "../lab/VmCheck.js";
 import { Reconstructor } from "../agent/Reconstructor.js";
 import { SelfImprover } from "../agent/SelfImprover.js";
 import { TrainingGround } from "../agent/TrainingGround.js";
@@ -175,7 +182,8 @@ export const registerAgentRoutes = (app: Express) => {
     try {
       const mode = req.body?.mode === "complete" || req.body?.mode === "forever" ? req.body.mode : undefined;
       const checkCommand = typeof req.body?.checkCommand === "string" || req.body?.checkCommand === null ? req.body.checkCommand : undefined;
-      res.json({ session: ContinuousImprover.configure(req.params.id, { mode, checkCommand }) });
+      const vmTest = req.body?.vmTest === null ? null : req.body?.vmTest && typeof req.body.vmTest === "object" ? (req.body.vmTest as VmTestConfig) : undefined;
+      res.json({ session: ContinuousImprover.configure(req.params.id, { mode, checkCommand, vmTest }) });
     } catch (error) {
       res.status(404).json({ error: message(error) });
     }
@@ -193,6 +201,42 @@ export const registerAgentRoutes = (app: Express) => {
     const session = ContinuousImprover.stop(req.params.id);
     if (!session) return res.status(404).json({ error: "Unknown session." });
     res.json({ session });
+  });
+
+  app.get("/api/agent/continuous/:id/iterations", authenticateAgent("read"), (req: Request, res: Response) => {
+    try {
+      res.json(Iterations.timeline(req.params.id));
+    } catch (error) {
+      res.status(404).json({ error: message(error) });
+    }
+  });
+  app.get("/api/agent/continuous/:id/iterations/compare", authenticateAgent("read"), async (req: Request, res: Response) => {
+    try {
+      res.json(await Iterations.compare(req.params.id, Number(req.query.a), Number(req.query.b)));
+    } catch (error) {
+      res.status(404).json({ error: message(error) });
+    }
+  });
+  app.get("/api/agent/continuous/:id/iterations/:n", authenticateAgent("read"), async (req: Request, res: Response) => {
+    try {
+      res.json(await Iterations.detail(req.params.id, req.params.n === "current" ? "current" : Number(req.params.n)));
+    } catch (error) {
+      res.status(404).json({ error: message(error) });
+    }
+  });
+  app.get("/api/agent/continuous/:id/iterations/:n/diff", authenticateAgent("read"), async (req: Request, res: Response) => {
+    try {
+      res.json({ diff: await Iterations.fileDiff(req.params.id, Number(req.params.n), String(req.query.file ?? "")) });
+    } catch (error) {
+      res.status(404).json({ error: message(error) });
+    }
+  });
+  app.post("/api/agent/continuous/:id/iterations/:n/feedback", authenticateAgent("execute"), (req: Request, res: Response) => {
+    try {
+      res.json(Iterations.feedback(req.params.id, Number(req.params.n), { text: String(req.body?.text ?? ""), kind: typeof req.body?.kind === "string" ? req.body.kind : undefined, by: (req as AgentRequest).actor ?? "owner" }));
+    } catch (error) {
+      res.status(400).json({ error: message(error) });
+    }
   });
 
   app.get("/api/agent/self", authenticateAgent("read"), async (_req: Request, res: Response) => {

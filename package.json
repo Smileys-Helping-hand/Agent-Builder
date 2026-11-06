@@ -58,7 +58,8 @@
     "test:net-kit": "tsx scripts/net-kit-smoketest.ts",
     "test:game-director": "tsx scripts/game-director-smoketest.ts",
     "test:self-improve": "tsx scripts/self-improve-smoketest.ts",
-    "test:vmlab": "tsx scripts/vmlab-smoketest.ts"
+    "test:vmlab": "tsx scripts/vmlab-smoketest.ts",
+    "test:iterations": "tsx scripts/iterations-smoketest.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",

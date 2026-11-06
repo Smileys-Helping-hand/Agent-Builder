@@ -1026,6 +1026,167 @@ export interface ContinuousCheck {
   command: string | null;
 }
 
+export interface IterationEntry {
+  n: number;
+  at: string;
+  startedAt: string | null;
+  stage: string;
+  title: string;
+  status: "in-progress" | "completed" | "no-change" | "failed" | "rolled-back" | "stopped";
+  note: string | null;
+  commit: string | null;
+  success: boolean | null;
+  buildId: string | null;
+  checksPassed: boolean | null;
+  failing: string[];
+  vmRun: string | null;
+}
+
+export interface EvidenceRecord {
+  id: number;
+  kind: string;
+  ref: string;
+  task: string | null;
+  agent: string | null;
+  title: string;
+  outcome: string | null;
+  data: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface IterationFile {
+  path: string;
+  change: string;
+  added: number;
+  removed: number;
+}
+
+export interface IterationDetail {
+  entry: IterationEntry | null;
+  objective: string;
+  milestone: { title: string; detail: string; diagnosis?: string | null } | null;
+  changes: {
+    from: string | null;
+    to: string | null;
+    files: IterationFile[];
+    patch: string;
+    patchCut: boolean;
+    symbols: string[];
+    dependencies: string[];
+    config: string[];
+    commits: string[];
+    gone?: string | null;
+  };
+  build: {
+    buildId: string;
+    state: string;
+    startedAt: string;
+    finishedAt: string | null;
+    qualityScore: number | null;
+    passes: Array<{
+      iteration: number;
+      at: string;
+      commit: string | null;
+      qualityScore: number;
+      passed: boolean;
+      status: string;
+      improvements: string[];
+      checks: Array<{ name: string; passed: boolean; applicable: boolean }>;
+      blocker: { name: string; output: string } | null;
+    }>;
+    events: Array<{ at: string; kind: string; message: string }>;
+  } | null;
+  learning: {
+    lessons: Array<{ id: number; lesson: string; timesApplied: number; timesHelped: number; createdAt: string }>;
+    evidence: EvidenceRecord[];
+  };
+  testing: {
+    check: { at: string; passed: boolean; verified: boolean; failing: string[]; vmRun?: string | null } | null;
+    vmRuns: Array<{ id: string; state: string; counts: { passed: number; failed: number; warned: number; skipped: number }; build: { iso: string | null }; startedAt: string }>;
+  };
+  feedback: EvidenceRecord[];
+}
+
+export interface IterationCompare {
+  a: { n: number | null; at: string; title: string; status: string; commit: string | null; checksPassed: boolean | null; failing: string[]; vmRun: { id: string; state: string; counts: { passed: number; failed: number } } | null; buildScore: number | null };
+  b: IterationCompare["a"];
+  files: IterationFile[];
+  added: number;
+  removed: number;
+  symbols: string[];
+  patch: string;
+  patchCut: boolean;
+  lessonsBetween: Array<{ id: number; lesson: string }>;
+  stepsBetween: number;
+}
+
+export interface LabVm {
+  id: string;
+  name: string;
+  purpose: string;
+  projectId: string | null;
+  iso: string | null;
+  disk: { file: string; sizeGb: number };
+  cpus: number;
+  memoryMb: number;
+  network: "none" | "isolated" | "internet";
+  bootFrom: "iso" | "disk";
+  disposable: boolean;
+  maxRuntimeMinutes: number;
+  state: "stopped" | "starting" | "running" | "paused" | "failed";
+  startedAt: string | null;
+  stoppedAt: string | null;
+  lastError: string | null;
+  snapshots: Array<{ name: string; at: string; note: string | null }>;
+  history: Array<{ at: string; event: string; detail: string | null }>;
+}
+
+export interface LabRunSummary {
+  id: string;
+  vmId: string;
+  vmName: string;
+  build: { iso: string | null; isoModifiedAt: string | null; label: string | null };
+  profiles: string[];
+  state: "running" | "passed" | "failed" | "stopped" | "error";
+  agent: string;
+  task: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  counts: { passed: number; failed: number; warned: number; skipped: number };
+}
+
+export interface LabStepResult {
+  index: number;
+  profile: string;
+  what: string;
+  expected: string;
+  actual: string;
+  result: "passed" | "failed" | "warned" | "skipped";
+  output: string;
+  screenshot: string | null;
+  startedAt: string;
+  durationMs: number;
+}
+
+export interface LabTestRun extends LabRunSummary {
+  steps: LabStepResult[];
+  frames: string[];
+  error: string | null;
+  feedback: Array<{ at: string; by: string; text: string; kind: string; followUp: string | null }>;
+  fileToken: string;
+}
+
+export interface LabOverview {
+  backend: { name: string; ok: boolean; detail: string; accel: "kvm" | "tcg" | null; qemu: string | null };
+  limits: { maxRunning: number; maxMemoryMb: number; maxCpus: number; maxDiskGb: number };
+  vms: LabVm[];
+  isos: Array<{ name: string; path: string; sizeMb: number; modifiedAt: string }>;
+  downloads: Array<{ url: string; state: string; error: string | null; at: string }>;
+  profiles: Array<{ id: string; name: string; about: string; builtIn: boolean; steps: number }>;
+  full: string[];
+  runs: LabRunSummary[];
+}
+
 /** One playable version of a continuously built game. */
 export interface GameRelease {
   version: number;
@@ -1537,6 +1698,33 @@ export const api = {
   groundPractise: (challengeId?: string) => request<{ run: unknown }>("/api/agent/ground/practise", { method: "POST", body: JSON.stringify({ challengeId }) }),
   groundEnabled: (enabled: boolean) => request<GroundState>("/api/agent/ground/enabled", { method: "POST", body: JSON.stringify({ enabled }) }),
   groundHarder: () => request<{ added: unknown[] }>("/api/agent/ground/harder", { method: "POST" }, 600000),
+  iterations: (sessionId: string) =>
+    request<{ current: IterationEntry | null; iterations: IterationEntry[]; stage: string; state: string; phase: string }>(`/api/agent/continuous/${encodeURIComponent(sessionId)}/iterations`),
+  iteration: (sessionId: string, n: number | "current") => request<IterationDetail>(`/api/agent/continuous/${encodeURIComponent(sessionId)}/iterations/${n}`),
+  iterationFileDiff: (sessionId: string, n: number, file: string) =>
+    request<{ diff: string }>(`/api/agent/continuous/${encodeURIComponent(sessionId)}/iterations/${n}/diff?file=${encodeURIComponent(file)}`),
+  iterationCompare: (sessionId: string, a: number, b: number) => request<IterationCompare>(`/api/agent/continuous/${encodeURIComponent(sessionId)}/iterations/compare?a=${a}&b=${b}`),
+  iterationFeedback: (sessionId: string, n: number, text: string, kind?: string) =>
+    request<{ ok: boolean; followUp: string }>(`/api/agent/continuous/${encodeURIComponent(sessionId)}/iterations/${n}/feedback`, { method: "POST", body: JSON.stringify({ text, kind }) }),
+  lab: () => request<LabOverview>("/api/lab"),
+  labCreateVm: (input: { name: string; iso?: string | null; cpus?: number; memoryMb?: number; diskGb?: number; network?: string; purpose?: string }) =>
+    request<{ vm: LabVm }>("/api/lab/vms", { method: "POST", body: JSON.stringify(input) }, 90000),
+  labVmAction: (id: string, action: "start" | "stop" | "pause" | "resume" | "restart" | "clone", body: Record<string, unknown> = {}) =>
+    request<{ vm: LabVm }>(`/api/lab/vms/${encodeURIComponent(id)}/${action}`, { method: "POST", body: JSON.stringify(body) }, 90000),
+  labDeleteVm: (id: string) => request<{ ok: boolean }>(`/api/lab/vms/${encodeURIComponent(id)}`, { method: "DELETE" }, 90000),
+  labSnapshot: (id: string, name: string) => request<{ vm: LabVm }>(`/api/lab/vms/${encodeURIComponent(id)}/snapshots`, { method: "POST", body: JSON.stringify({ name }) }, 90000),
+  labRestoreSnapshot: (id: string, name: string) => request<{ vm: LabVm }>(`/api/lab/vms/${encodeURIComponent(id)}/snapshots/${encodeURIComponent(name)}/restore`, { method: "POST" }, 90000),
+  labDeleteSnapshot: (id: string, name: string) => request<{ vm: LabVm }>(`/api/lab/vms/${encodeURIComponent(id)}/snapshots/${encodeURIComponent(name)}`, { method: "DELETE" }, 90000),
+  labConsole: (id: string) => request<{ vnc: string; serial: string; state: string }>(`/api/lab/vms/${encodeURIComponent(id)}/console`),
+  labScreenshot: (id: string) => request<{ url: string; width: number; height: number; coverage: number; colours: number }>(`/api/lab/vms/${encodeURIComponent(id)}/screenshot`, { method: "POST" }, 70000),
+  labKeys: (id: string, input: { text?: string; combos?: string[][] }) => request<{ ok: boolean }>(`/api/lab/vms/${encodeURIComponent(id)}/keys`, { method: "POST", body: JSON.stringify(input) }),
+  labDownloadIso: (url: string, sha256?: string) => request<{ started: boolean }>("/api/lab/isos", { method: "POST", body: JSON.stringify({ url, sha256 }) }),
+  labStartRun: (input: { vmId: string; profiles: string[]; login?: { user?: string; password?: string }; label?: string; task?: string; recordEverySec?: number }) =>
+    request<{ run: LabTestRun }>("/api/lab/runs", { method: "POST", body: JSON.stringify(input) }),
+  labRun: (id: string) => request<{ run: LabTestRun }>(`/api/lab/runs/${encodeURIComponent(id)}`),
+  labStopRun: (id: string) => request<{ run: LabTestRun }>(`/api/lab/runs/${encodeURIComponent(id)}/stop`, { method: "POST" }),
+  labRunFeedback: (id: string, text: string, kind?: string) => request<{ run: LabTestRun }>(`/api/lab/runs/${encodeURIComponent(id)}/feedback`, { method: "POST", body: JSON.stringify({ text, kind }) }),
+  labStopAll: () => request<{ stopped: number }>("/api/lab/stop-all", { method: "POST" }, 90000),
   continuous: () => request<{ sessions: ImproveSession[]; deliveries: Delivery[]; candidates: ImproveCandidate[] }>("/api/agent/continuous"),
   continuousStart: (input: {
     projectId?: string;
