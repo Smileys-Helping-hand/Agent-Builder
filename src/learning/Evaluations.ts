@@ -242,9 +242,10 @@ const execute = async (run: EvaluationRun, challenges: Challenge[]) => {
 export const Evaluations = {
   challenges: (): Challenge[] => [...STANDARD, ...custom()],
 
-  list: (): EvaluationRun[] => read().reverse(),
+  /** A run the builder restarted through did not finish: it says so instead of "running" for ever. */
+  list: (): EvaluationRun[] => read().map((r) => (r.state === "running" && r.id !== running ? { ...r, state: "stopped" as const, error: "The builder restarted during this run." } : r)).reverse(),
 
-  get: (id: string): EvaluationRun | null => read().find((r) => r.id === id) ?? null,
+  get: (id: string): EvaluationRun | null => Evaluations.list().find((r) => r.id === id) ?? null,
 
   isRunning: () => running,
 
