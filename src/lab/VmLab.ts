@@ -169,7 +169,8 @@ export const Backend = {
       vm.network === "none" ? "-nic none" : `-nic user,model=virtio-net-pci${vm.network === "isolated" ? ",restrict=on" : ""}`;
     const args = [
       `-name ${shq(vm.name.replace(/,/g, " "))},process=vmlab-${vm.id}`,
-      `-machine q35`,
+      // Not q35: under an emulated CPU on QEMU 6.2 a q35 machine hangs on any reset or reboot (tested side by side).
+      `-machine pc`,
       accel === "kvm" ? "-accel kvm -cpu host" : "-accel tcg,thread=multi -cpu max",
       `-smp ${vm.cpus}`,
       `-m ${vm.memoryMb}`,

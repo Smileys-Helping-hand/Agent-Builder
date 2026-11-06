@@ -99,6 +99,8 @@ const clean = (text: string) => text.replace(ANSI, "");
 
 const shell = (command: string, what: string, extra: Partial<Extract<Step, { do: "run" }>> = {}): Step => ({ do: "run", command, what, ...extra });
 
+const WINDOW_MANAGERS = "xfwm4|openbox|i3|mutter|kwin|marco|metacity|sway|labwc|wayfire";
+
 export const BUILT_IN: Profile[] = [
   {
     id: "boot",
@@ -183,10 +185,17 @@ export const BUILT_IN: Profile[] = [
     about: "A display device exists; on a desktop system a display server, window manager, launcher and file manager run.",
     steps: [
       shell("ls /dev/fb0 /dev/dri/card0 2>/dev/null; cat /sys/class/graphics/fb0/virtual_size 2>/dev/null", "A display device exists", { expect: "fb0|card0", optional: true }),
-      shell("ps -e 2>/dev/null | grep -E 'Xorg|Xwayland|weston|gnome-shell|kwin|sway|mutter' | grep -v grep || ps | grep -E 'Xorg|weston|sway' | grep -v grep", "A display server runs", { optional: true }),
-      shell("ps -e 2>/dev/null | grep -E 'xfwm4|openbox|i3|mutter|kwin|marco|metacity|sway|labwc|wayfire' | grep -v grep", "A window manager runs", { optional: true }),
+      // Under an emulated CPU a desktop takes minutes after the login prompt: wait for it, where one is installed.
+      shell(
+        `if command -v lightdm >/dev/null || command -v gdm3 >/dev/null || command -v sddm >/dev/null; then i=0; while [ $i -lt 90 ] && ! ps -e | grep -qE '${WINDOW_MANAGERS}'; do sleep 5; i=$((i+1)); done; fi; ps -e | grep -E 'Xorg|Xwayland|weston|gnome-shell|kwin|sway|mutter' | grep -v grep`,
+        "A display server runs",
+        { optional: true, timeoutMs: 9 * 60_000 }
+      ),
+      shell(`ps -e | grep -E '${WINDOW_MANAGERS}' | grep -v grep`, "A window manager runs", { optional: true }),
+      shell("ps -e | grep -E 'xfce4-panel|gnome-shell|plasmashell|lxpanel|mate-panel|waybar' | grep -v grep", "A desktop panel runs", { optional: true }),
       shell("command -v thunar nautilus pcmanfm dolphin caja nemo 2>/dev/null | head -3", "A file manager is installed", { expect: "/", optional: true }),
-      shell("ls /usr/share/applications 2>/dev/null | wc -l", "Applications are registered for a launcher", { expect: "^\\s*[1-9]", optional: true }),
+      shell("ls /usr/share/applications 2>/dev/null | wc -l", "Applications are registered for a launcher", { expect: "^\s*[1-9]", optional: true }),
+      { do: "sleep", ms: 20_000, what: "Let the desktop settle" },
       { do: "screenshot", name: "desktop", minCoverage: 0.05, what: "The screen shows a desktop", optional: true }
     ]
   },

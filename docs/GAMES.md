@@ -11,10 +11,12 @@ finished milestone becomes a version you can play.
    characters), the core loop playable first, then content, art, animation,
    sound, menus and saving, online multiplayer when you asked for it, polish,
    then upgrades for as long as it runs.
-2. **A real starting point.** A new game starts from the web starter (React,
-   TypeScript, Vite, tests), with `ASSETS.md` and, for multiplayer, the
-   multiplayer kit. Its pictures are listed in `art.json` and drawn on this PC
-   by the image engine (ArtStudio), so they belong to the game.
+2. **A real engine.** A new game starts on Phaser 3, or three.js when it is 3D
+   (`templates/game-engines`): scenes or a lit world, input, a game loop, sound made
+   in code, saving, and rules in tested modules, with `ASSETS.md` and, for multiplayer,
+   the multiplayer kit. Its pictures are listed in `art.json` and drawn on this PC by
+   the image engine (ArtStudio), so they belong to the game.
+   `npm run check:game-engines` installs, builds and runs both in a real browser.
 3. **Every step is held to a game's bar:** real art for everything, animation
    for every state, particles and screen shake, Web Audio sound and music,
    game rules in tested modules, playable at the end of each step.
@@ -33,6 +35,18 @@ finished milestone becomes a version you can play.
    a play link; one that does not build says why and takes no number.
 6. **Follow-ups.** Send notes from the game's card at any time: the step in
    progress stops and the roadmap is revised around what you said.
+
+## Where to play it
+
+- **In the app:** **▶ Play here** on the game's card, full window, any version.
+- **In a tab:** **Open in a tab**; the link works for anyone you send it to.
+- **Download:** a zip of that version. `Play.bat` (Windows) or `play.sh` starts a small
+  server on that computer and opens the game. There is no installer or `.exe` yet.
+- **SaveState:** the newest version goes to `games/made-<name>/`, where SaveState's Mini
+  Games lists Agent Builder's finished games (Mini Games → the Agent Builder list → add).
+
+These are web games on real engines. Native engines (Godot, Unity export) are not part
+of this flow; Unity levels have their own panel.
 
 Approvals work as for every project: the game's own folder only changes when
 you approve a delivery (Agent → Continuous). The versions are playable before
