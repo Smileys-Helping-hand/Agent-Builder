@@ -189,15 +189,32 @@ export const Backend = {
       `-D ${WSL_ROOT}/run/${vm.id}.qemu.log`,
       "-daemonize"
     ].filter(Boolean);
-    const result = await Backend.run(`mkdir -p ${WSL_ROOT}/run && qemu-system-x86_64 ${args.join(" ")} && cat ${WSL_ROOT}/run/${vm.id}.pid`, 120_000);
+    // Once daemonized QEMU reports to its log, not to us: on failure the log is the reason.
+    const log = `${WSL_ROOT}/run/${vm.id}.qemu.log`;
+    const result = await Backend.run(`mkdir -p ${WSL_ROOT}/run && : > ${log} && qemu-system-x86_64 ${args.join(" ")} && cat ${WSL_ROOT}/run/${vm.id}.pid || { tail -5 ${log}; false; }`, 120_000);
     const pid = Number(/(\d+)\s*$/.exec(result.out)?.[1]);
-    if (!result.ok || !pid) throw new Error(`QEMU did not start: ${result.out.slice(-600)}`);
+    if (!result.ok || !pid) throw new Error(`QEMU did not start: ${result.out.slice(-600) || "WSL did not answer in time; try again."}`);
     return pid;
   },
 
-  async alive(pid: number): Promise<boolean> {
-    const result = await Backend.run(`kill -0 ${pid} 2>/dev/null && echo ALIVE`, 30_000);
-    return /ALIVE/.test(result.out);
+  /** Whether a pid is alive; null when WSL did not answer, which says nothing about the VM. */
+  async alive(pid: number): Promise<boolean | null> {
+    const result = await Backend.run(`kill -0 ${pid} 2>/dev/null && echo ALIVE || echo GONE`, 60_000);
+    return /ALIVE/.test(result.out) ? true : /GONE/.test(result.out) ? false : null;
+  },
+
+  /** A VM's QEMU if it is running, however the records got out of step; null when WSL did not answer. */
+  async find(id: string): Promise<{ pid: number; ports: { vnc: number; qmp: number; serial: number } } | "gone" | null> {
+    const file = `${WSL_ROOT}/run/${id}.pid`;
+    const result = await Backend.run(`P=$(cat ${file} 2>/dev/null); C=$(tr '\\0' ' ' < /proc/$P/cmdline 2>/dev/null); case "$C" in *vmlab-${id}*) echo "RUNNING $P $C";; *) echo GONE;; esac`, 60_000);
+    if (/GONE/.test(result.out) && !/RUNNING/.test(result.out)) return "gone";
+    const match = /RUNNING (\d+) (.*)/.exec(result.out);
+    if (!match) return null;
+    const vnc = /-vnc 127\.0\.0\.1:(\d+)/.exec(match[2]);
+    const qmp = /-qmp tcp:127\.0\.0\.1:(\d+)/.exec(match[2]);
+    const serial = /id=ser0,host=127\.0\.0\.1,port=(\d+)/.exec(match[2]);
+    if (!vnc || !qmp || !serial) return "gone";
+    return { pid: Number(match[1]), ports: { vnc: 5900 + Number(vnc[1]), qmp: Number(qmp[1]), serial: Number(serial[1]) } };
   },
 
   async kill(pid: number): Promise<void> {
@@ -317,7 +334,7 @@ const attach = async (vm: Vm): Promise<Live> => {
       live.delete(vm.id);
       void (async () => {
         const current = get(vm.id);
-        if (current?.pid && !(await Backend.alive(current.pid))) await markStopped(vm.id, "QEMU exited");
+        if (current?.pid && (await Backend.alive(current.pid)) === false) await markStopped(vm.id, "QEMU exited");
       })();
     }
   });
@@ -336,6 +353,16 @@ const markStopped = async (id: string, why: string) => {
   patch(id, { state: "stopped", pid: null, ports: null, slot: null, stoppedAt: new Date().toISOString() });
   remember(id, "stopped", why);
   labEvents.emit("vm", { id, event: "stopped" });
+};
+
+/** A VM found running that the records had wrong: back under control, with no second QEMU on its disk. */
+const adopt = async (id: string, found: { pid: number; ports: { vnc: number; qmp: number; serial: number } }, why: string) => {
+  patch(id, { state: "running", pid: found.pid, ports: found.ports, slot: found.ports.vnc - 5960, lastError: null, stoppedAt: null, startedAt: get(id)?.startedAt ?? new Date().toISOString() });
+  const holder = await attach(get(id)!);
+  const status = await holder.qmp.command<{ status: string }>("query-status").catch(() => null);
+  if (status?.status === "paused") patch(id, { state: "paused" });
+  remember(id, "found running", why);
+  labEvents.emit("vm", { id, event: "started" });
 };
 
 const isoAllowed = (iso: string): boolean => {
@@ -468,6 +495,12 @@ export const VmLab = {
     if (!vm) throw new Error("Unknown VM.");
     if (vm.state === "running" || vm.state === "starting") return vm;
     if (vm.state === "paused") return VmLab.resume(id);
+    // Already running, though the records say otherwise: take it back, a second QEMU could not start on its disk anyway.
+    const found = await Backend.find(id);
+    if (found && found !== "gone") {
+      await adopt(id, found, "Start found it still running");
+      return get(id)!;
+    }
     const running = read().filter((v) => v.state === "running" || v.state === "paused" || v.state === "starting");
     if (running.length >= MAX_RUNNING) throw new Error(`${running.length} VMs are already running (the limit is ${MAX_RUNNING}). Stop one first.`);
     const memory = running.reduce((sum, v) => sum + v.memoryMb, 0);
@@ -688,13 +721,23 @@ export const VmLab = {
     return get(id)!;
   },
 
-  /** After the builder restarts: VMs still running are found again; gone ones are marked stopped. */
-  async reconnectAll(): Promise<void> {
-    for (const vm of read().filter((v) => v.state === "running" || v.state === "paused" || v.state === "starting")) {
-      if (vm.pid && (await Backend.alive(vm.pid))) {
-        await attach(vm).catch((error) => Logger.warn("VmLab: could not reconnect to a running VM", { vm: vm.id, error: (error as Error).message }));
-      } else await markStopped(vm.id, "Not running after the builder restarted");
+  /**
+   * After the builder restarts: VMs still running are found again, whatever the records say; only ones known
+   * to be gone are marked stopped. WSL can be too busy to answer at first, which says nothing: those are asked again.
+   */
+  async reconnectAll(attempt = 1): Promise<void> {
+    let unknown = 0;
+    for (const vm of read()) {
+      const found = await Backend.find(vm.id);
+      if (found === null) {
+        unknown += 1;
+      } else if (found === "gone") {
+        if (vm.state === "running" || vm.state === "paused" || vm.state === "starting") await markStopped(vm.id, "Not running after the builder restarted");
+      } else {
+        await adopt(vm.id, found, "Reconnected after the builder restarted").catch((error) => Logger.warn("VmLab: could not reconnect to a running VM", { vm: vm.id, error: (error as Error).message }));
+      }
     }
+    if (unknown && attempt < 10) setTimeout(() => void VmLab.reconnectAll(attempt + 1).catch(() => undefined), 60_000).unref();
   },
 
   /** Stop every VM now (the emergency stop). */

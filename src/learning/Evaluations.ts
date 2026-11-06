@@ -209,6 +209,7 @@ const execute = async (run: EvaluationRun, challenges: Challenge[]) => {
         run.state = "stopped";
         break;
       }
+      if (run.results.some((r) => r.id === challenge.id)) continue;
       const context = run.withKnowledge ? knowledgeFor(challenge) : { text: "", used: [] };
       const trials: TrialResult[] = [];
       for (let i = 0; i < run.trials; i++) {
@@ -277,6 +278,16 @@ export const Evaluations = {
 
   stop(id: string): void {
     stopping.add(id);
+  },
+
+  /** After a restart: the newest run carries on from the challenge it had reached; older unfinished ones are closed. */
+  resumeInterrupted(): void {
+    const unfinished = read().filter((r) => r.state === "running" && r.id !== running);
+    const newest = unfinished[unfinished.length - 1];
+    for (const old of unfinished.slice(0, -1)) save({ ...old, state: "stopped", error: "The builder restarted during this run.", finishedAt: new Date().toISOString() });
+    if (!newest || running) return;
+    running = newest.id;
+    void execute(newest, Evaluations.challenges());
   },
 
   /** Two runs side by side: only what was measured. */

@@ -261,6 +261,7 @@ export const registerAgentRoutes = (app: Express) => {
 
   Investigations.ensureTicking();
   LearningLoop.start();
+  Evaluations.resumeInterrupted();
 
   app.get("/api/agent/investigations", authenticateAgent("read"), (_req: Request, res: Response) => {
     res.json({ investigations: Investigations.list().map(({ id, objective, state, phase, round, createdAt, finishedAt, specialists, experiments, contradictions, error }) => ({ id, objective, state, phase, round, createdAt, finishedAt, error, specialists: specialists.length, specialistsDone: specialists.filter((s) => s.status === "done").length, experiments: experiments.length, contradictions: contradictions.length })) });
