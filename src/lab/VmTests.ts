@@ -41,7 +41,7 @@ export type Step =
   | { do: "send"; text: string; what?: string }
   | { do: "keys"; text?: string; combos?: string[][]; what?: string }
   | { do: "click"; x: number; y: number; button?: "left" | "right"; what?: string }
-  | { do: "screenshot"; name: string; minCoverage?: number; what?: string; optional?: boolean }
+  | { do: "screenshot"; name: string; minCoverage?: number; /** Keep looking this long for the screen to show it. */ withinMs?: number; what?: string; optional?: boolean }
   | { do: "restart"; what?: string }
   | { do: "sleep"; ms: number; what?: string };
 
@@ -110,7 +110,7 @@ export const BUILT_IN: Profile[] = [
       { do: "start", what: "Start the VM" },
       { do: "wait", for: "Linux version|Booting|ISOLINUX|GRUB|SeaBIOS", timeoutMs: 5 * 60_000, what: "Firmware and kernel start", optional: true },
       { do: "wait", for: "login:", timeoutMs: BOOT_TIMEOUT, what: "Reaches a login prompt" },
-      { do: "screenshot", name: "booted", minCoverage: 0.002, what: "The screen shows the booted system" }
+      { do: "screenshot", name: "booted", minCoverage: 0.002, withinMs: 5 * 60_000, what: "The screen shows the booted system" }
     ]
   },
   {
@@ -187,7 +187,7 @@ export const BUILT_IN: Profile[] = [
       shell("ls /dev/fb0 /dev/dri/card0 2>/dev/null; cat /sys/class/graphics/fb0/virtual_size 2>/dev/null", "A display device exists", { expect: "fb0|card0", optional: true }),
       // Under an emulated CPU a desktop takes minutes after the login prompt: wait for it, where one is installed.
       shell(
-        `if command -v lightdm >/dev/null || command -v gdm3 >/dev/null || command -v sddm >/dev/null; then i=0; while [ $i -lt 90 ] && ! ps -e | grep -qE '${WINDOW_MANAGERS}'; do sleep 5; i=$((i+1)); done; fi; ps -e | grep -E 'Xorg|Xwayland|weston|gnome-shell|kwin|sway|mutter' | grep -v grep`,
+        `if [ -x /usr/sbin/lightdm ] || [ -x /usr/sbin/gdm3 ] || [ -x /usr/bin/sddm ] || [ -x /usr/sbin/sddm ]; then i=0; while [ $i -lt 90 ] && ! ps -e | grep -qE '${WINDOW_MANAGERS}'; do sleep 5; i=$((i+1)); done; fi; ps -e | grep -E 'Xorg|Xwayland|weston|gnome-shell|kwin|sway|mutter' | grep -v grep`,
         "A display server runs",
         { optional: true, timeoutMs: 9 * 60_000 }
       ),
@@ -195,8 +195,7 @@ export const BUILT_IN: Profile[] = [
       shell("ps -e | grep -E 'xfce4-panel|gnome-shell|plasmashell|lxpanel|mate-panel|waybar' | grep -v grep", "A desktop panel runs", { optional: true }),
       shell("command -v thunar nautilus pcmanfm dolphin caja nemo 2>/dev/null | head -3", "A file manager is installed", { expect: "/", optional: true }),
       shell("ls /usr/share/applications 2>/dev/null | wc -l", "Applications are registered for a launcher", { expect: "^\s*[1-9]", optional: true }),
-      { do: "sleep", ms: 20_000, what: "Let the desktop settle" },
-      { do: "screenshot", name: "desktop", minCoverage: 0.05, what: "The screen shows a desktop", optional: true }
+      { do: "screenshot", name: "desktop", minCoverage: 0.05, withinMs: 5 * 60_000, what: "The screen shows a desktop", optional: true }
     ]
   },
   {
@@ -408,7 +407,14 @@ const perform = async (run: TestRun, vmId: string, step: Step, login: { user: st
       await VmLab.mouse(vmId, step.x, step.y, step.button ?? "left");
       return { expected, actual: "clicked", result: "passed", output: "", screenshot: null };
     case "screenshot": {
-      const shot = await VmLab.screenshot(vmId, dir);
+      let shot = await VmLab.screenshot(vmId, dir);
+      // The screen can be black for a moment while a display server starts: look again, within the limit.
+      const until = Date.now() + (step.withinMs ?? 0);
+      while (step.minCoverage && shot.coverage < step.minCoverage && Date.now() < until && !stopping.has(run.id)) {
+        await sleep(5000);
+        fs.rmSync(shot.file, { force: true });
+        shot = await VmLab.screenshot(vmId, dir);
+      }
       const name = `${String(run.steps.length + 1).padStart(3, "0")}-${step.name.replace(/[^A-Za-z0-9_-]+/g, "-")}.png`;
       fs.renameSync(shot.file, path.join(dir, name));
       const ok = !step.minCoverage || shot.coverage >= step.minCoverage;

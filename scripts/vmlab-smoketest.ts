@@ -1,7 +1,8 @@
 /**
  * Smoketest: the Virtual Test Lab, for real — QEMU in WSL boots Alpine Linux
  * (data/vmlab/isos/alpine-virt-*.iso, the official image) and the runner tests it:
- *   - a VM is created with its own disk, started, and boots a real kernel to a login prompt
+ *   - a VM is created with its own disk, started, and boots a real kernel to a login prompt,
+ *     and comes back after a reset
  *   - the runner logs in on the serial console and runs the built-in profiles,
  *     with each step's expected and actual result, output and screenshots kept
  *   - a failure is a real one: the live ISO's root account has no password, and the security profile says so
@@ -50,12 +51,13 @@ const main = async () => {
   try {
     // 2. Boot, log in, and the profiles.
     const started = Date.now();
-    const run = await VmTests.runToEnd({ vmId: vm.id, profiles: ["boot", "login", "basics", "services", "network", "packages", "security"], agent: "smoketest", task: "smoke:vmlab" });
+    const run = await VmTests.runToEnd({ vmId: vm.id, profiles: ["boot", "login", "basics", "services", "network", "packages", "security", "restart"], agent: "smoketest", task: "smoke:vmlab" });
     const byWhat = (what: string) => run.steps.find((s) => s.what === what);
     const lines = run.steps.map((s) => `   ${s.result.padEnd(7)} [${s.profile}] ${s.what}: ${s.actual}`).join("\n");
     console.log(lines);
     if (byWhat("Reaches a login prompt")?.result !== "passed") fail(`it did not boot: ${byWhat("Reaches a login prompt")?.output.slice(-500)}`);
     if (byWhat("Log in")?.result !== "passed") fail("could not log in on the serial console");
+    if (byWhat("Back at a login prompt")?.result !== "passed" || byWhat("Log in again")?.result !== "passed") fail("it did not come back after a reset");
     if (byWhat("Kernel identifies itself")?.result !== "passed" || !/Linux/.test(byWhat("Kernel identifies itself")!.output)) fail("uname did not run");
     if (byWhat("The virtual disk is seen")?.result !== "passed") fail("the virtio disk was not seen");
     if (byWhat("A package manager exists")?.result !== "passed" || !/apk/.test(byWhat("A package manager exists")!.output)) fail("apk was not found");
