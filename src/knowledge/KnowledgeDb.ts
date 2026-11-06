@@ -138,6 +138,14 @@ CREATE INDEX IF NOT EXISTS idx_evidence_ref ON evidence(ref, id);
 CREATE INDEX IF NOT EXISTS idx_evidence_task ON evidence(task, id);
 CREATE INDEX IF NOT EXISTS idx_evidence_kind ON evidence(kind, id);
 
+CREATE TABLE IF NOT EXISTS lesson_uses (
+  lesson_id INTEGER NOT NULL,
+  used_by TEXT NOT NULL,
+  helped INTEGER,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lesson_uses ON lesson_uses(lesson_id);
+
 CREATE TABLE IF NOT EXISTS evidence_links (
   from_ref TEXT NOT NULL,
   to_ref TEXT NOT NULL,

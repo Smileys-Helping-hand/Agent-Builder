@@ -378,6 +378,17 @@ const clamp = (value: unknown, min: number, max: number, fallback: number) => {
 
 /* ─── the API ─── */
 
+export interface ScreenWord {
+  text: string;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  confidence: number;
+  block: number;
+  line: number;
+}
+
 export interface CreateVm {
   name: string;
   purpose?: string;
@@ -654,8 +665,47 @@ export const VmLab = {
     await VmLab.sendKeys(id, keysFor(text));
   },
 
+  /**
+   * What the screen says: the words on it and where, read with OCR (tesseract in WSL), so an agent can find a
+   * menu or a button by its label. It reads text; it does not understand pictures or icons without labels.
+   */
+  async readScreen(id: string, folder?: string): Promise<{ text: string; words: ScreenWord[]; width: number; height: number; file: string; coverage: number }> {
+    const shot = await VmLab.screenshot(id, folder);
+    const result = await Backend.run(`tesseract ${shq(toWsl(shot.file))} stdout --psm 11 tsv 2>/dev/null`, 120_000);
+    const words: ScreenWord[] = [];
+    for (const line of result.out.split("\n").slice(1)) {
+      const cells = line.split("\t");
+      if (cells.length < 12) continue;
+      const text = cells[11].trim();
+      const confidence = Number(cells[10]);
+      if (!text || confidence < 30) continue;
+      words.push({ text, left: Number(cells[6]), top: Number(cells[7]), width: Number(cells[8]), height: Number(cells[9]), confidence, block: Number(cells[2]), line: Number(cells[4]) });
+    }
+    return { text: words.map((w) => w.text).join(" "), words, width: shot.width, height: shot.height, file: shot.file, coverage: shot.coverage };
+  },
+
+  /** Where a phrase is on the screen, as 0..1 of width and height; null when it is not there. Later matches can be chosen. */
+  async findOnScreen(id: string, phrase: string, folder?: string, occurrence = 0): Promise<{ x: number; y: number; text: string; file: string } | null> {
+    const screen = await VmLab.readScreen(id, folder);
+    const wanted = phrase.toLowerCase().split(/\s+/).filter(Boolean);
+    const clean = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+    let seen = 0;
+    for (let i = 0; i + wanted.length <= screen.words.length; i++) {
+      const group = screen.words.slice(i, i + wanted.length);
+      if (group.every((word, k) => clean(word.text) === clean(wanted[k]))) {
+        if (seen++ < occurrence) continue;
+        const left = Math.min(...group.map((w) => w.left));
+        const right = Math.max(...group.map((w) => w.left + w.width));
+        const top = Math.min(...group.map((w) => w.top));
+        const bottom = Math.max(...group.map((w) => w.top + w.height));
+        return { x: (left + right) / 2 / screen.width, y: (top + bottom) / 2 / screen.height, text: group.map((w) => w.text).join(" "), file: screen.file };
+      }
+    }
+    return null;
+  },
+
   /** Mouse on the screen (absolute, 0..1 of width and height), optionally clicking. */
-  async mouse(id: string, x: number, y: number, click: "left" | "right" | null = null): Promise<void> {
+  async mouse(id: string, x: number, y: number, click: "left" | "right" | null = null, count = 1): Promise<void> {
     const holder = await VmLab.control(id);
     const scale = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 0x7fff);
     await holder.qmp.command("input-send-event", {
@@ -665,8 +715,14 @@ export const VmLab = {
       ]
     });
     if (click) {
-      await holder.qmp.command("input-send-event", { events: [{ type: "btn", data: { down: true, button: click } }] });
-      await holder.qmp.command("input-send-event", { events: [{ type: "btn", data: { down: false, button: click } }] });
+      // The guest has to see the pointer arrive before the button goes down.
+      await new Promise((r) => setTimeout(r, 150));
+      for (let i = 0; i < count; i++) {
+        await holder.qmp.command("input-send-event", { events: [{ type: "btn", data: { down: true, button: click } }] });
+        await new Promise((r) => setTimeout(r, 40));
+        await holder.qmp.command("input-send-event", { events: [{ type: "btn", data: { down: false, button: click } }] });
+        await new Promise((r) => setTimeout(r, 80));
+      }
     }
   },
 
@@ -738,6 +794,17 @@ export const VmLab = {
       }
     }
     if (unknown && attempt < 10) setTimeout(() => void VmLab.reconnectAll(attempt + 1).catch(() => undefined), 60_000).unref();
+  },
+
+  /** Take the ISO out, as after installing: the next boot comes from the disk. */
+  async ejectIso(id: string): Promise<string> {
+    const holder = await VmLab.control(id);
+    const devices = await holder.qmp.command<Array<{ device: string; removable: boolean; inserted?: unknown }>>("query-block");
+    const drive = devices.find((d) => d.removable && d.inserted);
+    if (!drive) return "no disc in it";
+    await holder.qmp.command("eject", { device: drive.device, force: true });
+    remember(id, "ejected the ISO", drive.device);
+    return drive.device;
   },
 
   /** Stop every VM now (the emergency stop). */

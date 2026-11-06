@@ -11,6 +11,8 @@
  *   send        type raw text on the serial console
  *   keys        type on the VM's screen (keyboard events through QEMU)
  *   click       move the mouse to a point on the screen and click
+ *   see         wait until the screen shows a piece of text (read with OCR)
+ *   clickText   find a label on the screen and click it, as a person would
  *   screenshot  capture the screen; optionally require it to show something
  *   restart     reset the VM
  *   sleep       wait
@@ -31,7 +33,7 @@ import path from "path";
 
 import { Evidence } from "../knowledge/Evidence.js";
 import { Logger } from "../utils/Logger.js";
-import { VmLab } from "./VmLab.js";
+import { VmLab, toWsl } from "./VmLab.js";
 
 export type Step =
   | { do: "start"; snapshot?: string; what?: string }
@@ -41,8 +43,14 @@ export type Step =
   | { do: "send"; text: string; what?: string }
   | { do: "keys"; text?: string; combos?: string[][]; what?: string }
   | { do: "click"; x: number; y: number; button?: "left" | "right"; what?: string }
+  /** Wait until the screen shows this text (read with OCR). */
+  | { do: "see"; text: string; timeoutMs?: number; what?: string; optional?: boolean }
+  /** Find this text on the screen and click it. */
+  | { do: "clickText"; text: string; button?: "left" | "right"; double?: boolean; timeoutMs?: number; what?: string; optional?: boolean }
   | { do: "screenshot"; name: string; minCoverage?: number; /** Keep looking this long for the screen to show it. */ withinMs?: number; what?: string; optional?: boolean }
   | { do: "restart"; what?: string }
+  /** Take the ISO out, as after installing. */
+  | { do: "eject"; what?: string }
   | { do: "sleep"; ms: number; what?: string };
 
 export interface Profile {
@@ -83,6 +91,12 @@ export interface TestRun {
   steps: StepResult[];
   counts: { passed: number; failed: number; warned: number; skipped: number };
   frames: string[];
+  /** The frames made into a video. */
+  recording?: string | null;
+  /** What was asked for, so it can be run again. */
+  request?: { profiles: string[]; login: { user: string; password: string }; recordEverySec: number; vm: { cpus: number; memoryMb: number; network: string; iso: string | null; isoSize: number | null } };
+  /** The run this one reproduces, and what differs. */
+  reproduces?: { run: string; differences: string[] } | null;
   error: string | null;
   feedback: Array<{ at: string; by: string; text: string; kind: string; followUp: string | null }>;
 }
@@ -199,6 +213,49 @@ export const BUILT_IN: Profile[] = [
     ]
   },
   {
+    id: "desktop-use",
+    name: "Using the desktop",
+    about: "Works an Xfce desktop as a person would, by what the screen says: opens the applications menu, starts the terminal, types a command in it, and opens the file manager.",
+    steps: [
+      { do: "see", text: "Applications", timeoutMs: 6 * 60_000, what: "The desktop's menu is on the screen" },
+      { do: "clickText", text: "Applications", what: "Open the applications menu" },
+      { do: "sleep", ms: 8000, what: "The menu opens" },
+      { do: "screenshot", name: "menu", what: "The open menu" },
+      { do: "clickText", text: "Terminal Emulator", timeoutMs: 90_000, what: "Start the terminal from the menu" },
+      shell("i=0; while [ $i -lt 40 ] && ! ps -e | grep -q xfce4-terminal; do sleep 3; i=$((i+1)); done; ps -e | grep xfce4-terminal | grep -v grep", "The terminal is running", { expect: "xfce4-terminal", timeoutMs: 180_000 }),
+      { do: "sleep", ms: 20_000, what: "It takes the keyboard" },
+      { do: "keys", text: "echo typed-on-the-screen > /tmp/from-keys\n", what: "Type a command in it" },
+      { do: "sleep", ms: 8000, what: "The command runs" },
+      shell("cat /tmp/from-keys", "What was typed on the screen really ran", { expect: "typed-on-the-screen" }),
+      { do: "screenshot", name: "terminal", what: "The terminal, after the command" },
+      { do: "keys", text: "exit\n", what: "Close the terminal" },
+      { do: "sleep", ms: 10_000, what: "It closes" },
+      { do: "clickText", text: "Home", double: true, timeoutMs: 90_000, what: "Open the Home folder from the desktop" },
+      shell("i=0; while [ $i -lt 40 ] && ! ps -e | grep -q thunar; do sleep 3; i=$((i+1)); done; ps -e | grep thunar | grep -v grep", "The file manager is running", { expect: "thunar", timeoutMs: 180_000 }),
+      { do: "sleep", ms: 10_000, what: "It draws" },
+      { do: "screenshot", name: "files", what: "The file manager" }
+    ]
+  },
+  {
+    id: "install-nexusos",
+    name: "Fresh installation (NexusOS)",
+    about: "Installs the live system onto the VM's empty disk with nexus-install, takes the ISO out, boots from the disk, and proves a file survives a restart.",
+    steps: [
+      shell("echo nexus | sudo -S -p '' nexus-install /dev/vda 2>&1 | tail -15; echo INSTALL=${PIPESTATUS[1]}", "Install onto the empty disk", { expect: "INSTALL=0", timeoutMs: 40 * 60_000 }),
+      { do: "eject", what: "Take the ISO out" },
+      { do: "restart", what: "Restart" },
+      { do: "wait", for: "login:", timeoutMs: BOOT_TIMEOUT, what: "It boots from the disk to a login prompt" },
+      { do: "login", what: "Log in to the installed system" },
+      shell("findmnt -n -o SOURCE /", "The root filesystem is on the disk, not the live image", { expect: "/dev/vd" }),
+      shell("grep -c 'boot=live' /proc/cmdline; grep PRETTY_NAME /etc/os-release", "It is the installed NexusOS", { expect: "^0[\\s\\S]*NexusOS", exit: "any" }),
+      shell("echo kept > ~/survives-restart; sync; cat ~/survives-restart", "Save a file", { expect: "kept" }),
+      { do: "restart", what: "Restart again" },
+      { do: "wait", for: "login:", timeoutMs: BOOT_TIMEOUT, what: "It comes back" },
+      { do: "login", what: "Log in again" },
+      shell("cat ~/survives-restart", "The file survived the restart", { expect: "kept" })
+    ]
+  },
+  {
     id: "audio",
     name: "Audio",
     about: "A sound card is detected (the VM has an Intel HDA device with no host output).",
@@ -233,7 +290,7 @@ export const BUILT_IN: Profile[] = [
   }
 ];
 
-export const FULL = ["boot", "login", "basics", "services", "network", "packages", "graphics", "audio", "security", "performance", "stability", "restart"];
+export const FULL = ["boot", "login", "basics", "services", "network", "packages", "graphics", "desktop-use", "audio", "security", "performance", "stability", "restart"];
 
 /* ─── profiles ─── */
 
@@ -251,7 +308,7 @@ export const saveProfile = (profile: { id?: string; name: string; about?: string
   const id = (profile.id ?? profile.name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
   if (!id || BUILT_IN.some((p) => p.id === id)) throw new Error("Give the profile its own name (not a built-in one).");
   if (!Array.isArray(profile.steps) || !profile.steps.length) throw new Error("A profile needs steps.");
-  const allowed = new Set(["start", "wait", "login", "run", "send", "keys", "click", "screenshot", "restart", "sleep"]);
+  const allowed = new Set(["start", "wait", "login", "run", "send", "keys", "click", "see", "clickText", "screenshot", "restart", "eject", "sleep"]);
   for (const step of profile.steps) if (!allowed.has((step as { do: string }).do)) throw new Error(`Unknown step: ${(step as { do: string }).do}`);
   const saved: Profile = { id, name: profile.name.slice(0, 80), about: (profile.about ?? "").slice(0, 300), steps: profile.steps.slice(0, 100) };
   const all = custom().filter((p) => p.id !== id);
@@ -329,6 +386,10 @@ const describe = (step: Step): string => {
       return step.user ? `logs in as ${step.user} and gets a shell` : "logs in and gets a shell";
     case "run":
       return `\`${step.command.slice(0, 120)}\` exits ${step.exit === "any" ? "(any code)" : step.exit ?? 0}${step.expect ? `, output matches /${step.expect}/` : ""}${step.reject ? `, output has no /${step.reject}/` : ""}`;
+    case "see":
+      return `the screen says "${step.text}"`;
+    case "clickText":
+      return `"${step.text}" is on the screen and gets ${step.double ? "double-" : ""}clicked`;
     case "screenshot":
       return step.minCoverage ? `the screen shows content (≥ ${Math.round(step.minCoverage * 1000) / 10}% non-background)` : "a screenshot";
     case "keys":
@@ -339,6 +400,8 @@ const describe = (step: Step): string => {
       return "text is typed on the console";
     case "restart":
       return "the VM resets";
+    case "eject":
+      return "the ISO comes out";
     case "sleep":
       return `${step.ms} ms pass`;
   }
@@ -406,6 +469,28 @@ const perform = async (run: TestRun, vmId: string, step: Step, login: { user: st
     case "click":
       await VmLab.mouse(vmId, step.x, step.y, step.button ?? "left");
       return { expected, actual: "clicked", result: "passed", output: "", screenshot: null };
+    case "see":
+    case "clickText": {
+      const limit = step.timeoutMs ?? 60_000;
+      const started = Date.now();
+      let found: Awaited<ReturnType<typeof VmLab.findOnScreen>> = null;
+      let last = "";
+      while (!stopping.has(run.id)) {
+        const scratch = path.join(dir, "ocr");
+        found = await VmLab.findOnScreen(vmId, step.text, scratch);
+        if (found) break;
+        last = (await VmLab.readScreen(vmId, scratch).catch(() => ({ text: "" }))).text;
+        fs.rmSync(scratch, { recursive: true, force: true });
+        if (Date.now() - started > limit) break;
+        await sleep(4000);
+      }
+      const name = `${String(run.steps.length + 1).padStart(3, "0")}-${step.do}.png`;
+      if (found) fs.copyFileSync(found.file, path.join(dir, name));
+      fs.rmSync(path.join(dir, "ocr"), { recursive: true, force: true });
+      if (!found) return { expected, actual: `not on the screen within ${Math.round(limit / 1000)} s`, result: step.optional ? "warned" : "failed", output: `The screen said: ${last.slice(0, 1500)}`, screenshot: null };
+      if (step.do === "clickText") await VmLab.mouse(vmId, found.x, found.y, step.button ?? "left", step.double ? 2 : 1);
+      return { expected, actual: `${step.do === "clickText" ? "clicked" : "seen"} at ${Math.round(found.x * 100)}%, ${Math.round(found.y * 100)}%`, result: "passed", output: "", screenshot: name };
+    }
     case "screenshot": {
       let shot = await VmLab.screenshot(vmId, dir);
       // The screen can be black for a moment while a display server starts: look again, within the limit.
@@ -426,6 +511,8 @@ const perform = async (run: TestRun, vmId: string, step: Step, login: { user: st
         screenshot: name
       };
     }
+    case "eject":
+      return { expected, actual: await VmLab.ejectIso(vmId), result: "passed", output: "", screenshot: null };
     case "restart":
       bootMarks.set(run.id, VmLab.serialLog(vmId).size);
       await VmLab.restart(vmId);
@@ -445,6 +532,7 @@ export interface StartRun {
   label?: string | null;
   /** A screenshot every this many seconds while it runs (a recording). */
   recordEverySec?: number;
+  reproduces?: { run: string; differences: string[] } | null;
 }
 
 export const VmTests = {
@@ -498,12 +586,47 @@ export const VmTests = {
       counts: { passed: 0, failed: 0, warned: 0, skipped: 0 },
       frames: [],
       error: null,
-      feedback: []
+      feedback: [],
+      recording: null,
+      request: {
+        profiles: chosen,
+        login: { user: input.login?.user ?? "root", password: input.login?.password ?? "" },
+        recordEverySec: input.recordEverySec ?? 0,
+        vm: { cpus: vm.cpus, memoryMb: vm.memoryMb, network: vm.network, iso: vm.iso, isoSize: vm.iso && fs.existsSync(vm.iso) ? fs.statSync(vm.iso).size : null }
+      },
+      reproduces: input.reproduces ?? null
     };
     writeRun(run);
     const work = VmTests.execute(run, chosen.map((id) => known.get(id)!), { user: input.login?.user ?? "root", password: input.login?.password ?? "" }, input.recordEverySec ?? 0);
     active.set(run.id, work);
     void work.finally(() => active.delete(run.id));
+    return run;
+  },
+
+  /**
+   * Run an earlier run again in a fresh disposable VM with the same hardware, ISO and profiles. What cannot be the
+   * same (an ISO that was rebuilt or is gone) is said, and the new run keeps it beside the result.
+   */
+  async reproduce(runId: string, agent = "owner"): Promise<TestRun> {
+    const original = readRun(runId);
+    if (!original) throw new Error("Unknown test run.");
+    const request = original.request;
+    if (!request) throw new Error("That run is older than reproducing: it did not keep what it was asked for.");
+    const differences: string[] = [];
+    let iso = request.vm.iso;
+    if (iso && !fs.existsSync(iso)) {
+      differences.push(`The ISO is gone: ${path.basename(iso)}. Booting without it cannot reproduce the run.`);
+      iso = null;
+    } else if (iso) {
+      const stat = fs.statSync(iso);
+      if (request.vm.isoSize !== null && stat.size !== request.vm.isoSize) differences.push(`The ISO changed size since: ${request.vm.isoSize} then, ${stat.size} now.`);
+      if (original.build.isoModifiedAt && stat.mtime.toISOString() !== original.build.isoModifiedAt) differences.push(`The ISO was rebuilt since: ${original.build.isoModifiedAt} then, ${stat.mtime.toISOString()} now.`);
+    }
+    if (request.vm.iso && !iso) throw new Error(differences.join(" "));
+    differences.push("The disk starts empty, and anything set up by hand in the earlier VM is not there.");
+    const vm = await VmLab.create({ name: `Reproducing ${original.vmName}`.slice(0, 60), purpose: `Reproducing test run ${original.id}`, iso, cpus: request.vm.cpus, memoryMb: request.vm.memoryMb, network: request.vm.network as "none" | "isolated" | "internet", disposable: true, maxRuntimeMinutes: 240 });
+    const run = VmTests.start({ vmId: vm.id, profiles: request.profiles, agent, task: original.task, login: request.login, label: `Reproducing ${original.id}`, recordEverySec: request.recordEverySec, reproduces: { run: original.id, differences } });
+    void active.get(run.id)?.finally(() => void VmLab.stop(vm.id, true).catch(() => undefined));
     return run;
   },
 
@@ -566,6 +689,17 @@ export const VmTests = {
       if (message === "The system did not boot.") run.state = "failed";
     } finally {
       if (recorder) clearInterval(recorder);
+      // The frames as a video, when ffmpeg is there.
+      if (run.frames.length > 1) {
+        const frames = path.join(dir, "frames");
+        const list = path.join(frames, "list.txt");
+        fs.writeFileSync(list, run.frames.map((f) => `file '${f}'\nduration ${Math.max(1, Math.round(recordEverySec / 2))}`).join("\n"));
+        const made = await VmLab.backend.run(`cd ${JSON.stringify(toWsl(frames))} && ffmpeg -y -loglevel error -f concat -safe 0 -i list.txt -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -pix_fmt yuv420p -r 10 ../recording.mp4 && echo MADE`, 10 * 60_000);
+        if (/MADE/.test(made.out)) {
+          run.recording = "recording.mp4";
+          fs.rmSync(frames, { recursive: true, force: true });
+        }
+      }
       stopping.delete(run.id);
       bootMarks.delete(run.id);
       run.finishedAt = new Date().toISOString();

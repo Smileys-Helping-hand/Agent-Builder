@@ -427,6 +427,11 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
     params: { vmId: "the VM", "profiles?": "the profile ids (all of them by default)", "login?": "{ user, password }" },
     call: (p) => ["POST", "/api/lab/runs", pick(p, "vmId", "profiles", "login")]
   },
+  { name: "lab.readScreen", area: "agent", label: "What a VM's screen says (read with OCR), and where", scope: "read", params: { vmId: "the VM" }, call: (p) => ["GET", `/api/lab/vms/${enc(str(p.vmId))}/read-screen`] },
+  { name: "lab.clickText", area: "agent", label: "Click a label on a VM's screen, found by what it says", scope: "execute", params: { vmId: "the VM", text: "the label", "double?": "true to double-click" }, call: (p) => ["POST", `/api/lab/vms/${enc(str(p.vmId))}/click-text`, pick(p, "text", "double")] },
+  { name: "lab.reproduce", area: "agent", label: "Run an earlier VM test again in a fresh VM; says what cannot be the same", scope: "execute", params: { runId: "the run" }, call: (p) => ["POST", `/api/lab/runs/${enc(str(p.runId))}/reproduce`, {}] },
+  { name: "simulate", area: "research", label: "A computed experiment: the model writes a simulation from a description and it runs in a sandbox, every combination, with sensitivity", scope: "execute", params: { title: "its name", description: "what to simulate" }, call: (p) => ["POST", "/api/agent/experiments", pick(p, "title", "description")] },
+  { name: "agent.evidence", area: "agent", label: "The evidence ledger: recent records, or one record's trace (ref)", scope: "read", params: { "ref?": "a record's address" }, call: (p) => ["GET", `/api/agent/evidence${query(p, "ref")}`] },
   { name: "lab.stopAll", area: "agent", label: "Emergency stop of every VM in the lab", scope: "execute", params: {}, call: () => ["POST", "/api/lab/stop-all", {}] },
   { name: "self.report", area: "agent", label: "What Agent Builder has learned about itself: where it keeps failing, lessons that do not help, choices getting worse — and what to change", scope: "read", params: {}, call: () => ["GET", "/api/agent/self"] },
   {

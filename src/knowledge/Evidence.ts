@@ -132,6 +132,43 @@ export const Evidence = {
     return (getKnowledgeDb().prepare("SELECT * FROM evidence WHERE task = ? AND created_at >= ? AND created_at <= ? ORDER BY id").all(task, from, to) as Row[]).map(map);
   },
 
+  /**
+   * The connections: every link within `depth` steps of a record, or the most recent ones, with what each end is.
+   * Knowledge connects across projects through the records that used it.
+   */
+  graph(options: { ref?: string; depth?: number; limit?: number } = {}): { nodes: Array<{ ref: string; kind: string; title: string; outcome: string | null }>; edges: EvidenceLink[] } {
+    const db = getKnowledgeDb();
+    const limit = Math.min(500, options.limit ?? 120);
+    type LinkRow = { from_ref: string; to_ref: string; relation: string; created_at: string };
+    const rows: LinkRow[] = [];
+    if (options.ref) {
+      const seen = new Set<string>([options.ref]);
+      let frontier = [options.ref];
+      for (let i = 0; i < Math.min(4, options.depth ?? 2) && frontier.length && rows.length < limit; i++) {
+        const next: string[] = [];
+        for (const ref of frontier) {
+          for (const row of db.prepare("SELECT * FROM evidence_links WHERE from_ref = ? OR to_ref = ? LIMIT 60").all(ref, ref) as LinkRow[]) {
+            if (rows.some((r) => r.from_ref === row.from_ref && r.to_ref === row.to_ref && r.relation === row.relation)) continue;
+            rows.push(row);
+            for (const end of [row.from_ref, row.to_ref]) {
+              if (!seen.has(end)) {
+                seen.add(end);
+                next.push(end);
+              }
+            }
+          }
+        }
+        frontier = next;
+      }
+    } else rows.push(...(db.prepare("SELECT * FROM evidence_links ORDER BY created_at DESC LIMIT ?").all(limit) as LinkRow[]));
+    const refs = [...new Set(rows.flatMap((r) => [r.from_ref, r.to_ref]))];
+    const nodes = refs.map((ref) => {
+      const record = db.prepare("SELECT * FROM evidence WHERE ref = ? ORDER BY id DESC LIMIT 1").get(ref) as Row | undefined;
+      return { ref, kind: record?.kind ?? ref.split(":")[0], title: record?.title ?? ref, outcome: record?.outcome ?? null };
+    });
+    return { nodes, edges: rows.map((l) => ({ from: l.from_ref, to: l.to_ref, relation: l.relation, createdAt: l.created_at })) };
+  },
+
   counts(): Record<string, number> {
     const rows = getKnowledgeDb().prepare("SELECT kind, COUNT(*) AS n FROM evidence GROUP BY kind").all() as Array<{ kind: string; n: number }>;
     return Object.fromEntries(rows.map((r) => [r.kind, r.n]));

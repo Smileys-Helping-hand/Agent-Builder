@@ -89,6 +89,17 @@ function GameSession({ session, onChange }: { session: ImproveSession; onChange:
               Download
             </a>
           ) : null}
+          {latest.windowsDownload ? (
+            <a className="btn small" href={onMachine(latest.windowsDownload)}>
+              Windows app ({latest.windows?.sizeMb} MB)
+            </a>
+          ) : latest.windows?.state === "building" ? (
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>Making the Windows app…</span>
+          ) : (
+            <button className="btn small" onClick={() => act("windows", () => api.gameWindowsBuild(session.id, latest.version, session.projectName), "Making the Windows app. It takes a few minutes.")}>
+              {latest.windows?.state === "failed" ? "Try the Windows app again" : "Make a Windows app"}
+            </button>
+          )}
           <span style={{ fontSize: 12, color: "var(--muted)" }}>
             {latest.title} · {ago(latest.at)}
             {latest.multiplayer ? " · online multiplayer" : ""}

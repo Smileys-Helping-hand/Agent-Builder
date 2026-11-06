@@ -24,6 +24,7 @@ import { ContinuousImprover } from "../agent/ContinuousImprover.js";
 import { Reconstructor } from "../agent/Reconstructor.js";
 import { EcosystemStore } from "../ecosystem/EcosystemStore.js";
 import { Evidence } from "../knowledge/Evidence.js";
+import { Evaluations } from "./Evaluations.js";
 import { ResearchEngine } from "../research/ResearchEngine.js";
 import { ResearchStore } from "../research/ResearchStore.js";
 import { GameMode } from "../utils/GameMode.js";
@@ -41,6 +42,7 @@ const FILE = () => path.resolve("data", "agent", "learning-loop.json");
 const TICK_MS = Number(process.env.LEARNING_LOOP_MS) || 30 * 60_000;
 const QUESTIONS_PER_TICK = 5;
 const RECONSTRUCT_EVERY_MS = Number(process.env.LEARNING_RECONSTRUCT_MS) || 24 * 3_600_000;
+const EVALUATE_EVERY_MS = Number(process.env.LEARNING_EVALUATE_MS) || 24 * 3_600_000;
 
 const read = (): LoopState => {
   try {
@@ -113,6 +115,17 @@ export const LearningLoop = {
         state.reconstructedAt = new Date().toISOString();
         queued = next.name;
         Evidence.record({ kind: "research", ref: `learning-reconstruct:${next.id}`, task: "learning-loop", agent: "learning-loop", title: `Reconstructing ${next.name} to learn from it`, outcome: "queued" });
+      }
+    }
+
+    // Measured regularly: with what it has learned, and now and then without, so the comparison stays honest.
+    if (process.env.LEARNING_EVALUATE !== "off" && !Evaluations.isRunning()) {
+      const runs = Evaluations.list().filter((r) => r.state === "done");
+      const latest = runs[0];
+      if (!latest || Date.now() - Date.parse(latest.startedAt) > EVALUATE_EVERY_MS) {
+        const baseline = runs.find((r) => !r.withKnowledge);
+        const needBaseline = !baseline || Date.now() - Date.parse(baseline.startedAt) > 7 * EVALUATE_EVERY_MS;
+        Evaluations.start({ label: needBaseline ? "Weekly baseline, without what it has learned" : "Daily, with what it has learned", withKnowledge: !needBaseline, trials: 1 });
       }
     }
 

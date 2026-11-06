@@ -40,6 +40,7 @@ import { Verifier } from "../orchestrator/Verifier.js";
 import { Workspace } from "../orchestrator/Workspace.js";
 import { Catalog } from "../orders/Catalog.js";
 import { EcosystemStore } from "../ecosystem/EcosystemStore.js";
+import { DesktopPackage, zipFile } from "../game/DesktopPackage.js";
 import { GameDirector } from "../game/GameDirector.js";
 import { listProjectFiles } from "../ecosystem/ProjectBuilds.js";
 import { Logger } from "../utils/Logger.js";
@@ -426,7 +427,9 @@ export const registerPreviewRoutes = (app: Express) => {
         return {
           ...release,
           url: playable ? `/preview/demo/${encodeURIComponent(id)}/${tokenFor("demo", id)}/` : null,
-          download: playable ? `/preview-download/${encodeURIComponent(id)}/${tokenFor("demo", id)}?name=${encodeURIComponent(String(req.query.name ?? "game"))}` : null
+          download: playable ? `/preview-download/${encodeURIComponent(id)}/${tokenFor("demo", id)}?name=${encodeURIComponent(String(req.query.name ?? "game"))}` : null,
+          windows: DesktopPackage.status(sessionId, release.version),
+          windowsDownload: playable && DesktopPackage.status(sessionId, release.version)?.state === "done" ? `/preview-windows/${encodeURIComponent(id)}/${tokenFor("demo", id)}` : null
         };
       })
     });
@@ -441,6 +444,24 @@ export const registerPreviewRoutes = (app: Express) => {
     }
     buildProjectPreview(project.id, project.path);
     res.json({ success: true, preparing: true });
+  });
+
+  /** Build a version as a Windows program (minutes, in the background). */
+  app.post("/api/previews/demos/:sessionId/:version/windows", authenticateAgent("execute"), (req: Request, res: Response) => {
+    if (!/^[A-Za-z0-9_-]+$/.test(req.params.sessionId)) return res.status(400).json({ error: "Unknown session." });
+    try {
+      res.json({ build: DesktopPackage.build(req.params.sessionId, Number(req.params.version), String(req.body?.name ?? "Game").slice(0, 60)) });
+    } catch (error) {
+      res.status(404).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+  app.get("/preview-windows/:id/:token", (req: Request, res: Response) => {
+    const { id, token } = req.params;
+    const match = /^(.+)~v(\d+)$/.exec(id);
+    if (!match || !tokenMatches("demo", id, token)) return res.status(404).send("Not found");
+    const file = zipFile(match[1], Number(match[2]));
+    if (!fs.existsSync(file)) return res.status(404).send("It has not been built.");
+    res.download(file, `${match[1]}-v${match[2]}-windows.zip`);
   });
 
   // A game version as a zip that plays on its own.

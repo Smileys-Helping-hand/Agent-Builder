@@ -11,18 +11,23 @@ import { useEffect, useRef, useState } from "react";
 import { api, type AgentMessage, type ChatPending, type Delivery, type ImproveCandidate, type ImproveSession, type ReconstructRun } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
 import IterationExplorer from "./IterationExplorer";
+import { Activity, IterationsAll, KnowledgeGraph, SimulationLabPanel } from "./Intelligence";
 import { EvaluationsPanel, LearningCentre, Overview } from "./LearningCentre";
 
-type Tab = "overview" | "growth" | "talk" | "ground" | "continuous" | "reconstruct" | "learning" | "evaluations";
+type Tab = "overview" | "growth" | "talk" | "ground" | "continuous" | "reconstruct" | "learning" | "evaluations" | "iterations" | "simulation" | "activity" | "graph";
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: "overview", label: "Overview" },
+  { id: "continuous", label: "Agent Builder" },
+  { id: "iterations", label: "Iterations" },
+  { id: "simulation", label: "Simulation Lab" },
+  { id: "learning", label: "Learning Centre" },
+  { id: "evaluations", label: "Evaluations" },
+  { id: "activity", label: "Agent Activity" },
+  { id: "graph", label: "Knowledge Graph" },
+  { id: "reconstruct", label: "Reconstructor" },
   { id: "growth", label: "Growth" },
   { id: "talk", label: "Talk" },
-  { id: "ground", label: "Training ground" },
-  { id: "continuous", label: "Continuous & approvals" },
-  { id: "reconstruct", label: "Reconstructor" },
-  { id: "learning", label: "Learning" },
-  { id: "evaluations", label: "Evaluations" }
+  { id: "ground", label: "Training ground" }
 ];
 
 const pct = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${Math.round(v * 100)}%`);
@@ -42,7 +47,7 @@ export default function AgentPage() {
   // A link can open a tab: /agent/?tab=continuous.
   useEffect(() => {
     const wanted = new URLSearchParams(window.location.search).get("tab");
-    if (wanted && ["overview", "growth", "talk", "ground", "continuous", "reconstruct", "learning", "evaluations"].includes(wanted)) setTab(wanted as Tab);
+    if (wanted && ["overview", "growth", "talk", "ground", "continuous", "reconstruct", "learning", "evaluations", "iterations", "simulation", "activity", "graph"].includes(wanted)) setTab(wanted as Tab);
   }, []);
   if (connected === false) return <NotConnected />;
   const p = profile.data;
@@ -61,12 +66,18 @@ export default function AgentPage() {
               {t.label}
             </button>
           ))}
+          <a className="ws-tab-link" href="/research/" style={{ padding: "6px 10px", fontSize: 13 }}>Research ↗</a>
+          <a className="ws-tab-link" href="/lab/" style={{ padding: "6px 10px", fontSize: 13 }}>Test Lab ↗</a>
         </div>
         <div className="fade-in" key={tab} style={{ marginTop: 14 }}>
           {tab === "growth" ? <Growth profile={profile} /> : null}
           {tab === "talk" ? <Talk /> : null}
           {tab === "ground" ? <Ground /> : null}
           {tab === "overview" ? <Overview /> : null}
+          {tab === "iterations" ? <IterationsAll /> : null}
+          {tab === "simulation" ? <SimulationLabPanel /> : null}
+          {tab === "activity" ? <Activity /> : null}
+          {tab === "graph" ? <KnowledgeGraph /> : null}
           {tab === "learning" ? <LearningCentre /> : null}
           {tab === "evaluations" ? <EvaluationsPanel /> : null}
           {tab === "continuous" ? <Continuous /> : null}

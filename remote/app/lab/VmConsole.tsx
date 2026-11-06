@@ -72,11 +72,31 @@ export default function VmConsole({ vm }: { vm: LabVm }) {
   const [tab, setTab] = useState<"screen" | "terminal">("screen");
   const [status, setStatus] = useState("Connecting…");
   const [shot, setShot] = useState<string | null>(null);
+  const [read, setRead] = useState<string | null>(null);
+  const [typed, setTyped] = useState("");
   const frame = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     api.labConsole(vm.id).then(setLinks).catch((error) => setStatus(error instanceof Error ? error.message : String(error)));
   }, [vm.id, vm.startedAt]);
+
+  const readScreen = async () => {
+    try {
+      const result = await api.labReadScreen(vm.id);
+      setRead(result.text || "(no text found on the screen)");
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error), "error");
+    }
+  };
+
+  const sendTyped = async () => {
+    try {
+      await api.labKeys(vm.id, { text: typed });
+      setTyped("");
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error), "error");
+    }
+  };
 
   const screenshot = async () => {
     try {
@@ -97,6 +117,7 @@ export default function VmConsole({ vm }: { vm: LabVm }) {
             <button className="btn small ghost" onClick={() => void frame.current?.requestFullscreen?.()}>Full screen</button>
             <button className="btn small ghost" onClick={() => void api.labKeys(vm.id, { combos: [["ctrl", "alt", "delete"]] }).catch(() => undefined)}>Ctrl+Alt+Del</button>
             <button className="btn small ghost" onClick={() => void screenshot()}>Screenshot</button>
+            <button className="btn small ghost" onClick={() => void readScreen()}>What does it say?</button>
             <span className="small muted">{status}</span>
           </>
         ) : (
@@ -112,6 +133,13 @@ export default function VmConsole({ vm }: { vm: LabVm }) {
           <Terminal url={links.serial} />
         )
       ) : null}
+      {tab === "screen" ? (
+        <div className="learn-plan" style={{ marginTop: 6 }}>
+          <input className="input" style={{ flex: 1 }} placeholder="Paste text here to type it into the VM" value={typed} onChange={(e) => setTyped(e.target.value)} onKeyDown={(e) => e.key === "Enter" && typed && void sendTyped()} />
+          <button className="btn small" disabled={!typed} onClick={() => void sendTyped()}>Type it</button>
+        </div>
+      ) : null}
+      {read ? <p className="small" style={{ marginTop: 6 }}><strong>The screen says:</strong> {read}</p> : null}
       {shot ? (
         <a href={shot} target="_blank" rel="noreferrer">
           <img alt="The VM's screen" src={shot} style={{ maxWidth: 320, marginTop: 8, borderRadius: 6 }} />

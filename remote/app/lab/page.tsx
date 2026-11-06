@@ -95,6 +95,7 @@ function VmCard({ vm, profiles, full, busy, act, onOpenRun }: { vm: LabVm; profi
   const [user, setUser] = useState("root");
   const [password, setPassword] = useState("");
   const [snap, setSnap] = useState("");
+  const [record, setRecord] = useState(false);
   const running = vm.state === "running" || vm.state === "paused";
   const b = (what: string) => busy === `${what}:${vm.id}`;
   return (
@@ -162,6 +163,9 @@ function VmCard({ vm, profiles, full, busy, act, onOpenRun }: { vm: LabVm; profi
         <div className="learn-plan" style={{ flexWrap: "wrap" }}>
           <input className="input" style={{ width: 120 }} placeholder="Login user" value={user} onChange={(e) => setUser(e.target.value)} />
           <input className="input" style={{ width: 150 }} placeholder="Password (if any)" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <label className="small" style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <input type="checkbox" checked={record} onChange={(e) => setRecord(e.target.checked)} /> Record a video
+          </label>
           <button
             className="btn small primary"
             disabled={busy !== null || !chosen.length}
@@ -170,7 +174,7 @@ function VmCard({ vm, profiles, full, busy, act, onOpenRun }: { vm: LabVm; profi
                 `test:${vm.id}`,
                 async () => {
                   const order = [...profiles.map((p) => p.id)].filter((id) => chosen.includes(id));
-                  const { run } = await api.labStartRun({ vmId: vm.id, profiles: order, login: { user, password } });
+                  const { run } = await api.labStartRun({ vmId: vm.id, profiles: order, login: { user, password }, recordEverySec: record ? 15 : 0 });
                   onOpenRun(run.id);
                 },
                 "The test run is under way."
@@ -204,7 +208,7 @@ function VmCard({ vm, profiles, full, busy, act, onOpenRun }: { vm: LabVm; profi
   );
 }
 
-function RunDetail({ id, onClose }: { id: string; onClose: () => void }) {
+function RunDetail({ id, onClose, onOpen }: { id: string; onClose: () => void; onOpen: (id: string) => void }) {
   const toast = useToast();
   const [run, setRun] = useState<LabTestRun | null>(null);
   const [text, setText] = useState("");
@@ -229,10 +233,35 @@ function RunDetail({ id, onClose }: { id: string; onClose: () => void }) {
         <div className="btn-row">
           {run.state === "running" ? <button className="btn small" onClick={() => void api.labStopRun(run.id)}>Stop</button> : null}
           {run.state !== "running" ? <a className="btn small ghost" href={file("serial.log")} target="_blank" rel="noreferrer">Serial log</a> : null}
+          {run.state !== "running" ? (
+            <button
+              className="btn small ghost"
+              onClick={() =>
+                void api
+                  .labReproduce(run.id)
+                  .then((d) => {
+                    if (d.run?.id) {
+                      toast("Running it again in a fresh VM.", "ok");
+                      onOpen(d.run.id);
+                    } else toast("Starting; it appears in the list shortly.", "ok");
+                  })
+                  .catch((e) => toast(e instanceof Error ? e.message : String(e), "error"))
+              }
+            >
+              Reproduce
+            </button>
+          ) : null}
           <button className="btn small ghost" onClick={onClose}>Close</button>
         </div>
       </div>
       {run.error ? <Banner kind="error">{run.error}</Banner> : null}
+      {run.reproduces ? (
+        <div className="small" style={{ marginTop: 6 }}>
+          Reproducing <a href={`/lab/?run=${run.reproduces.run}`}>{run.reproduces.run}</a>. What cannot be the same:
+          <ul style={{ margin: "2px 0", paddingLeft: 18 }}>{run.reproduces.differences.map((d, i) => <li key={i}>{d}</li>)}</ul>
+        </div>
+      ) : null}
+      {run.recording ? <video controls src={file(run.recording)} style={{ width: "100%", maxWidth: 640, marginTop: 8, borderRadius: 6 }} /> : null}
       <div style={{ marginTop: 8 }}>
         {run.steps.map((step) => (
           <details key={step.index} style={{ borderTop: "1px solid var(--line, rgba(255,255,255,.08))", padding: "5px 0" }}>
@@ -341,7 +370,7 @@ export default function LabPage() {
 
             <CreateVm isos={data.isos} busy={busy} act={act} />
 
-            {openRun ? <RunDetail id={openRun} onClose={() => setOpenRun(null)} /> : null}
+            {openRun ? <RunDetail id={openRun} onClose={() => setOpenRun(null)} onOpen={setOpenRun} /> : null}
 
             <div className="section-title">Virtual machines · {data.vms.length}</div>
             {data.vms.length === 0 ? <p className="small muted">None yet. Create one above and start it: it boots a real operating system.</p> : null}

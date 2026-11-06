@@ -317,12 +317,35 @@ export const LessonMemory = {
       .slice(0, limit);
   },
 
-  markApplied(ids: number[]): void {
+  markApplied(ids: number[], usedBy = "builder"): void {
     if (ids.length === 0) return;
     const db = getKnowledgeDb();
     const statement = db.prepare("UPDATE lessons SET times_applied = times_applied + 1, last_applied_at = ? WHERE id = ?");
+    const use = db.prepare("INSERT INTO lesson_uses (lesson_id, used_by, created_at) VALUES (?, ?, ?)");
     const now = nowIso();
-    db.transaction(() => ids.forEach((id) => statement.run(now, id)))();
+    db.transaction(() =>
+      ids.forEach((id) => {
+        statement.run(now, id);
+        use.run(id, usedBy, now);
+      })
+    )();
+  },
+
+  /** Who has used what was learned, and from where it came: shared knowledge, followed. */
+  contributions(): Array<{ source: string; usedBy: string; uses: number; lessons: number }> {
+    const rows = getKnowledgeDb()
+      .prepare("SELECT l.*, u.used_by AS used_by, COUNT(*) AS uses FROM lesson_uses u JOIN lessons l ON l.id = u.lesson_id GROUP BY l.id, u.used_by")
+      .all() as Array<LessonRow & { used_by: string; uses: number }>;
+    const totals = new Map<string, { source: string; usedBy: string; uses: number; lessons: number }>();
+    for (const row of rows) {
+      const source = sourceOf(row);
+      const key = `${source}→${row.used_by}`;
+      const entry = totals.get(key) ?? { source, usedBy: row.used_by, uses: 0, lessons: 0 };
+      entry.uses += row.uses;
+      entry.lessons += 1;
+      totals.set(key, entry);
+    }
+    return [...totals.values()].sort((a, b) => b.uses - a.uses);
   },
 
   recordOutcome(ids: number[], helped: boolean): void {

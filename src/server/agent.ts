@@ -38,6 +38,13 @@
  *   GET    /api/agent/investigations/:id           its plan, specialists, experiments, contradictions, report, evidence matrix, sources
  *   POST   /api/agent/investigations/:id/stop|resume
  *   POST   /api/agent/investigations/:id/feedback  { text, kind? }
+ *   GET    /api/agent/experiments                  the Simulation Lab: experiments of your own and those inside investigations
+ *   POST   /api/agent/experiments                  { title, description } | { title, code, variables, objective, … }
+ *   POST   /api/agent/experiments/:id/run|optimise { seed? } | { rounds? }
+ *   POST   /api/agent/experiments/:id/feedback     { text }
+ *   GET    /api/agent/evidence/graph?ref=&depth=   how the records connect
+ *   GET    /api/agent/twin/:projectId              what is known about a project now: parts, defects, what it can do
+ *   POST   /api/agent/jarvis-tasks/sync            bring Jarvis's task list up to date now
  *   GET    /api/agent/self                         what it has learned about itself: findings, and its self-improvement session
  *   POST   /api/agent/self/start                   improve its own code from them (approval-gated, like any project)
  *   GET    /api/agent/reconstruct                  the Reconstructor: runs and what it has learned
@@ -54,6 +61,9 @@ import { Iterations } from "../agent/Iterations.js";
 import type { VmTestConfig } from "../lab/VmCheck.js";
 import { Reconstructor } from "../agent/Reconstructor.js";
 import { SelfImprover } from "../agent/SelfImprover.js";
+import { ProjectTwin } from "../ecosystem/ProjectTwin.js";
+import { JarvisTasks } from "../integrations/JarvisTasks.js";
+import { SimulationLab } from "../research/SimulationLab.js";
 import { Evidence } from "../knowledge/Evidence.js";
 import { Evaluations } from "../learning/Evaluations.js";
 import { LearningLoop } from "../learning/LearningLoop.js";
@@ -262,6 +272,63 @@ export const registerAgentRoutes = (app: Express) => {
   Investigations.ensureTicking();
   LearningLoop.start();
   Evaluations.resumeInterrupted();
+  JarvisTasks.start();
+
+  app.get("/api/agent/experiments", authenticateAgent("read"), (_req: Request, res: Response) => {
+    res.json(SimulationLab.list());
+  });
+  // Writing one with the model can outlast the tunnel: answer at once and let the app poll.
+  app.post("/api/agent/experiments", authenticateAgent("execute"), (req: Request, res: Response) => {
+    const work = SimulationLab.create(req.body ?? {});
+    const timer = setTimeout(() => {
+      if (!res.headersSent) res.status(202).json({ pending: true });
+    }, 60_000);
+    work
+      .then((experiment) => {
+        clearTimeout(timer);
+        if (!res.headersSent) res.json({ experiment });
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        if (!res.headersSent) res.status(400).json({ error: message(error) });
+      });
+  });
+  app.post("/api/agent/experiments/:id/run", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    try {
+      res.json({ experiment: await SimulationLab.run(req.params.id, { seed: Number(req.body?.seed) || Math.floor(Math.random() * 1e9), label: "Another seed" }) });
+    } catch (error) {
+      res.status(404).json({ error: message(error) });
+    }
+  });
+  app.post("/api/agent/experiments/:id/optimise", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    try {
+      res.json({ experiment: await SimulationLab.optimise(req.params.id, Number(req.body?.rounds) || 3) });
+    } catch (error) {
+      res.status(400).json({ error: message(error) });
+    }
+  });
+  app.post("/api/agent/experiments/:id/feedback", authenticateAgent("execute"), (req: Request, res: Response) => {
+    try {
+      res.json({ experiment: SimulationLab.feedback(req.params.id, String(req.body?.text ?? ""), (req as AgentRequest).actor ?? "owner") });
+    } catch (error) {
+      res.status(400).json({ error: message(error) });
+    }
+  });
+  app.get("/api/agent/evidence/graph", authenticateAgent("read"), (req: Request, res: Response) => {
+    res.json(Evidence.graph({ ref: typeof req.query.ref === "string" ? req.query.ref : undefined, depth: Number(req.query.depth) || 2, limit: Number(req.query.limit) || 120 }));
+  });
+  app.get("/api/agent/twin/:projectId", authenticateAgent("read"), async (req: Request, res: Response) => {
+    const twin = await ProjectTwin.forProject(req.params.projectId).catch(() => null);
+    if (!twin) return res.status(404).json({ error: "No session on that project." });
+    res.json({ twin });
+  });
+  app.post("/api/agent/jarvis-tasks/sync", authenticateAgent("execute"), async (_req: Request, res: Response) => {
+    try {
+      res.json(await JarvisTasks.sync());
+    } catch (error) {
+      res.status(502).json({ error: message(error) });
+    }
+  });
 
   app.get("/api/agent/investigations", authenticateAgent("read"), (_req: Request, res: Response) => {
     res.json({ investigations: Investigations.list().map(({ id, objective, state, phase, round, createdAt, finishedAt, specialists, experiments, contradictions, error }) => ({ id, objective, state, phase, round, createdAt, finishedAt, error, specialists: specialists.length, specialistsDone: specialists.filter((s) => s.status === "done").length, experiments: experiments.length, contradictions: contradictions.length })) });
@@ -344,6 +411,7 @@ export const registerAgentRoutes = (app: Express) => {
       byCategory: tally((l) => l.category),
       bySource: tally((l) => l.source),
       lessons: lessons.slice(0, 300),
+      contributions: LessonMemory.contributions().slice(0, 40),
       ledger: Evidence.counts(),
       loop: { topicId: loop.topicId, asked: loop.asked.slice(-20).reverse(), reconstructed: loop.reconstructed.length, lastTickAt: loop.lastTickAt }
     });

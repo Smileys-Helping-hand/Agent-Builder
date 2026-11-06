@@ -513,7 +513,7 @@ export class AutonomousOrchestrator extends EventEmitter {
             ? LessonMemory.relevant("build", `${signature}\n${failingBefore.output.slice(0, 1500)}`, 4)
             : [];
         const repairLessonIds = repairLessons.map((lesson) => lesson.id);
-        LessonMemory.markApplied(repairLessonIds);
+        LessonMemory.markApplied(repairLessonIds, this.config.projectName ?? "builder");
 
         let critique: string | null = null;
         // Only once a repair is stuck (third attempt on): the bigger model does

@@ -139,6 +139,16 @@ export function LearningCentre() {
         {table("By kind", data.byCategory)}
         {table("Where it came from", data.bySource)}
       </div>
+      {data.contributions.length ? (
+        <>
+          <div className="section-title">Who has used what was learned</div>
+          {data.contributions.slice(0, 15).map((row, i) => (
+            <div key={i} className="small">
+              <strong>{row.usedBy}</strong> used {row.lessons} lesson{row.lessons === 1 ? "" : "s"} from <strong>{row.source}</strong> <span className="muted">· {row.uses} time{row.uses === 1 ? "" : "s"}</span>
+            </div>
+          ))}
+        </>
+      ) : null}
       {data.loop.asked.length ? (
         <>
           <div className="section-title">What it is researching about its own failures</div>

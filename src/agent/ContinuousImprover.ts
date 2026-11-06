@@ -44,6 +44,7 @@ import { ContextPack } from "../ecosystem/ContextPack.js";
 import { EcosystemStore, type EcosystemProject } from "../ecosystem/EcosystemStore.js";
 import { commitPaths, copyForBuild, ProjectBuilds } from "../ecosystem/ProjectBuilds.js";
 import { ProjectScanner } from "../ecosystem/ProjectScanner.js";
+import { ProjectTwin } from "../ecosystem/ProjectTwin.js";
 import { GameDirector } from "../game/GameDirector.js";
 import { Evidence } from "../knowledge/Evidence.js";
 import { VmCheck, type VmTestConfig } from "../lab/VmCheck.js";
@@ -797,7 +798,7 @@ ${approach.arm.instruction}${instruction}
 
 Context: this is one step of a long-running build of "${session.projectName}".
 ${ownerWords(session)}
-${session.kind === "game" ? `${GameDirector.guide(dir)}\n` : ""}${machine}
+${session.kind === "game" ? `${GameDirector.guide(dir)}\n` : ""}${await ProjectTwin.of(session).then(ProjectTwin.brief).catch(() => "")}${machine}
 Work in the existing code and keep everything that already works working.`;
   // Only this session works in its workspace: a stray build there (one carried on by something else) is stopped first.
   const strays = () => BuildService.active().filter((b) => path.resolve(b.outputDir) === path.resolve(dir));
@@ -1204,7 +1205,7 @@ ${roadmapText(session.plan, milestone)}${
     const before = await head(dir);
     // What fixed this kind of failure before, in any project.
     const lessons = LessonMemory.relevant("build", `${check.failing.join(" ")}\n${check.output.slice(0, 2000)}`, 4);
-    if (lessons.length) LessonMemory.markApplied(lessons.map((l) => l.id));
+    if (lessons.length) LessonMemory.markApplied(lessons.map((l) => l.id), session.projectName);
     const step = await buildStep(
       session,
       `Fixing: ${check.failing.join(", ")}`,

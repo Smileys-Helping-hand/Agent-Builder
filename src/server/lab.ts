@@ -19,6 +19,9 @@
  *   POST   /api/lab/isos                    { url, sha256? } download an ISO (polled through GET /api/lab)
  *   POST   /api/lab/runs                    { vmId, profiles, login?, label?, task?, recordEverySec? } a test run
  *   GET    /api/lab/runs/:id
+ *   POST   /api/lab/runs/:id/reproduce      the same hardware, ISO and profiles in a fresh VM; says what cannot be the same
+ *   GET    /api/lab/vms/:id/read-screen     what the screen says, and where (OCR)
+ *   POST   /api/lab/vms/:id/click-text      { text, double? } click a label on its screen
  *   POST   /api/lab/runs/:id/stop
  *   POST   /api/lab/runs/:id/feedback       { text, kind? }
  *   POST   /api/lab/profiles                a custom profile
@@ -228,6 +231,26 @@ export const registerLabRoutes = (app: Express, server: http.Server) => {
     if (!run) return res.status(404).json({ error: "Unknown test run." });
     res.json({ run });
   });
+  app.post("/api/lab/runs/:id/reproduce", authenticateAgent("execute"), (req: Request, res: Response) =>
+    soon(res, async () => {
+      const run = await VmTests.reproduce(req.params.id, (req as AgentRequest).actor ?? "owner");
+      return { run: withLinks(run.id) };
+    })
+  );
+  app.get("/api/lab/vms/:id/read-screen", authenticateAgent("read"), (req: Request, res: Response) =>
+    soon(res, async () => {
+      const screen = await VmLab.readScreen(req.params.id);
+      return { text: screen.text, words: screen.words, width: screen.width, height: screen.height, url: `/lab/file/vm/${req.params.id}/${path.basename(screen.file)}?t=${tokenFor(`vm:${req.params.id}`)}` };
+    })
+  );
+  app.post("/api/lab/vms/:id/click-text", authenticateAgent("execute"), (req: Request, res: Response) =>
+    soon(res, async () => {
+      const found = await VmLab.findOnScreen(req.params.id, String(req.body?.text ?? ""));
+      if (!found) throw new Error(`"${String(req.body?.text ?? "")}" is not on the screen.`);
+      await VmLab.mouse(req.params.id, found.x, found.y, "left", req.body?.double === true ? 2 : 1);
+      return { clicked: found.text, x: found.x, y: found.y };
+    })
+  );
   app.post("/api/lab/runs/:id/stop", authenticateAgent("execute"), (req: Request, res: Response) => {
     if (!VmTests.stop(req.params.id)) return res.status(404).json({ error: "Unknown test run." });
     res.json({ run: withLinks(req.params.id) });

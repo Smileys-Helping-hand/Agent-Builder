@@ -1026,6 +1026,46 @@ export interface ContinuousCheck {
   command: string | null;
 }
 
+export interface EvidenceGraph {
+  nodes: Array<{ ref: string; kind: string; title: string; outcome: string | null }>;
+  edges: Array<{ from: string; to: string; relation: string; createdAt: string }>;
+}
+
+export interface ProjectTwinRecord {
+  project: string;
+  at: string;
+  parts: Array<{ folder: string; files: number }>;
+  stack: string[];
+  dependencies: string[];
+  scripts: string[];
+  capabilities: string[];
+  defects: Array<{ kind: string; text: string }>;
+  mostChanged: Array<{ file: string; changes: number }>;
+}
+
+export interface SimulationResult {
+  evaluated: number;
+  objective: string;
+  best: { params: Record<string, unknown>; metrics: Record<string, number> };
+  baseline: { params: Record<string, unknown>; metrics: Record<string, number> } | null;
+  sensitivity: Array<{ variable: string; share: number; range: number }>;
+  repeatable: boolean;
+}
+
+export interface LabExperiment {
+  id: string;
+  title: string;
+  hypothesis: string;
+  assumptions: string[];
+  code: string;
+  objective: string;
+  state: string;
+  error: string | null;
+  createdAt: string;
+  runs: Array<{ at: string; label: string; seed: number; result: SimulationResult }>;
+  optimised: Array<{ round: number; best: number; params: Record<string, unknown>; focused: string[] }>;
+}
+
 export interface LearningLesson {
   id: number;
   lesson: string;
@@ -1297,6 +1337,8 @@ export interface LabStepResult {
 export interface LabTestRun extends LabRunSummary {
   steps: LabStepResult[];
   frames: string[];
+  recording?: string | null;
+  reproduces?: { run: string; differences: string[] } | null;
   error: string | null;
   feedback: Array<{ at: string; by: string; text: string; kind: string; followUp: string | null }>;
   fileToken: string;
@@ -1326,6 +1368,9 @@ export interface GameRelease {
   url: string | null;
   /** A zip that plays on its own. */
   download: string | null;
+  /** The Windows program, once built on request. */
+  windows: { state: "building" | "done" | "failed"; at: string; error: string | null; sizeMb: number | null } | null;
+  windowsDownload: string | null;
 }
 
 export interface ImproveSession {
@@ -1826,6 +1871,22 @@ export const api = {
   groundPractise: (challengeId?: string) => request<{ run: unknown }>("/api/agent/ground/practise", { method: "POST", body: JSON.stringify({ challengeId }) }),
   groundEnabled: (enabled: boolean) => request<GroundState>("/api/agent/ground/enabled", { method: "POST", body: JSON.stringify({ enabled }) }),
   groundHarder: () => request<{ added: unknown[] }>("/api/agent/ground/harder", { method: "POST" }, 600000),
+  evidence: (limit = 100) => request<{ records: EvidenceRecord[]; counts: Record<string, number> }>(`/api/agent/evidence?limit=${limit}`),
+  evidenceTrace: (ref: string) =>
+    request<{ records: EvidenceRecord[]; outgoing: Array<{ from: string; to: string; relation: string }>; incoming: Array<{ from: string; to: string; relation: string }> }>(`/api/agent/evidence?ref=${encodeURIComponent(ref)}`),
+  evidenceGraph: (ref?: string) => request<EvidenceGraph>(`/api/agent/evidence/graph${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`),
+  projectTwin: (projectId: string) => request<{ twin: ProjectTwinRecord }>(`/api/agent/twin/${encodeURIComponent(projectId)}`),
+  experiments: () =>
+    request<{
+      experiments: LabExperiment[];
+      fromInvestigations: Array<{ investigation: string; objective: string; id: string; title: string; kind: string; state: string; conclusion: string | null; physicalProtocol: string | null; best: { metrics: Record<string, number> } | null }>;
+    }>("/api/agent/experiments"),
+  createExperiment: (input: { title: string; description?: string }) => request<{ experiment?: LabExperiment; pending?: boolean }>("/api/agent/experiments", { method: "POST", body: JSON.stringify(input) }, 90000),
+  runExperiment: (id: string) => request<{ experiment: LabExperiment }>(`/api/agent/experiments/${encodeURIComponent(id)}/run`, { method: "POST", body: "{}" }, 90000),
+  optimiseExperiment: (id: string, rounds: number) => request<{ experiment: LabExperiment }>(`/api/agent/experiments/${encodeURIComponent(id)}/optimise`, { method: "POST", body: JSON.stringify({ rounds }) }, 95000),
+  labReproduce: (id: string) => request<{ run: LabTestRun }>(`/api/lab/runs/${encodeURIComponent(id)}/reproduce`, { method: "POST" }, 90000),
+  labReadScreen: (id: string) => request<{ text: string; url: string; words: Array<{ text: string; left: number; top: number; width: number; height: number }>; width: number; height: number }>(`/api/lab/vms/${encodeURIComponent(id)}/read-screen`, {}, 90000),
+  labClickText: (id: string, text: string, double = false) => request<{ clicked: string }>(`/api/lab/vms/${encodeURIComponent(id)}/click-text`, { method: "POST", body: JSON.stringify({ text, double }) }, 90000),
   agentOverview: () => request<AgentOverview>("/api/agent/overview"),
   learning: () =>
     request<{
@@ -1834,6 +1895,7 @@ export const api = {
       byCategory: Array<{ name: string; count: number; applied: number; helped: number }>;
       bySource: Array<{ name: string; count: number; applied: number; helped: number }>;
       lessons: LearningLesson[];
+      contributions: Array<{ source: string; usedBy: string; uses: number; lessons: number }>;
       ledger: Record<string, number>;
       loop: { topicId: string | null; asked: string[]; reconstructed: number; lastTickAt: string | null };
     }>("/api/agent/learning"),
@@ -1886,6 +1948,7 @@ export const api = {
     request<{ session: ImproveSession }>("/api/agent/continuous/start", { method: "POST", body: JSON.stringify(input) }, 120000),
   gameReleases: (sessionId: string, name?: string) =>
     request<{ releases: GameRelease[]; lastError: { at: string; title: string; error: string } | null }>(`/api/previews/demos/${encodeURIComponent(sessionId)}${name ? `?name=${encodeURIComponent(name)}` : ""}`),
+  gameWindowsBuild: (sessionId: string, version: number, name: string) => request<{ build: unknown }>(`/api/previews/demos/${encodeURIComponent(sessionId)}/${version}/windows`, { method: "POST", body: JSON.stringify({ name }) }),
   continuousStop: (id: string) => request<{ session: ImproveSession }>(`/api/agent/continuous/${encodeURIComponent(id)}/stop`, { method: "POST" }),
   continuousRestart: (id: string) => request<{ session: ImproveSession }>(`/api/agent/continuous/${encodeURIComponent(id)}/restart`, { method: "POST" }),
   continuousInstruct: (id: string, text: string) =>
