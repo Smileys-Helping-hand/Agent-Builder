@@ -81,6 +81,7 @@ const STORE = () => path.join(DATA(), "vms.json");
 const vmDir = (id: string) => path.join(DATA(), "vms", id);
 export const ISO_DIR = () => path.join(DATA(), "isos");
 const WSL_ROOT = "/root/vmlab";
+const OCR_SCALE = 3;
 const MAX_RUNNING = Number(process.env.VMLAB_MAX_RUNNING) || 3;
 const MAX_TOTAL_MEMORY_MB = Number(process.env.VMLAB_MAX_MEMORY_MB) || 8192;
 const MAX_CPUS = Number(process.env.VMLAB_MAX_CPUS) || 4;
@@ -669,30 +670,39 @@ export const VmLab = {
    * What the screen says: the words on it and where, read with OCR (tesseract in WSL), so an agent can find a
    * menu or a button by its label. It reads text; it does not understand pictures or icons without labels.
    */
-  async readScreen(id: string, folder?: string): Promise<{ text: string; words: ScreenWord[]; width: number; height: number; file: string; coverage: number }> {
+  async readScreen(id: string, folder?: string): Promise<{ text: string; words: ScreenWord[]; passes: ScreenWord[][]; width: number; height: number; file: string; coverage: number }> {
     const shot = await VmLab.screenshot(id, folder);
-    const result = await Backend.run(`tesseract ${shq(toWsl(shot.file))} stdout --psm 11 tsv 2>/dev/null`, 120_000);
-    const words: ScreenWord[] = [];
-    for (const line of result.out.split("\n").slice(1)) {
-      const cells = line.split("\t");
-      if (cells.length < 12) continue;
-      const text = cells[11].trim();
-      const confidence = Number(cells[10]);
-      if (!text || confidence < 30) continue;
-      words.push({ text, left: Number(cells[6]), top: Number(cells[7]), width: Number(cells[8]), height: Number(cells[9]), confidence, block: Number(cells[2]), line: Number(cells[4]) });
-    }
-    return { text: words.map((w) => w.text).join(" "), words, width: shot.width, height: shot.height, file: shot.file, coverage: shot.coverage };
+    // Screen text is small, and comes dark on light and light on dark: OCR reads it three times the size, both ways round.
+    const source = shq(toWsl(shot.file));
+    const script = `T=$(mktemp -d); ffmpeg -y -loglevel error -i ${source} -vf "scale=iw*${OCR_SCALE}:ih*${OCR_SCALE}:flags=lanczos,format=gray" $T/a.png; ffmpeg -y -loglevel error -i ${source} -vf "scale=iw*${OCR_SCALE}:ih*${OCR_SCALE}:flags=lanczos,format=gray,negate" $T/b.png; tesseract $T/a.png stdout --psm 11 tsv 2>/dev/null; echo ===PASS===; tesseract $T/b.png stdout --psm 11 tsv 2>/dev/null; rm -rf $T`;
+    const result = await Backend.run(script, 180_000);
+    const passes = result.out.split("===PASS===").map((tsv) => {
+      const words: ScreenWord[] = [];
+      for (const line of tsv.split("\n").slice(1)) {
+        const cells = line.split("\t");
+        if (cells.length < 12) continue;
+        const text = cells[11].trim();
+        const confidence = Number(cells[10]);
+        if (!text || confidence < 30) continue;
+        words.push({ text, left: Number(cells[6]) / OCR_SCALE, top: Number(cells[7]) / OCR_SCALE, width: Number(cells[8]) / OCR_SCALE, height: Number(cells[9]) / OCR_SCALE, confidence, block: Number(cells[2]), line: Number(cells[4]) });
+      }
+      return words;
+    });
+    const words = passes.flat();
+    return { text: [...new Set(words.map((w) => w.text))].join(" "), words, passes, width: shot.width, height: shot.height, file: shot.file, coverage: shot.coverage };
   },
 
   /** Where a phrase is on the screen, as 0..1 of width and height; null when it is not there. Later matches can be chosen. */
   async findOnScreen(id: string, phrase: string, folder?: string, occurrence = 0): Promise<{ x: number; y: number; text: string; file: string } | null> {
     const screen = await VmLab.readScreen(id, folder);
-    const wanted = phrase.toLowerCase().split(/\s+/).filter(Boolean);
     const clean = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+    const wanted = phrase.split(/\s+/).map(clean).filter(Boolean);
+    if (!wanted.length) return null;
     let seen = 0;
-    for (let i = 0; i + wanted.length <= screen.words.length; i++) {
-      const group = screen.words.slice(i, i + wanted.length);
-      if (group.every((word, k) => clean(word.text) === clean(wanted[k]))) {
+    for (const words of screen.passes) {
+      for (let i = 0; i + wanted.length <= words.length; i++) {
+        const group = words.slice(i, i + wanted.length);
+        if (!group.every((word, k) => clean(word.text) === wanted[k])) continue;
         if (seen++ < occurrence) continue;
         const left = Math.min(...group.map((w) => w.left));
         const right = Math.max(...group.map((w) => w.left + w.width));
