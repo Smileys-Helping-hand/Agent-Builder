@@ -19,6 +19,8 @@ import {
 } from "../knowledge/KnowledgeDb.js";
 
 export type LessonScope = "build" | "research";
+export type LessonStatus = "candidate" | "verified" | "deprecated" | "rejected";
+export type LessonCategory = "failure-pattern" | "technical" | "procedural" | "experimental" | "architectural" | "user-feedback" | "research";
 
 export interface Lesson {
   id: number;
@@ -31,6 +33,12 @@ export interface Lesson {
   timesFailed: number;
   /** Laplace-smoothed success rate: (helped + 1) / (applied + 2). */
   utility: number;
+  /** candidate until it proves useful; verified; deprecated when it stops helping; rejected by you. Failed ones stay searchable. */
+  status: LessonStatus;
+  /** What kind of knowledge it is. */
+  category: LessonCategory;
+  /** Which part of the builder it came from. */
+  source: string;
   createdAt: string;
   updatedAt: string;
   lastAppliedAt: string | null;
@@ -48,9 +56,44 @@ type LessonRow = {
   created_at: string;
   updated_at: string;
   last_applied_at: string | null;
+  decision?: string | null;
+};
+
+/** Verified takes evidence: applied and helping, or your say. It is never a model's opinion of itself. */
+const VERIFIED_AFTER_HELPING = 3;
+const VERIFIED_UTILITY = 0.55;
+
+const statusOf = (row: LessonRow, utility: number): LessonStatus => {
+  if (row.decision === "rejected" || row.decision === "verified") return row.decision;
+  if (row.times_applied >= RETIRE_AFTER_APPLICATIONS && utility < RETIRE_BELOW_UTILITY) return "deprecated";
+  if (row.times_helped >= VERIFIED_AFTER_HELPING && utility >= VERIFIED_UTILITY) return "verified";
+  return "candidate";
+};
+
+const categoryOf = (row: LessonRow): LessonCategory => {
+  const signature = row.signature.toLowerCase();
+  if (row.scope === "research" || signature.startsWith("investigation:")) return signature.startsWith("investigation:") ? "experimental" : "research";
+  if (signature.startsWith("technique:")) return "technical";
+  if (signature.startsWith("reconstruct:")) return "architectural";
+  if (signature.startsWith("feedback:") || signature.startsWith("owner:")) return "user-feedback";
+  if (signature.startsWith("practice:") || signature.startsWith("academy:") || signature.startsWith("study:")) return "procedural";
+  return "failure-pattern";
+};
+
+const sourceOf = (row: LessonRow): string => {
+  const signature = row.signature.toLowerCase();
+  if (signature.startsWith("investigation:")) return "research investigation";
+  if (signature.startsWith("reconstruct:") || signature.startsWith("technique:")) return "reconstructor";
+  if (signature.startsWith("academy:") || signature.startsWith("study:")) return "academy";
+  if (signature.startsWith("feedback:") || signature.startsWith("owner:")) return "owner";
+  if (row.scope === "research") return "research engine";
+  return "builder (from a fix that worked)";
 };
 
 const mapLesson = (row: LessonRow): Lesson => ({
+  status: statusOf(row, (row.times_helped + 1) / (row.times_applied + 2)),
+  category: categoryOf(row),
+  source: sourceOf(row),
   id: row.id,
   scope: row.scope,
   signature: row.signature,
@@ -267,7 +310,9 @@ export const LessonMemory = {
 
     return rows
       .map(mapLesson)
-      .filter((lesson) => !(lesson.timesApplied >= RETIRE_AFTER_APPLICATIONS && lesson.utility < RETIRE_BELOW_UTILITY))
+      // What has stopped helping, or you turned down, stays searchable but is not given to builds; what is proven comes first.
+      .filter((lesson) => lesson.status !== "deprecated" && lesson.status !== "rejected")
+      .sort((a, b) => Number(b.status === "verified") - Number(a.status === "verified"))
       .filter((lesson) => sharedWith(lesson.signature) >= 1 || sharedWith(lesson.lesson) >= 2)
       .slice(0, limit);
   },
@@ -297,6 +342,14 @@ export const LessonMemory = {
         : db.prepare("SELECT * FROM lessons ORDER BY updated_at DESC LIMIT ?").all(limit)
     ) as LessonRow[];
     return rows.map(mapLesson).sort((a, b) => b.utility - a.utility);
+  },
+
+  /** Your decision on a lesson: verified, rejected, or back to being judged by its use. */
+  decide(id: number, decision: "verified" | "rejected" | null): Lesson | null {
+    const db = getKnowledgeDb();
+    db.prepare("UPDATE lessons SET decision = ?, updated_at = ? WHERE id = ?").run(decision, nowIso(), id);
+    const row = db.prepare("SELECT * FROM lessons WHERE id = ?").get(id) as LessonRow | undefined;
+    return row ? mapLesson(row) : null;
   },
 
   remove(id: number): boolean {

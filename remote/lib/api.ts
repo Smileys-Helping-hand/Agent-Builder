@@ -1026,6 +1026,132 @@ export interface ContinuousCheck {
   command: string | null;
 }
 
+export interface LearningLesson {
+  id: number;
+  lesson: string;
+  signature: string;
+  status: "candidate" | "verified" | "deprecated" | "rejected";
+  category: string;
+  source: string;
+  timesApplied: number;
+  timesHelped: number;
+  timesFailed: number;
+  utility: number;
+  createdAt: string;
+}
+
+export interface EvaluationRunRecord {
+  id: string;
+  label: string;
+  withKnowledge: boolean;
+  trials: number;
+  state: "running" | "done" | "failed" | "stopped";
+  startedAt: string;
+  finishedAt: string | null;
+  score: number | null;
+  byCategory: Record<string, number>;
+  error: string | null;
+  results: Array<{ id: string; category: string; title: string; passRate: number; knowledgeUsed: string[]; trials: Array<{ passed: boolean; detail: string; output: string; durationMs: number }> }>;
+}
+
+export interface EvaluationCompare {
+  a: { id: string; label: string; at: string; withKnowledge: boolean; trials: number; score: number | null };
+  b: EvaluationCompare["a"];
+  difference: number | null;
+  coverage: string;
+  rows: Array<{ id: string; title: string; category: string; a: number | null; b: number | null; difference: number | null; knowledgeUsed: string[] }>;
+  improved: string[];
+  regressions: string[];
+  note: string | null;
+}
+
+export interface AgentOverview {
+  agents: Array<{ id: string; project: string; stage: string; phase: string; kind: string; cycles: number; milestones: string; buildId: string | null; lastError: string | null }>;
+  iterations: Array<{ session: string; project: string; n: number | null; title: string; outcome: string; at: string }>;
+  vms: { running: Array<{ id: string; name: string; state: string }>; total: number };
+  tests: Array<{ id: string; vm: string; state: string; counts: { passed: number; failed: number }; at: string; iso: string | null }>;
+  research: Array<{ id: string; objective: string; phase: string }>;
+  discoveries: Array<{ kind: string; title: string; outcome: string | null; at: string }>;
+  lessons: { total: number; recent: Array<{ id: number; lesson: string; status: string; at: string }> };
+  evaluation: { id: string; label: string; state: string; score: number | null; at: string; withKnowledge: boolean } | null;
+  failures: Array<{ project: string; error: string | null }>;
+  approvals: { deliveries: Array<{ id: string; project: string; files: number; major: boolean }> };
+  ledger: Record<string, number>;
+}
+
+export interface InvestigationSummary {
+  id: string;
+  objective: string;
+  state: string;
+  phase: string;
+  round: number;
+  createdAt: string;
+  finishedAt: string | null;
+  error: string | null;
+  specialists: number;
+  specialistsDone: number;
+  experiments: number;
+  contradictions: number;
+}
+
+export interface InvestigationExperiment {
+  id: string;
+  title: string;
+  hypothesis: string;
+  kind: "simulation" | "analysis" | "physical";
+  method: string;
+  assumptions: string[];
+  code: string | null;
+  state: string;
+  error: string | null;
+  conclusion: string | null;
+  physicalProtocol: string | null;
+  result: {
+    evaluated: number;
+    objective: string;
+    best: { params: Record<string, unknown>; metrics: Record<string, number> };
+    baseline: { params: Record<string, unknown>; metrics: Record<string, number> } | null;
+    sensitivity: Array<{ variable: string; share: number; range: number }>;
+    repeatable: boolean;
+  } | null;
+}
+
+export interface InvestigationFull {
+  id: string;
+  objective: string;
+  state: string;
+  phase: string;
+  round: number;
+  error: string | null;
+  plan: { domain: string; scope: string; success: string; hypotheses: string[]; variables: Array<{ name: string; unit: string; range: string; why: string }> } | null;
+  experiments: InvestigationExperiment[];
+  contradictions: Array<{ about: string; assessment: string; sideA: { claim: string; findings: number[] }; sideB: { claim: string; findings: number[] } }>;
+  report: {
+    executiveSummary: string;
+    methodology: string;
+    scope: string;
+    recommendations: Array<{ title: string; detail: string; confidence: string }>;
+    procedure: string[];
+    confidenceNotes: string;
+    limitations: string[];
+    unresolved: string[];
+    physicalTestsNeeded: string[];
+  } | null;
+  feedback: Array<{ at: string; text: string; kind: string; followUp: string | null }>;
+  specialistsDetail: Array<{
+    id: string;
+    name: string;
+    objective: string;
+    status: string;
+    doneWhy: string | null;
+    summary: { findingCount: number; sourceCount: number } | null;
+    findings: Array<{ id: number; claim: string; confidence: number; status: string; sourceUrl: string | null; sourceTitle: string | null }>;
+  }>;
+  sourceRegister: Array<{ id: number; url: string; title: string; area: string; credibility: string }>;
+  evidenceMatrix: Array<{ recommendation: string; confidence: string; uncited: boolean; experiments: string[]; findings: Array<{ id: number; claim: string; source: string | null; url: string | null; status: string }> }>;
+  counts: { findings: number; sources: number; contradictions: number; experimentsRun: number; experimentsFailed: number; physicalTests: number };
+}
+
 export interface IterationEntry {
   n: number;
   at: string;
@@ -1198,6 +1324,8 @@ export interface GameRelease {
   kept: boolean;
   /** Its play link on the machine (null once its files were let go). */
   url: string | null;
+  /** A zip that plays on its own. */
+  download: string | null;
 }
 
 export interface ImproveSession {
@@ -1698,6 +1826,26 @@ export const api = {
   groundPractise: (challengeId?: string) => request<{ run: unknown }>("/api/agent/ground/practise", { method: "POST", body: JSON.stringify({ challengeId }) }),
   groundEnabled: (enabled: boolean) => request<GroundState>("/api/agent/ground/enabled", { method: "POST", body: JSON.stringify({ enabled }) }),
   groundHarder: () => request<{ added: unknown[] }>("/api/agent/ground/harder", { method: "POST" }, 600000),
+  agentOverview: () => request<AgentOverview>("/api/agent/overview"),
+  learning: () =>
+    request<{
+      total: number;
+      byStatus: Array<{ name: string; count: number; applied: number; helped: number }>;
+      byCategory: Array<{ name: string; count: number; applied: number; helped: number }>;
+      bySource: Array<{ name: string; count: number; applied: number; helped: number }>;
+      lessons: LearningLesson[];
+      ledger: Record<string, number>;
+      loop: { topicId: string | null; asked: string[]; reconstructed: number; lastTickAt: string | null };
+    }>("/api/agent/learning"),
+  decideLesson: (id: number, decision: "verified" | "rejected" | null) => request<{ lesson: LearningLesson }>(`/api/agent/learning/lessons/${id}`, { method: "POST", body: JSON.stringify({ decision }) }),
+  evaluations: () => request<{ runs: EvaluationRunRecord[]; running: string | null; challenges: Array<{ id: string; category: string; title: string; custom: boolean }> }>("/api/agent/evaluations"),
+  runEvaluation: (input: { label?: string; withKnowledge?: boolean; trials?: number; only?: string[] }) => request<{ run: EvaluationRunRecord }>("/api/agent/evaluations", { method: "POST", body: JSON.stringify(input) }),
+  compareEvaluations: (a: string, b: string) => request<EvaluationCompare>(`/api/agent/evaluations/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`),
+  investigations: () => request<{ investigations: InvestigationSummary[] }>("/api/agent/investigations"),
+  investigation: (id: string) => request<{ investigation: InvestigationFull }>(`/api/agent/investigations/${encodeURIComponent(id)}`),
+  startInvestigation: (objective: string) => request<{ investigation: InvestigationSummary }>("/api/agent/investigations", { method: "POST", body: JSON.stringify({ objective }) }),
+  investigationAction: (id: string, action: "stop" | "resume") => request<unknown>(`/api/agent/investigations/${encodeURIComponent(id)}/${action}`, { method: "POST" }),
+  investigationFeedback: (id: string, text: string, kind?: string) => request<unknown>(`/api/agent/investigations/${encodeURIComponent(id)}/feedback`, { method: "POST", body: JSON.stringify({ text, kind }) }),
   iterations: (sessionId: string) =>
     request<{ current: IterationEntry | null; iterations: IterationEntry[]; stage: string; state: string; phase: string }>(`/api/agent/continuous/${encodeURIComponent(sessionId)}/iterations`),
   iteration: (sessionId: string, n: number | "current") => request<IterationDetail>(`/api/agent/continuous/${encodeURIComponent(sessionId)}/iterations/${n}`),
@@ -1736,8 +1884,8 @@ export const api = {
     multiplayer?: boolean;
   }) =>
     request<{ session: ImproveSession }>("/api/agent/continuous/start", { method: "POST", body: JSON.stringify(input) }, 120000),
-  gameReleases: (sessionId: string) =>
-    request<{ releases: GameRelease[]; lastError: { at: string; title: string; error: string } | null }>(`/api/previews/demos/${encodeURIComponent(sessionId)}`),
+  gameReleases: (sessionId: string, name?: string) =>
+    request<{ releases: GameRelease[]; lastError: { at: string; title: string; error: string } | null }>(`/api/previews/demos/${encodeURIComponent(sessionId)}${name ? `?name=${encodeURIComponent(name)}` : ""}`),
   continuousStop: (id: string) => request<{ session: ImproveSession }>(`/api/agent/continuous/${encodeURIComponent(id)}/stop`, { method: "POST" }),
   continuousRestart: (id: string) => request<{ session: ImproveSession }>(`/api/agent/continuous/${encodeURIComponent(id)}/restart`, { method: "POST" }),
   continuousInstruct: (id: string, text: string) =>

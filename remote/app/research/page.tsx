@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { api } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, usePersistentState, useRemote, useToast } from "../ui";
+import Investigations from "./Investigations";
 import { LearningPanel } from "./learning";
 import { LearningReportCard } from "./report";
 import { TopicWorkspace } from "./workspace";
@@ -127,6 +128,8 @@ export default function Research() {
             </button>
           </div>
         )}
+
+        <Investigations />
 
         <LearningReportCard />
 

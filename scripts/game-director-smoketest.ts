@@ -20,6 +20,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "game-director-"));
 process.chdir(tmp); // data/ and builds/ stay out of the real ones
 process.env.STARTERS_DIR = path.join(repo, "templates", "starters");
 process.env.NET_KIT_DIR = path.join(repo, "templates", "net-kit");
+process.env.GAME_ENGINES_DIR = path.join(repo, "templates", "game-engines");
 process.env.KNOWLEDGE_DB_PATH = path.join(tmp, "knowledge.db");
 process.env.SECOND_BRAIN_SYNC = "false";
 process.env.MODEL_PROVIDER = "lmstudio";
@@ -117,6 +118,29 @@ const main = async () => {
   const after = hooks.getSession(session.id)!;
   if (after.lastRelease?.version !== 2 || !after.journal.some((s) => /Released version 2/.test(s.title))) fail("the session does not show the release");
   console.log("[PASS] each finished milestone is released as the next playable version");
+
+  // It downloads, and the shelf SaveState reads has the newest.
+  const bundle = GameDirector.bundle(session.id, 2, "Tiny Arena")!;
+  const names = bundle.data.toString("latin1");
+  if (bundle.file !== "Tiny-Arena-v2.zip" || bundle.data.subarray(0, 2).toString() !== "PK") fail(`bundle: ${bundle.file}`);
+  for (const name of ["Tiny-Arena/game/index.html", "Tiny-Arena/Play.bat", "Tiny-Arena/play.ps1", "Tiny-Arena/play.sh", "Tiny-Arena/README.txt"]) if (!names.includes(name)) fail(`the zip has no ${name}`);
+  if (GameDirector.bundle(session.id, 9, "x")) fail("a version that does not exist was bundled");
+  const shelf = path.join(tmp, "games", "made-tiny-arena", "index.html");
+  if (!fs.existsSync(shelf) || !fs.readFileSync(shelf, "utf8").includes("Tiny Arena")) fail("the newest version is not on the shelf for SaveState");
+  console.log("[PASS] a version downloads as a zip that plays on its own; the newest is on the shelf SaveState reads");
+
+  // The engine: Phaser for 2D, three.js for 3D, its files and packages in the new game.
+  const twoD = path.join(tmp, "two-d");
+  fs.mkdirSync(twoD);
+  GameDirector.seed(twoD, "Flat", "A platformer about a fox");
+  const threeD = path.join(tmp, "three-d");
+  fs.mkdirSync(threeD);
+  GameDirector.seed(threeD, "Deep", "A 3D open world survival game");
+  const deps = (dir: string) => JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")).dependencies as Record<string, string>;
+  if (!deps(twoD).phaser || deps(twoD).three || !fs.readFileSync(path.join(twoD, "src", "engine", "game.ts"), "utf8").includes("Phaser")) fail("the 2D game is not on Phaser");
+  if (!deps(threeD).three || deps(threeD).phaser || !fs.readFileSync(path.join(threeD, "src", "engine", "game.ts"), "utf8").includes("THREE")) fail("the 3D game is not on three.js");
+  if (!/Phaser 3/.test(GameDirector.guide(twoD)) || !/three\.js/.test(GameDirector.guide(threeD))) fail("the guide does not name the engine");
+  console.log("[PASS] a new game gets a real engine: Phaser for 2D, three.js for 3D");
 
   write(path.join(ws, "build.js"), `process.stderr.write("TS2304: Cannot find name 'enemy'");process.exit(1);\n`);
   await hooks.releaseIfGame(session.id, "Broken step");

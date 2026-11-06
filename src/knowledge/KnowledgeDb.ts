@@ -176,6 +176,9 @@ export const getKnowledgeDb = (): SqliteDatabase => {
   // once waited 7.7 s on a hard drive busy with a build.
   db.pragma("cache_size = -65536");
   db.exec(SCHEMA);
+  // Added later: what the owner decided about a lesson. Additive; older code ignores it.
+  const lessonColumns = (db.prepare("PRAGMA table_info(lessons)").all() as Array<{ name: string }>).map((c) => c.name);
+  if (!lessonColumns.includes("decision")) db.exec("ALTER TABLE lessons ADD COLUMN decision TEXT");
   checkpointInBackground(db, DB_PATH);
   instance = db;
   return db;

@@ -11,14 +11,18 @@ import { useEffect, useRef, useState } from "react";
 import { api, type AgentMessage, type ChatPending, type Delivery, type ImproveCandidate, type ImproveSession, type ReconstructRun } from "@/lib/api";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
 import IterationExplorer from "./IterationExplorer";
+import { EvaluationsPanel, LearningCentre, Overview } from "./LearningCentre";
 
-type Tab = "growth" | "talk" | "ground" | "continuous" | "reconstruct";
+type Tab = "overview" | "growth" | "talk" | "ground" | "continuous" | "reconstruct" | "learning" | "evaluations";
 const TABS: Array<{ id: Tab; label: string }> = [
+  { id: "overview", label: "Overview" },
   { id: "growth", label: "Growth" },
   { id: "talk", label: "Talk" },
   { id: "ground", label: "Training ground" },
   { id: "continuous", label: "Continuous & approvals" },
-  { id: "reconstruct", label: "Reconstructor" }
+  { id: "reconstruct", label: "Reconstructor" },
+  { id: "learning", label: "Learning" },
+  { id: "evaluations", label: "Evaluations" }
 ];
 
 const pct = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${Math.round(v * 100)}%`);
@@ -34,11 +38,11 @@ const trendText = (recent: number | null | undefined, earlier: number | null | u
 export default function AgentPage() {
   const connected = useConnected();
   const profile = useRemote(() => api.agentProfile(), 20000, "agent-profile");
-  const [tab, setTab] = useState<Tab>("growth");
+  const [tab, setTab] = useState<Tab>("overview");
   // A link can open a tab: /agent/?tab=continuous.
   useEffect(() => {
     const wanted = new URLSearchParams(window.location.search).get("tab");
-    if (wanted && ["growth", "talk", "ground", "continuous", "reconstruct"].includes(wanted)) setTab(wanted as Tab);
+    if (wanted && ["overview", "growth", "talk", "ground", "continuous", "reconstruct", "learning", "evaluations"].includes(wanted)) setTab(wanted as Tab);
   }, []);
   if (connected === false) return <NotConnected />;
   const p = profile.data;
@@ -62,6 +66,9 @@ export default function AgentPage() {
           {tab === "growth" ? <Growth profile={profile} /> : null}
           {tab === "talk" ? <Talk /> : null}
           {tab === "ground" ? <Ground /> : null}
+          {tab === "overview" ? <Overview /> : null}
+          {tab === "learning" ? <LearningCentre /> : null}
+          {tab === "evaluations" ? <EvaluationsPanel /> : null}
           {tab === "continuous" ? <Continuous /> : null}
           {tab === "reconstruct" ? <Reconstruct /> : null}
         </div>

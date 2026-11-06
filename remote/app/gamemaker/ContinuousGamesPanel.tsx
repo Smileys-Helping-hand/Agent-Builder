@@ -29,16 +29,17 @@ function GameSession({ session, onChange }: { session: ImproveSession; onChange:
   const [releaseError, setReleaseError] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [playing, setPlaying] = useState<GameRelease | null>(null);
 
   useEffect(() => {
     api
-      .gameReleases(session.id)
+      .gameReleases(session.id, session.projectName)
       .then((data) => {
         setReleases(data.releases);
         setReleaseError(data.lastError?.error ?? null);
       })
       .catch(() => undefined);
-  }, [session.id, session.lastRelease?.version]);
+  }, [session.id, session.projectName, session.lastRelease?.version]);
 
   const act = async (what: string, call: () => Promise<unknown>, done: string) => {
     setBusy(what);
@@ -77,9 +78,17 @@ function GameSession({ session, onChange }: { session: ImproveSession; onChange:
 
       {latest ? (
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
-          <a className="btn small primary" href={onMachine(latest.url!)} target="_blank" rel="noreferrer">
-            ▶ Play v{latest.version}
+          <button className="btn small primary" onClick={() => setPlaying(latest)}>
+            ▶ Play v{latest.version} here
+          </button>
+          <a className="btn small" href={onMachine(latest.url!)} target="_blank" rel="noreferrer">
+            Open in a tab
           </a>
+          {latest.download ? (
+            <a className="btn small" href={onMachine(latest.download)}>
+              Download
+            </a>
+          ) : null}
           <span style={{ fontSize: 12, color: "var(--muted)" }}>
             {latest.title} · {ago(latest.at)}
             {latest.multiplayer ? " · online multiplayer" : ""}
@@ -94,7 +103,13 @@ function GameSession({ session, onChange }: { session: ImproveSession; onChange:
             {releases.map((release) => (
               <div key={release.version} style={{ fontSize: 12 }}>
                 {release.url ? (
-                  <a href={onMachine(release.url)} target="_blank" rel="noreferrer">
+                  <a
+                    href={onMachine(release.url)}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setPlaying(release);
+                    }}
+                  >
                     v{release.version}
                   </a>
                 ) : (
@@ -105,6 +120,18 @@ function GameSession({ session, onChange }: { session: ImproveSession; onChange:
             ))}
           </div>
         </details>
+      ) : null}
+
+      {playing?.url ? (
+        <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 1000, display: "flex", flexDirection: "column" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 12px", color: "#fff", fontSize: 13 }}>
+            <strong>{session.projectName}</strong> <span style={{ opacity: 0.7 }}>v{playing.version} · {playing.title}</span>
+            <button className="btn small ghost" style={{ marginLeft: "auto" }} onClick={() => setPlaying(null)}>
+              Close
+            </button>
+          </div>
+          <iframe title={session.projectName} src={onMachine(playing.url)} allow="autoplay; fullscreen; gamepad; pointer-lock" sandbox="allow-scripts allow-pointer-lock allow-forms" style={{ flex: 1, border: 0, width: "100%" }} />
+        </div>
       ) : null}
 
       <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
@@ -183,9 +210,10 @@ export default function ContinuousGamesPanel() {
     <div className="card" style={{ marginTop: 16 }}>
       <div className="section-title" style={{ marginTop: 0 }}>♾️ Keep building a game</div>
       <p style={{ fontSize: 13, color: "var(--muted)", margin: "4px 0 12px" }}>
-        Describe a game and it keeps building it for hours or days: an original design, then the core loop, content, art
-        drawn on this PC, animation, sound and (when you want it) online multiplayer, then upgrades for as long as it
-        runs. Every finished milestone becomes a version you can play. Send it notes at any time.
+        Describe a game and it keeps building it for hours or days on a real engine (Phaser, or three.js for 3D): an
+        original design, then the core loop, content, art drawn on this PC, animation, sound and (when you want it) online
+        multiplayer, then upgrades for as long as it runs. Every finished milestone becomes a version you can play here,
+        download, or play from SaveState's Mini Games. Send it notes at any time.
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <input className="input" placeholder="Name (e.g. Ember Hollow)" value={name} onChange={(e) => setName(e.target.value)} />

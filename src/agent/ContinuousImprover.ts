@@ -797,7 +797,7 @@ ${approach.arm.instruction}${instruction}
 
 Context: this is one step of a long-running build of "${session.projectName}".
 ${ownerWords(session)}
-${session.kind === "game" ? `${GameDirector.guide()}\n` : ""}${machine}
+${session.kind === "game" ? `${GameDirector.guide(dir)}\n` : ""}${machine}
 Work in the existing code and keep everything that already works working.`;
   // Only this session works in its workspace: a stray build there (one carried on by something else) is stopped first.
   const strays = () => BuildService.active().filter((b) => path.resolve(b.outputDir) === path.resolve(dir));
@@ -954,7 +954,7 @@ const releaseIfGame = async (sessionId: string, title: string) => {
   if (session?.kind !== "game" || !session.workspace) return;
   patchSession(sessionId, { phase: `Releasing the next version: ${title}` });
   const commit = await head(session.workspace.dir).catch(() => null);
-  const { release, error } = await GameDirector.release(sessionId, session.workspace.dir, title, commit);
+  const { release, error } = await GameDirector.release(sessionId, session.workspace.dir, title, commit, session.projectName);
   patchSession(sessionId, release ? { lastRelease: { version: release.version, at: release.at, title: release.title }, releaseError: null } : { releaseError: error });
   journal(sessionId, {
     at: new Date().toISOString(),

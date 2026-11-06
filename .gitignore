@@ -31,3 +31,7 @@ remote/.env*.local
 # Runtime memory written while building (EpisodicMemory, SystemPromptPatcher)
 app_memory/
 agents/projects/
+# Finished continuous games, for SaveState
+games/made-*/
+# The Virtual Test Lab: ISOs, logs, screenshots
+data/vmlab/

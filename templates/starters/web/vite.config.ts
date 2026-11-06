@@ -25,7 +25,9 @@ function singleFile(): Plugin {
         if (file.type === "chunk" && file.isEntry) {
           const tag = new RegExp(`<script[^>]*src="[^"]*${file.fileName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"[^>]*></script>`);
           // "</script" inside the code would end the tag early; escape it.
-          const code = file.code.replace(/<\/script/gi, "<\\/script");
+          // Vite fills in its preload marker after this plugin runs, so a dynamic import() would break:
+          // everything is in this one file, so there is nothing to preload.
+          const code = file.code.replace(/__VITE_PRELOAD__/g, "void 0").replace(/<\/script/gi, "<\\/script");
           page = page.replace(tag, () => `<script type="module">${code}</script>`);
           delete bundle[name];
         } else if (file.type === "asset" && file.fileName.endsWith(".css")) {

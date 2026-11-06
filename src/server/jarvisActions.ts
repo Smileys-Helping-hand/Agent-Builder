@@ -389,6 +389,19 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
     params: { "projectId?": "one of the owner's projects", "gitUrl?": "or a public Git repository's https address", "siteUrl?": "or a live website's address (studied from what its pages show)" },
     call: (p) => ["POST", "/api/agent/reconstruct", pick(p, "projectId", "gitUrl", "siteUrl")]
   },
+  {
+    name: "investigate.start",
+    area: "research",
+    label: "Deep research on any objective: specialists, sources, computed experiments, contradictions, and an evidence-backed report (e.g. how to make the best-tasting coffee)",
+    scope: "execute",
+    params: { objective: "what to find out" },
+    call: (p) => ["POST", "/api/agent/investigations", pick(p, "objective")]
+  },
+  { name: "investigate.list", area: "research", label: "Deep research investigations and how far they are", scope: "read", params: {}, call: () => ["GET", "/api/agent/investigations"] },
+  { name: "investigate.report", area: "research", label: "An investigation's full report: findings, experiments, contradictions, evidence and sources", scope: "read", params: { id: "the investigation" }, call: (p) => ["GET", `/api/agent/investigations/${enc(str(p.id))}`] },
+  { name: "agent.overview", area: "agent", label: "Everything going on: agents, VMs, research, learning, evaluations and what waits for approval", scope: "read", params: {}, call: () => ["GET", "/api/agent/overview"] },
+  { name: "evaluate.run", area: "agent", label: "Measure the agent: run the benchmark challenges with hidden tests (with or without what it has learned)", scope: "execute", params: { "label?": "a name for the run", "withKnowledge?": "true/false", "trials?": "repeats of each challenge" }, call: (p) => ["POST", "/api/agent/evaluations", pick(p, "label", "withKnowledge", "trials")] },
+  { name: "evaluate.results", area: "agent", label: "The agent's evaluation runs and scores", scope: "read", params: {}, call: () => ["GET", "/api/agent/evaluations"] },
   { name: "lab.status", area: "agent", label: "Virtual Test Lab: VMs, ISOs, test profiles and recent test runs", scope: "read", params: {}, call: () => ["GET", "/api/lab"] },
   {
     name: "lab.vm.create",

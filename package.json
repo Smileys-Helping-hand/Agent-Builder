@@ -59,7 +59,10 @@
     "test:game-director": "tsx scripts/game-director-smoketest.ts",
     "test:self-improve": "tsx scripts/self-improve-smoketest.ts",
     "test:vmlab": "tsx scripts/vmlab-smoketest.ts",
-    "test:iterations": "tsx scripts/iterations-smoketest.ts"
+    "test:iterations": "tsx scripts/iterations-smoketest.ts",
+    "test:investigation": "tsx scripts/investigation-smoketest.ts",
+    "test:learning": "tsx scripts/learning-smoketest.ts",
+    "check:game-engines": "tsx scripts/game-engine-check.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",

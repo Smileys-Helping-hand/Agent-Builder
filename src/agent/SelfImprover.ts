@@ -44,7 +44,7 @@ export interface SelfReport {
 /** The checks every self-improvement step must pass: the typecheck and the builder's core smoketests. */
 export const SELF_CHECK =
   process.env.SELF_CHECK_COMMAND ||
-  "npx tsc --noEmit -p . && npm run test:continuous && npm run test:rl && npm run test:reconstruct && npm run test:net-kit && npm run test:game-director && npm run test:self-improve";
+  "npx tsc --noEmit -p . && npm run test:continuous && npm run test:rl && npm run test:reconstruct && npm run test:net-kit && npm run test:game-director && npm run test:self-improve && npm run test:iterations && npm run test:investigation && npm run test:learning";
 
 const root = () => path.resolve(process.env.AGENT_BUILDER_ROOT ?? process.cwd());
 const same = (a: string, b: string) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();

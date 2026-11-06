@@ -8,9 +8,11 @@
  *   goal      the owner's prompt turned into a production plan: an original
  *             design, the core loop first, then content, art, animation,
  *             sound, multiplayer when asked for, polish, and upgrades
- *   seed      a new game starts from the web starter (so its pictures are
- *             drawn by the local image engine, see ArtStudio) with ASSETS.md,
- *             and the multiplayer kit when the prompt asks for players together
+ *   seed      a new game starts from the web starter plus a real engine (Phaser
+ *             3, or three.js when it is 3D: scenes, input, sound, saving, tested
+ *             rules; templates/game-engines), its pictures drawn by the local
+ *             image engine (ArtStudio), with ASSETS.md, and the multiplayer kit
+ *             when the prompt asks for players together
  *   guide     what every step is told: the quality bar and the asset rules
  *   check     part of every check run: nothing loaded from the internet, every
  *             asset file listed in ASSETS.md with a free source (generated,
@@ -18,7 +20,9 @@
  *             names from someone else's game
  *   release   after each finished milestone (and kept upgrade) the game is
  *             built and kept as the next version, playable from a link:
- *             data/game-demos/<session>/v<N>/
+ *             data/game-demos/<session>/v<N>/. The newest also goes to
+ *             games/made-<name>/, where SaveState's Mini Games finds it, and any
+ *             version downloads as a zip that plays on its own (bundle)
  */
 import { execFile } from "child_process";
 import fs from "fs";
@@ -26,12 +30,21 @@ import path from "path";
 import { promisify } from "util";
 
 import { packageTool } from "../utils/packageTool.js";
+import { makeZip } from "../utils/Zip.js";
 import { NetKit } from "./NetKit.js";
 
 const run = promisify(execFile);
 
 const DEMOS_DIR = () => path.resolve(process.env.GAME_DEMOS_DIR ?? "data/game-demos");
 const STARTER_DIR = () => path.resolve(process.env.STARTERS_DIR ?? "templates/starters", "web");
+const ENGINES_DIR = () => path.resolve(process.env.GAME_ENGINES_DIR ?? "templates/game-engines");
+/** Where SaveState's Mini Games looks for what Agent Builder has finished. */
+const SHELF_DIR = () => path.resolve(process.env.GAME_SHELF_DIR ?? "games");
+export type GameEngine = "phaser" | "three";
+const ENGINE_PACKAGES: Record<GameEngine, { dependencies: Record<string, string>; devDependencies: Record<string, string> }> = {
+  phaser: { dependencies: { phaser: "3.80.1" }, devDependencies: {} },
+  three: { dependencies: { three: "0.164.1" }, devDependencies: { "@types/three": "0.164.1" } }
+};
 const BUILD_LIMIT_MS = 15 * 60_000;
 /** Older versions' files are let go; their records stay. */
 const KEEP_VERSIONS = 25;
@@ -110,9 +123,50 @@ this game (original), CC0 or public domain, and fonts under the OFL.
 | --- | --- | --- | --- |
 `;
 
+const PLAY_BAT = `@echo off
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0play.ps1"
+`;
+const PLAY_PS1 = `# Serves the game on this computer only, and opens it in your browser. Close this window to stop.
+$root = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'game'
+$types = @{ '.html'='text/html'; '.js'='text/javascript'; '.mjs'='text/javascript'; '.css'='text/css'; '.json'='application/json'; '.png'='image/png'; '.jpg'='image/jpeg'; '.jpeg'='image/jpeg'; '.webp'='image/webp'; '.svg'='image/svg+xml'; '.gif'='image/gif'; '.mp3'='audio/mpeg'; '.ogg'='audio/ogg'; '.wav'='audio/wav'; '.glb'='model/gltf-binary'; '.woff2'='font/woff2' }
+$listener = New-Object Net.HttpListener
+$port = 8765
+while ($true) {
+  try { $listener.Prefixes.Clear(); $listener.Prefixes.Add("http://localhost:$port/"); $listener.Start(); break } catch { $port++; if ($port -gt 8865) { throw } ; $listener = New-Object Net.HttpListener }
+}
+Write-Host "Playing at http://localhost:$port/  (close this window to stop)"
+Start-Process "http://localhost:$port/"
+$full = [IO.Path]::GetFullPath($root)
+while ($listener.IsListening) {
+  $context = $listener.GetContext()
+  $path = [Uri]::UnescapeDataString($context.Request.Url.AbsolutePath).TrimStart('/')
+  if ($path -eq '') { $path = 'index.html' }
+  $file = [IO.Path]::GetFullPath((Join-Path $root $path))
+  if ($file.StartsWith($full) -and (Test-Path $file -PathType Leaf)) {
+    $bytes = [IO.File]::ReadAllBytes($file)
+    $type = $types[[IO.Path]::GetExtension($file).ToLower()]
+    if ($type) { $context.Response.ContentType = $type }
+    $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+  } else { $context.Response.StatusCode = 404 }
+  $context.Response.Close()
+}
+`;
+const PLAY_SH = `#!/bin/sh
+# Serves the game on this computer only, and opens it in your browser. Ctrl+C to stop.
+cd "$(dirname "$0")/game" || exit 1
+PORT=8765
+(sleep 1; (xdg-open "http://localhost:$PORT/" || open "http://localhost:$PORT/") >/dev/null 2>&1) &
+exec python3 -m http.server "$PORT" --bind 127.0.0.1
+`;
+
 export const GameDirector = {
   isGame(text: string): boolean {
     return GAME.test(text);
+  },
+
+  /** The engine a game is built on: three.js when it is 3D, otherwise Phaser. */
+  engineFor(prompt: string): GameEngine {
+    return /\b(3d|three\.?js|first[- ]person|third[- ]person|fps|open[- ]world|voxel|flight sim)\b/i.test(prompt) ? "three" : "phaser";
   },
 
   /** The owner's prompt as a production plan the roadmap is written from. */
@@ -145,10 +199,21 @@ Every asset file is listed in ASSETS.md with its source; nothing is loaded from 
   },
 
   /** A new game's first files: the web starter, ASSETS.md, and the multiplayer kit when it is wanted. */
-  seed(dir: string, name: string, prompt: string, options: { multiplayer?: boolean } = {}): void {
+  seed(dir: string, name: string, prompt: string, options: { multiplayer?: boolean; engine?: GameEngine } = {}): void {
     const starter = STARTER_DIR();
     if (fs.existsSync(path.join(starter, "package.json"))) {
       fs.cpSync(starter, dir, { recursive: true, filter: (source) => !/[\\/](node_modules|dist)([\\/]|$)/.test(source) });
+      // The engine: its files over the starter, and its packages.
+      const engine = options.engine ?? GameDirector.engineFor(`${name} ${prompt}`);
+      for (const part of ["shared", engine]) {
+        const from = path.join(ENGINES_DIR(), part);
+        if (fs.existsSync(from)) fs.cpSync(from, dir, { recursive: true });
+      }
+      const manifest = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")) as { name: string; dependencies: Record<string, string>; devDependencies: Record<string, string>; engineChoice?: string };
+      Object.assign(manifest.dependencies, ENGINE_PACKAGES[engine].dependencies);
+      Object.assign(manifest.devDependencies, ENGINE_PACKAGES[engine].devDependencies);
+      manifest.name = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "game";
+      fs.writeFileSync(path.join(dir, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
       const html = name.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       for (const [file, value] of [["index.html", html], ["src/App.tsx", html], ["README.md", name]] as const) {
         const target = path.join(dir, file);
@@ -163,8 +228,16 @@ Every asset file is listed in ASSETS.md with its source; nothing is loaded from 
   },
 
   /** What every step of a game is told, after its instruction. */
-  guide(): string {
-    return `This is a game. Quality bar: it must look and feel like a finished indie game, not a prototype.
+  guide(dir?: string): string {
+    const engine = dir && fs.existsSync(path.join(dir, "node_modules", "three")) ? "three" : dir && fs.existsSync(path.join(dir, "src", "engine", "game.ts")) && /from "three"/.test(fs.readFileSync(path.join(dir, "src", "engine", "game.ts"), "utf8")) ? "three" : dir && fs.existsSync(path.join(dir, "src", "engine", "game.ts")) ? "phaser" : null;
+    const engineNote =
+      engine === "phaser"
+        ? "- Engine: Phaser 3 (src/engine/game.ts: Boot, Title, Play, Over scenes). Build with its sprites, arcade physics, tweens, particles, cameras, tilemaps and scenes; do not write your own canvas loop. Rules stay in src/game/; sound in src/engine/sound.ts; saving in src/engine/save.ts.\n"
+        : engine === "three"
+          ? "- Engine: three.js (src/engine/game.ts: lit world, shadows, fixed-step loop, camera, HUD). Build with meshes, materials, lights and animation made in code. Rules stay in src/game/; sound in src/engine/sound.ts; saving in src/engine/save.ts.\n"
+          : "";
+    return `This is a game. Quality bar: it must look and feel like a finished indie game, not a one-page prototype.
+${engineNote}- Several levels, scenes or areas in their own files; real game structure; never everything in one file.
 - Original: its own name, characters and world. Never use names, characters, levels or art from an existing game.
 - Art: real art for everything (art.json for the image engine, or drawn in code with gradients, outlines and shading);
   one consistent style and palette.
@@ -224,7 +297,7 @@ Every asset file is listed in ASSETS.md with its source; nothing is loaded from 
   },
 
   /** Build the game in its workspace and keep it as the next version. */
-  async release(sessionId: string, dir: string, title: string, commit: string | null): Promise<{ release: GameRelease | null; error: string | null }> {
+  async release(sessionId: string, dir: string, title: string, commit: string | null, name?: string): Promise<{ release: GameRelease | null; error: string | null }> {
     const log = readLog(sessionId);
     const at = new Date().toISOString();
     try {
@@ -252,6 +325,16 @@ Every asset file is listed in ASSETS.md with its source; nothing is loaded from 
         old.kept = false;
       }
       writeLog(sessionId, log);
+      // The newest version on the shelf, for SaveState's Mini Games.
+      if (name) {
+        const shelf = path.join(SHELF_DIR(), `made-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || sessionId}`);
+        try {
+          fs.rmSync(shelf, { recursive: true, force: true });
+          fs.cpSync(target, shelf, { recursive: true });
+        } catch {
+          // The version itself is what matters.
+        }
+      }
       return { release, error: null };
     } catch (error) {
       const message = (error instanceof Error ? error.message : String(error)).slice(0, 1500);
@@ -259,6 +342,21 @@ Every asset file is listed in ASSETS.md with its source; nothing is loaded from 
       writeLog(sessionId, log);
       return { release: null, error: message };
     }
+  },
+
+  /** A version as a zip that plays on its own: Play.bat (Windows) or play.sh start a tiny local server and open it. */
+  bundle(sessionId: string, version: number, name: string): { file: string; data: Buffer } | null {
+    const folder = GameDirector.demoFolder(`${sessionId}~v${version}`);
+    if (!folder) return null;
+    const slug = name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "game";
+    const files = walk(folder).map((file) => ({ name: `${slug}/game/${file}`, data: fs.readFileSync(path.join(folder, file)) }));
+    files.push(
+      { name: `${slug}/Play.bat`, data: Buffer.from(PLAY_BAT.replace(/\n/g, "\r\n")) },
+      { name: `${slug}/play.ps1`, data: Buffer.from(PLAY_PS1.replace(/\n/g, "\r\n")) },
+      { name: `${slug}/play.sh`, data: Buffer.from(PLAY_SH) },
+      { name: `${slug}/README.txt`, data: Buffer.from(`${name}, version ${version}.\r\n\r\nWindows: double-click Play.bat.\r\nMac and Linux: sh play.sh (needs python3).\r\nIt runs on this computer and opens in your browser.\r\n`) }
+    );
+    return { file: `${slug}-v${version}.zip`, data: makeZip(files) };
   },
 
   releases(sessionId: string): ReleaseLog {

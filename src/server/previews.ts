@@ -422,7 +422,12 @@ export const registerPreviewRoutes = (app: Express) => {
       lastError: log.lastError,
       releases: [...log.releases].reverse().map((release) => {
         const id = `${sessionId}~v${release.version}`;
-        return { ...release, url: release.kept && GameDirector.demoFolder(id) ? `/preview/demo/${encodeURIComponent(id)}/${tokenFor("demo", id)}/` : null };
+        const playable = release.kept && GameDirector.demoFolder(id);
+        return {
+          ...release,
+          url: playable ? `/preview/demo/${encodeURIComponent(id)}/${tokenFor("demo", id)}/` : null,
+          download: playable ? `/preview-download/${encodeURIComponent(id)}/${tokenFor("demo", id)}?name=${encodeURIComponent(String(req.query.name ?? "game"))}` : null
+        };
       })
     });
   });
@@ -436,6 +441,18 @@ export const registerPreviewRoutes = (app: Express) => {
     }
     buildProjectPreview(project.id, project.path);
     res.json({ success: true, preparing: true });
+  });
+
+  // A game version as a zip that plays on its own.
+  app.get("/preview-download/:id/:token", (req: Request, res: Response) => {
+    const { id, token } = req.params;
+    const match = /^(.+)~v(\d+)$/.exec(id);
+    if (!match || !tokenMatches("demo", id, token)) return res.status(404).send("Not found");
+    const bundle = GameDirector.bundle(match[1], Number(match[2]), String(req.query.name ?? "game").slice(0, 60));
+    if (!bundle) return res.status(404).send("That version's files are gone.");
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${bundle.file.replace(/"/g, "")}"`);
+    res.send(bundle.data);
   });
 
   // The sites themselves. Only after the token checks out does anything on disk get looked at.
