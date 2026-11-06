@@ -42,8 +42,9 @@ import path from "path";
 import type { Express, Request, Response } from "express";
 import { WebSocketServer, type WebSocket } from "ws";
 
-import { VmLab, labEvents, type CreateVm } from "../lab/VmLab.js";
+import { VmLab, type CreateVm } from "../lab/VmLab.js";
 import { VmTests, profiles as allProfiles, FULL, type Step } from "../lab/VmTests.js";
+import { GameMode } from "../utils/GameMode.js";
 import { Logger } from "../utils/Logger.js";
 import { authenticateAgent, type AgentRequest } from "./agentAuth.js";
 import { signLink } from "./previews.js";
@@ -313,9 +314,22 @@ export const registerLabRoutes = (app: Express, server: http.Server) => {
     ws.on("error", () => stop?.());
   };
 
-  labEvents.on("vm", () => undefined);
-
   // VMs still running from before a restart are found again; time limits and leftovers are kept in check.
   void VmLab.reconnectAll().catch((error) => Logger.warn("VmLab: could not check running VMs", { error: message(error) }));
   setInterval(() => void VmLab.sweep().catch(() => undefined), 5 * 60_000).unref();
+
+  // "Pause everything": VMs pause with the rest, and only the ones it paused carry on after.
+  const pausedForGame = new Set<string>();
+  setInterval(() => {
+    const on = GameMode.isOn();
+    for (const vm of VmLab.list()) {
+      if (on && vm.state === "running") {
+        pausedForGame.add(vm.id);
+        void VmLab.pause(vm.id).catch(() => pausedForGame.delete(vm.id));
+      } else if (!on && vm.state === "paused" && pausedForGame.has(vm.id)) {
+        pausedForGame.delete(vm.id);
+        void VmLab.resume(vm.id).catch(() => undefined);
+      }
+    }
+  }, 30_000).unref();
 };

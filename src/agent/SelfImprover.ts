@@ -41,10 +41,10 @@ export interface SelfReport {
   goal: string;
 }
 
-/** The checks every self-improvement step must pass: the typecheck and the builder's core smoketests. */
+/** The checks every self-improvement step must pass: the typecheck and the builder's core smoketests, run directly so a step cannot change what they are through package.json. */
 export const SELF_CHECK =
   process.env.SELF_CHECK_COMMAND ||
-  "npx tsc --noEmit -p . && npm run test:continuous && npm run test:rl && npm run test:reconstruct && npm run test:net-kit && npm run test:game-director && npm run test:self-improve && npm run test:iterations && npm run test:investigation && npm run test:learning";
+  "npx tsc --noEmit -p . && npx tsx scripts/continuous-smoketest.ts && npx tsx scripts/rl-smoketest.ts && npx tsx scripts/reconstruct-smoketest.ts && npx tsx scripts/learning-smoketest.ts && npx tsx scripts/iterations-smoketest.ts && npx tsx scripts/self-improve-smoketest.ts";
 
 const root = () => path.resolve(process.env.AGENT_BUILDER_ROOT ?? process.cwd());
 const same = (a: string, b: string) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();

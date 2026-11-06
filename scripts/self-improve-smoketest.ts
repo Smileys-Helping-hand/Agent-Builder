@@ -100,7 +100,7 @@ const main = async () => {
   git(self, "commit", "-q", "-m", "start");
   process.env.AGENT_BUILDER_ROOT = self;
   const { session } = await SelfImprover.start();
-  if (session.checkCommand !== SELF_CHECK || !/tsc --noEmit/.test(SELF_CHECK) || !/test:continuous/.test(SELF_CHECK)) fail(`its check: ${session.checkCommand}`);
+  if (session.checkCommand !== SELF_CHECK || !/tsc --noEmit/.test(SELF_CHECK) || !/scripts\/continuous-smoketest\.ts/.test(SELF_CHECK)) fail(`its check: ${session.checkCommand}`);
   if (path.resolve(session.projectPath).toLowerCase() !== path.resolve(self).toLowerCase() || !/Boot to a shell/.test(session.goal) || session.mode !== "forever") fail(`the session: ${JSON.stringify({ path: session.projectPath, mode: session.mode })}`);
   if (SelfImprover.session()?.id !== session.id) fail("the running session is not found");
   console.log("[PASS] a continuous session on its own repository: the findings as its goal, its typecheck and smoketests as its check");

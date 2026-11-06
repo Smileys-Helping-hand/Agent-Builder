@@ -267,6 +267,8 @@ const writeRun = (run: TestRun) => {
 };
 
 const stopping = new Set<string>();
+/** Where this boot's output starts in the serial log, which is kept across boots: an old login prompt must not count. */
+const bootMarks = new Map<string, number>();
 const active = new Map<string, Promise<TestRun>>();
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -316,7 +318,7 @@ const describe = (step: Step): string => {
     case "wait":
       return `the console shows /${step.for}/`;
     case "login":
-      return `logs in as ${step.user ?? "root"} and gets a shell`;
+      return step.user ? `logs in as ${step.user} and gets a shell` : "logs in and gets a shell";
     case "run":
       return `\`${step.command.slice(0, 120)}\` exits ${step.exit === "any" ? "(any code)" : step.exit ?? 0}${step.expect ? `, output matches /${step.expect}/` : ""}${step.reject ? `, output has no /${step.reject}/` : ""}`;
     case "screenshot":
@@ -340,13 +342,16 @@ const perform = async (run: TestRun, vmId: string, step: Step, login: { user: st
   switch (step.do) {
     case "start": {
       const vm = VmLab.get(vmId)!;
+      // Already up: its prompt may have been printed a little while ago.
+      const size = VmLab.serialLog(vmId).size;
+      bootMarks.set(run.id, vm.state === "running" && !step.snapshot ? Math.max(0, size - 4096) : size);
       if (step.snapshot && vm.state === "stopped") await VmLab.restore(vmId, step.snapshot);
       if (vm.state !== "running") await VmLab.start(vmId);
       else if (step.snapshot) await VmLab.restore(vmId, step.snapshot);
       return { expected, actual: `running (${VmLab.get(vmId)!.state})`, result: "passed", output: "", screenshot: null };
     }
     case "wait": {
-      const from = step.for === "login:" ? Math.max(0, VmLab.serialLog(vmId).size - 4096) : 0;
+      const from = bootMarks.get(run.id) ?? Math.max(0, VmLab.serialLog(vmId).size - 4096);
       const result = await waitSerial(vmId, toRegex(step.for), from, step.timeoutMs ?? 120_000, run.id);
       return { expected, actual: result.matched ? "seen on the console" : `not seen within ${Math.round((step.timeoutMs ?? 120_000) / 1000)} s`, result: result.matched ? "passed" : step.optional ? "warned" : "failed", output: result.text.slice(-3000), screenshot: null };
     }
@@ -407,6 +412,7 @@ const perform = async (run: TestRun, vmId: string, step: Step, login: { user: st
       };
     }
     case "restart":
+      bootMarks.set(run.id, VmLab.serialLog(vmId).size);
       await VmLab.restart(vmId);
       return { expected, actual: "reset", result: "passed", output: "", screenshot: null };
     case "sleep":
@@ -546,6 +552,7 @@ export const VmTests = {
     } finally {
       if (recorder) clearInterval(recorder);
       stopping.delete(run.id);
+      bootMarks.delete(run.id);
       run.finishedAt = new Date().toISOString();
       // The whole serial log of the run, as evidence.
       try {
