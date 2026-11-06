@@ -103,8 +103,10 @@ export interface ApplyResult {
   conflicts: string[];
 }
 
+// Staging a whole project on a busy disk takes minutes, and a git killed part-way leaves its lock behind.
 const git = async (cwd: string, args: string[], env: NodeJS.ProcessEnv = process.env): Promise<string> => {
-  const { stdout } = await run("git", args, { cwd, env, windowsHide: true, maxBuffer: 64 * 1024 * 1024, timeout: 120_000 });
+  const slow = args[0] === "add" || args[0] === "commit";
+  const { stdout } = await run("git", args, { cwd, env, windowsHide: true, maxBuffer: 64 * 1024 * 1024, timeout: slow ? 30 * 60_000 : 120_000 });
   return stdout;
 };
 
