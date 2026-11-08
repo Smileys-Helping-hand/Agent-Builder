@@ -304,7 +304,7 @@ function Start-Api {
     Limit-Log $apiLog
     Add-Content -Path $apiLog -Value ("`n==== started {0} ====" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss")) -Encoding ascii -ErrorAction SilentlyContinue
     $process = Start-Process -FilePath "cmd.exe" `
-        -ArgumentList "/c set HOST=$bindHost&& npx tsx src/server/server.ts >> `"$apiLog`" 2>&1" `
+        -ArgumentList "/c set HOST=$bindHost&& node node_modules\tsx\dist\cli.mjs src/server/server.ts >> `"$apiLog`" 2>&1" `
         -WorkingDirectory $repo -WindowStyle Hidden -PassThru
     return $process.Id
 }

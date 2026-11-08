@@ -1117,6 +1117,7 @@ export interface AgentOverview {
   failures: Array<{ project: string; error: string | null }>;
   approvals: { deliveries: Array<{ id: string; project: string; files: number; major: boolean }> };
   ledger: Record<string, number>;
+  disk?: { freeGb: number | null; low: boolean };
 }
 
 export interface InvestigationSummary {

@@ -33,6 +33,8 @@ const envMs = (name: string, fallback: number): number => {
 };
 
 const BASE_DELAY_MS = envMs("RESEARCH_CYCLE_DELAY_MS", 60_000);
+/** In titles, never on the pages: "Brewing Method Specialist", "Research how to…". */
+const ROLE_WORDS = new Set(["specialist", "specialists", "expert", "experts", "analysis", "analyst", "research", "researcher", "investigation", "study", "studies", "review", "overview", "possible", "best", "make", "making", "figure", "understand", "understanding", "evaluate", "evaluating", "explore", "exploring", "find", "finding", "out", "how", "what", "why", "optimal", "optimum", "different", "various", "parameters", "impact", "impacts", "effect", "effects", "role", "factors", "affect", "affects", "influence", "key", "main", "importance", "important"]);
 const MAX_BACKOFF_MS = envMs("RESEARCH_MAX_BACKOFF_MS", 30 * 60_000);
 const BUILD_YIELD_DELAY_MS = 30_000;
 const QUESTIONS_PER_CYCLE = 2;
@@ -514,11 +516,15 @@ Rules: no title heading; use ONLY the findings; keep citation numbers exactly as
    * distinctive words keep the plain majority rule.
    */
   static mentionsTopic(topicTitle: string, text: string): boolean {
-    const terms = [...new Set(contentTokens(topicTitle))];
+    // Words that say what kind of thing a title is, never what it is about.
+    const terms = [...new Set(contentTokens(topicTitle))].filter((term) => !ROLE_WORDS.has(term));
     if (terms.length === 0) return true;
     const haystack = text.toLowerCase();
     const present = (term: string) => haystack.includes(term.length > 5 ? term.slice(0, term.length - 2) : term);
-    const coverage = terms.filter(present).length / terms.length;
+    const hits = terms.filter(present).length;
+    const coverage = hits / terms.length;
+    // Most of what it is about, or a good part of it when that is several words.
+    if (hits >= 2 && coverage >= 0.34) return true;
     const distinctive = terms.filter((term) => term.length >= 8);
     if (distinctive.length === 0) return coverage >= 0.6;
     const longest = Math.max(...distinctive.map((term) => term.length));
@@ -558,7 +564,9 @@ Rules: no title heading; use ONLY the findings; keep citation numbers exactly as
     // Search engines return loosely matching pages — Wikipedia answered a
     // WebAssembly question with "Climate change" and "TRS-80" — and each one
     // cost a full extraction on the GPU just to be judged irrelevant.
-    if (!ResearchEngine.mentionsTopic(topic.title, `${source.title}\n${document.text}`)) {
+    // About the topic, or about the very question being researched: a topic's title can carry words no page uses.
+    const sourceText = `${source.title}\n${document.text}`;
+    if (!ResearchEngine.mentionsTopic(topic.title, sourceText) && !ResearchEngine.mentionsTopic(question.text, sourceText)) {
       ResearchStore.logActivity(
         topic.id,
         cycle,

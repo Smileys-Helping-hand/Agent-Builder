@@ -61,6 +61,7 @@ import { Iterations } from "../agent/Iterations.js";
 import type { VmTestConfig } from "../lab/VmCheck.js";
 import { Reconstructor } from "../agent/Reconstructor.js";
 import { SelfImprover } from "../agent/SelfImprover.js";
+import { DiskGuard } from "../utils/DiskGuard.js";
 import { ProjectTwin } from "../ecosystem/ProjectTwin.js";
 import { JarvisTasks } from "../integrations/JarvisTasks.js";
 import { SimulationLab } from "../research/SimulationLab.js";
@@ -451,7 +452,8 @@ export const registerAgentRoutes = (app: Express) => {
       evaluation: evaluations[0] ? { id: evaluations[0].id, label: evaluations[0].label, state: evaluations[0].state, score: evaluations[0].score, at: evaluations[0].startedAt, withKnowledge: evaluations[0].withKnowledge } : null,
       failures: sessions.filter((s) => s.lastError).map((s) => ({ project: s.projectName, error: s.lastError })).slice(0, 6),
       approvals: { deliveries: deliveries.filter((d) => d.state === "awaiting").map((d) => ({ id: d.id, project: d.projectName, files: d.files.length, major: d.major })) },
-      ledger: Evidence.counts()
+      ledger: Evidence.counts(),
+      disk: { freeGb: DiskGuard.freeGb(), low: DiskGuard.low() }
     });
   });
 

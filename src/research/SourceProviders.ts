@@ -12,7 +12,7 @@
 import crypto from "crypto";
 import { contentTokens } from "../knowledge/KnowledgeDb.js";
 
-export type ProviderName = "wikipedia" | "arxiv" | "hackernews" | "github" | "web" | "stackoverflow" | "issues" | "npm";
+export type ProviderName = "wikipedia" | "arxiv" | "hackernews" | "github" | "web" | "stackoverflow" | "issues" | "npm" | "openalex" | "europepmc";
 
 export interface SearchResult {
   url: string;
@@ -225,6 +225,51 @@ export const searchArxiv = async (keywords: string, limit: number): Promise<Sear
     .filter((result) => result.url.startsWith("https://arxiv.org/abs/"));
 };
 
+/**
+ * OpenAlex: some 250 million scholarly works across every field, free and with no key. Its abstracts come as an
+ * inverted index (word -> positions), rebuilt here into text. The paper's year, venue and citations go with it.
+ */
+export const searchOpenAlex = async (query: string, limit: number): Promise<SearchResult[]> => {
+  const url = `https://api.openalex.org/works?search=${encodeURIComponent(query)}&per-page=${limit}&filter=has_abstract:true&select=id,doi,display_name,publication_year,cited_by_count,primary_location,abstract_inverted_index`;
+  const response = await politeFetch(url, "application/json");
+  if (!response.ok) throw new Error(`OpenAlex HTTP ${response.status}`);
+  const data = (await response.json()) as {
+    results?: Array<{ id: string; doi: string | null; display_name: string | null; publication_year: number | null; cited_by_count: number; primary_location?: { source?: { display_name?: string } | null } | null; abstract_inverted_index?: Record<string, number[]> | null }>;
+  };
+  return (data.results ?? [])
+    .filter((work) => work.display_name && work.abstract_inverted_index)
+    .map((work) => {
+      const words: string[] = [];
+      for (const [word, positions] of Object.entries(work.abstract_inverted_index ?? {})) for (const at of positions) words[at] = word;
+      const venue = work.primary_location?.source?.display_name;
+      const about = [work.publication_year, venue, `cited ${work.cited_by_count} times`].filter(Boolean).join(", ");
+      return {
+        provider: "openalex" as const,
+        title: decodeEntities(stripTags(work.display_name!)),
+        snippet: `(${about}) ${decodeEntities(stripTags(words.filter(Boolean).join(" ")))}`.slice(0, 4000),
+        url: work.doi ? work.doi.replace(/^http:/, "https:") : work.id
+      };
+    });
+};
+
+/** Europe PMC: the biomedical and life-science literature, with abstracts, free and with no key. */
+export const searchEuropePmc = async (query: string, limit: number): Promise<SearchResult[]> => {
+  const url = `https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(`${query} HAS_ABSTRACT:y`)}&format=json&resultType=core&pageSize=${limit}`;
+  const response = await politeFetch(url, "application/json");
+  if (!response.ok) throw new Error(`Europe PMC HTTP ${response.status}`);
+  const data = (await response.json()) as {
+    resultList?: { result?: Array<{ id: string; source: string; title?: string; abstractText?: string; journalTitle?: string; pubYear?: string; citedByCount?: number; doi?: string }> };
+  };
+  return (data.resultList?.result ?? [])
+    .filter((item) => item.title && item.abstractText)
+    .map((item) => ({
+      provider: "europepmc" as const,
+      title: decodeEntities(stripTags(item.title!)),
+      snippet: `(${[item.pubYear, item.journalTitle, `cited ${item.citedByCount ?? 0} times`].filter(Boolean).join(", ")}) ${decodeEntities(stripTags(item.abstractText!))}`.slice(0, 4000),
+      url: `https://europepmc.org/article/${item.source}/${item.id}`
+    }));
+};
+
 export const searchHackerNews = async (query: string, limit: number): Promise<SearchResult[]> => {
   const url = `https://hn.algolia.com/api/v1/search?tags=story&hitsPerPage=${limit}&query=${encodeURIComponent(query)}`;
   const response = await politeFetch(url, "application/json");
@@ -367,8 +412,8 @@ export const rankResults = (query: string, results: SearchResult[]): SearchResul
   const terms = [...new Set(contentTokens(query))];
   const code = isCodeQuestion(query);
   const prior: Record<ProviderName, number> = code
-    ? { stackoverflow: 1.5, issues: 1.3, github: 1, web: 1, npm: 0.8, hackernews: 0.5, wikipedia: 0.4, arxiv: 0.3 }
-    : { web: 1.2, wikipedia: 1.1, arxiv: 1, hackernews: 0.8, github: 0.7, stackoverflow: 0.6, issues: 0.5, npm: 0.4 };
+    ? { stackoverflow: 1.5, issues: 1.3, github: 1, web: 1, npm: 0.8, hackernews: 0.5, wikipedia: 0.4, arxiv: 0.3, openalex: 0.3, europepmc: 0.2 }
+    : { openalex: 1.35, europepmc: 1.3, web: 1.2, wikipedia: 1.1, arxiv: 1, hackernews: 0.8, github: 0.7, stackoverflow: 0.6, issues: 0.5, npm: 0.4 };
   const coverage = (text: string) => {
     const hay = text.toLowerCase();
     return terms.length ? terms.filter((t) => hay.includes(t.length > 5 ? t.slice(0, -2) : t)).length / terms.length : 0;
@@ -413,6 +458,9 @@ export const searchAll = async (
     ["wikipedia", () => searchWikipedia(keywords || query, perProvider)],
     ["web", () => searchWeb(query, perProvider)],
     ["arxiv", () => searchArxiv(keywords, perProvider)],
+    // The scholarly literature: what experiments actually found, for any field.
+    ["openalex", () => searchOpenAlex(keywords || query, perProvider)],
+    ["europepmc", () => searchEuropePmc(keywords || query, perProvider)],
     ["github", () => searchGitHub(keywords, perProvider)],
     ["hackernews", () => searchHackerNews(query, perProvider)],
     // A question about code also asks the places code questions are answered.
@@ -503,6 +551,8 @@ export const fetchDocument = async (result: SearchResult): Promise<FetchedDocume
       return page?.extract ? finish(result.url, page.title ?? result.title, page.extract) : null;
     }
     case "arxiv":
+    case "openalex":
+    case "europepmc":
       // The abstract is the authoritative summary; full PDFs are too large and noisy for a local model.
       return finish(result.url, result.title, `${result.title}\n\n${result.snippet}`);
     case "github": {

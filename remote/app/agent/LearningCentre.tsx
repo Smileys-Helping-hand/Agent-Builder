@@ -25,6 +25,12 @@ export function Overview() {
   );
   return (
     <>
+      {o.disk?.low ? (
+        <div className="card" style={{ borderColor: "var(--bad)", marginBottom: 8 }}>
+          <strong style={{ color: "var(--bad)" }}>The disk is nearly full ({o.disk.freeGb} GB free).</strong>{" "}
+          <span className="small">Builds and the continuous builder are waiting until there are at least 3 GB, rather than failing half-way.</span>
+        </div>
+      ) : null}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         {stat("Agents working", o.agents.length)}
         {stat("VMs running", o.vms.running.length, `${o.vms.total} in all`)}

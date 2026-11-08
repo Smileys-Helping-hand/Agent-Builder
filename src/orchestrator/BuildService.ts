@@ -32,6 +32,7 @@ import {
 import { Logger } from "../utils/Logger.js";
 import { DbKit, isPlatform } from "../database/DbKit.js";
 import { NetKit } from "../game/NetKit.js";
+import { DiskGuard } from "../utils/DiskGuard.js";
 import type { AuditFinding } from "./SiteAudit.js";
 import { isWebsiteRequest, prepareSite } from "./SiteStarters.js";
 import { BuildGate, buildGateEvents, type BuildLane } from "../utils/BuildGate.js";
@@ -510,6 +511,8 @@ buildEvents.setMaxListeners(50);
 
 export const BuildService = {
   start(options: StartBuildOptions): BuildRecord {
+    // A build installs and writes a lot: on a nearly full disk it would fail half-way and take the builder with it.
+    if (DiskGuard.low()) throw new Error(`Not starting a build: ${DiskGuard.reason()}.`);
     // Anything that is not a known profile (a typo in a request) is the normal one.
     const profile: BuildProfile = options.profile && options.profile in PROFILE_DEFAULTS ? options.profile : "balanced";
     const defaults = PROFILE_DEFAULTS[profile] ?? PROFILE_DEFAULTS.balanced;

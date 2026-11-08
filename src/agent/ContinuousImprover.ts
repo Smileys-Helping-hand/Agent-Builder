@@ -59,6 +59,7 @@ import { Reinforcement } from "../learning/Reinforcement.js";
 import { ResearchEngine } from "../research/ResearchEngine.js";
 import { ResearchStore } from "../research/ResearchStore.js";
 import { ModelRouter } from "../tools/ModelRouter.js";
+import { DiskGuard } from "../utils/DiskGuard.js";
 import { GameMode } from "../utils/GameMode.js";
 import { Logger } from "../utils/Logger.js";
 
@@ -1317,6 +1318,11 @@ async function loop(id: string) {
       if (GameMode.isOn()) {
         patchSession(id, { phase: "Paused while everything is paused (game mode)" });
         await sleep(60_000);
+        continue;
+      }
+      if (DiskGuard.low()) {
+        patchSession(id, { phase: `Waiting: ${DiskGuard.reason()}` });
+        await sleep(5 * 60_000);
         continue;
       }
       try {

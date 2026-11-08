@@ -47,6 +47,7 @@ export const TIER_LABEL: Record<EvidenceTier, string> = {
 export const TIER_ORDER: EvidenceTier[] = ["academic", "reference", "news", "community", "speculative", "fiction"];
 
 const ACADEMIC_HOSTS = [
+  "openalex.org", "europepmc.org", "doi.org", "ebi.ac.uk", "plantphysiol.org", "academic.oup.com", "annualreviews.org", "royalsocietypublishing.org", "biorxiv.org",
   "arxiv.org", "nature.com", "science.org", "sciencemag.org", "cell.com", "pnas.org", "aps.org", "iop.org", "iopscience.iop.org",
   "springer.com", "link.springer.com", "sciencedirect.com", "elsevier.com", "wiley.com", "onlinelibrary.wiley.com", "tandfonline.com",
   "acm.org", "dl.acm.org", "ieee.org", "ieeexplore.ieee.org", "plos.org", "journals.plos.org", "frontiersin.org", "mdpi.com",

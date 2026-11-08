@@ -18,8 +18,17 @@
  *   synthesise  recommendations that cite findings by number; a citation of nothing
  *               is removed and flagged. Material open questions go back to the
  *               specialists for another round.
+ *   answer      every research question and hypothesis gets an answer that cites
+ *               findings; how strongly it is supported is counted from what those
+ *               findings are (peer-reviewed counts most), not asked of the model.
+ *               What is not answered goes back to the specialists, up to three rounds.
  *   learn       well-supported conclusions become knowledge (lessons, candidates until
  *               they prove useful), and everything is in the evidence ledger.
+ *
+ * With too little evidence it does not write conclusions: a specialist that finds
+ * little re-plans its searches first, and if the evidence is still thin the report
+ * says so and lists what could not be found. Experiments whose numbers cite no
+ * finding are refused, because their numbers would be invented.
  *
  * The report's factual parts (sources, evidence matrix, experiment numbers) are
  * generated from the records, not written by a model. Nothing here has tasted
@@ -37,6 +46,7 @@ import { Logger } from "../utils/Logger.js";
 import { Experiments, type Experiment } from "./Experiments.js";
 import { ResearchEngine } from "./ResearchEngine.js";
 import { ResearchStore, type ResearchFinding, type ResearchSource } from "./ResearchStore.js";
+import { keywordQuery } from "./SourceProviders.js";
 import { TIER_LABEL, classifySource } from "./SourceCredibility.js";
 
 export type InvestigationState = "planning" | "researching" | "experimenting" | "synthesising" | "done" | "failed" | "stopped";
@@ -51,6 +61,23 @@ export interface Specialist {
   topicId: string | null;
   status: "waiting" | "researching" | "done";
   doneWhy: string | null;
+  /** How often its searches were re-planned because they found too little. */
+  replans?: number;
+  /** When it last started or re-planned: its time limit counts from here. */
+  since?: string;
+}
+
+/** A research question or hypothesis, answered from the evidence. */
+export interface Answer {
+  question: string;
+  kind: "question" | "hypothesis";
+  answer: string;
+  supporting: number[];
+  refuting: number[];
+  /** Counted from the cited findings' kinds, never the model's say. */
+  verdict: "answered" | "supported" | "refuted" | "contested" | "not answered";
+  confidence: "high" | "medium" | "low" | "none";
+  strength: { supporting: number; refuting: number; peerReviewed: number };
 }
 
 export interface Contradiction {
@@ -105,6 +132,9 @@ export interface Investigation {
   experiments: Experiment[];
   contradictions: Contradiction[];
   report: InvestigationReport | null;
+  answers?: Answer[];
+  /** Set when the evidence was too thin to conclude anything. */
+  insufficient?: boolean;
   knowledge: number[];
   feedback: Array<{ at: string; by: string; text: string; kind: string; followUp: string | null }>;
 }
@@ -112,7 +142,14 @@ export interface Investigation {
 const FILE = () => path.resolve(process.env.INVESTIGATIONS_FILE ?? "data/research/investigations.json");
 const MIN_FINDINGS = Number(process.env.INVESTIGATION_MIN_FINDINGS) || 12;
 const MAX_AREA_MS = Number(process.env.INVESTIGATION_MAX_AREA_MS) || 8 * 3_600_000;
-const MAX_ROUNDS = Number(process.env.INVESTIGATION_ROUNDS) || 2;
+const MAX_ROUNDS = Number(process.env.INVESTIGATION_ROUNDS) || 3;
+/** A specialist with fewer findings than this re-plans its searches before it gives up. */
+const MIN_EVIDENCE = Number(process.env.INVESTIGATION_MIN_EVIDENCE) || 3;
+const MAX_REPLANS = 2;
+/** Fewer findings than this in all, and nothing is concluded. */
+const MIN_TOTAL_EVIDENCE = Number(process.env.INVESTIGATION_MIN_TOTAL) || 6;
+/** Experiments need at least this much evidence to ground their numbers in. */
+const MIN_EXPERIMENT_EVIDENCE = 10;
 const MAX_SPECIALISTS = 10;
 const TICK_MS = Number(process.env.INVESTIGATION_TICK_MS) || 60_000;
 
@@ -217,10 +254,13 @@ const startSpecialists = (item: Investigation) => {
     // Dependencies first: what it builds on is researched before it.
     const waiting = specialist.dependsOn.some((id) => specialists.find((o) => o.id === id && o.status !== "done"));
     if (waiting && specialists.some((o) => o.status === "researching")) continue;
-    const topic = engine.start(`${specialist.name} (${item.objective.slice(0, 50)})`, `${specialist.objective}\nPart of the investigation: ${item.objective}\nEvidence needed: ${specialist.evidenceNeeded}`);
+    // The title is what pages are checked against: the subject's words, not "Specialist" or "Research how to".
+    const subject = specialist.name.replace(/\b(specialists?|experts?|analysts?|research(ers?)?|investigat\w*)\b/gi, "").replace(/\s+/g, " ").trim() || specialist.name;
+    const topic = engine.start(`${subject}: ${keywordQuery(item.objective) || item.objective.slice(0, 60)}`.slice(0, 120), `${specialist.objective}\nPart of the investigation: ${item.objective}\nEvidence needed: ${specialist.evidenceNeeded}`);
     for (const question of specialist.questions) ResearchStore.addPriorityQuestion(topic.id, question, 0);
     specialist.topicId = topic.id;
     specialist.status = "researching";
+    specialist.since = new Date().toISOString();
     changed = true;
     Evidence.link(`investigation:${item.id}`, `topic:${topic.id}`, "delegated-to");
   }
@@ -237,7 +277,7 @@ const checkSpecialists = (item: Investigation) => {
     const summary = ResearchStore.getTopicSummary(specialist.topicId);
     if (!summary) continue;
     const target = MIN_FINDINGS * item.round;
-    const elapsed = Date.now() - Date.parse(summary.createdAt);
+    const elapsed = Date.now() - Date.parse(specialist.since ?? summary.createdAt);
     const why =
       summary.findingCount >= target
         ? `${summary.findingCount} findings from ${summary.sourceCount} sources`
@@ -246,9 +286,18 @@ const checkSpecialists = (item: Investigation) => {
           : elapsed > MAX_AREA_MS * item.round
             ? `reached its time limit with ${summary.findingCount} findings`
             : null;
+    if (why && summary.findingCount < MIN_EVIDENCE && (specialist.replans ?? 0) < MAX_REPLANS) {
+      // Too little to go on: search differently before giving up.
+      replanning.add(`${item.id}:${specialist.id}`);
+      specialist.replans = (specialist.replans ?? 0) + 1;
+      specialist.since = new Date().toISOString();
+      changed = true;
+      void replan(item, specialist).finally(() => replanning.delete(`${item.id}:${specialist.id}`));
+      continue;
+    }
     if (why) {
       specialist.status = "done";
-      specialist.doneWhy = why;
+      specialist.doneWhy = summary.findingCount < MIN_EVIDENCE ? `${why}; searched ${1 + (specialist.replans ?? 0)} ways` : why;
       engine.pause(specialist.topicId);
       changed = true;
     }
@@ -257,6 +306,25 @@ const checkSpecialists = (item: Investigation) => {
   const done = specialists.filter((s) => s.status === "done").length;
   patch(item.id, { phase: `Researching: ${done} of ${specialists.length} specialists done` });
   if (done === specialists.length) patch(item.id, { state: "experimenting", phase: "Designing experiments" });
+};
+
+const replanning = new Set<string>();
+
+/** New ways to search for what a specialist could not find: other words, the terms papers use, narrower questions. */
+const replan = async (item: Investigation, specialist: Specialist) => {
+  if (!specialist.topicId) return;
+  const tried = ResearchStore.listQuestions(specialist.topicId, 30).map((q) => q.text);
+  const answer = await ModelRouter.generate(`A researcher looking into "${specialist.objective}" (part of: ${item.objective}) has found almost nothing with these searches:
+${tried.map((q) => `- ${q}`).join("\n")}
+
+Write 6 different searches likely to find real evidence: use the terms scientists and specialists actually use in papers and reference works, name the specific things involved, and ask narrower questions. Each one short, like a search query.
+
+Answer with JSON only: {"searches": ["..."]}`).catch(() => "");
+  const searches = list(extractJson(answer)?.searches).slice(0, 8);
+  for (const search of searches) ResearchStore.addPriorityQuestion(specialist.topicId, search, 0);
+  ResearchEngine.getInstance().resume(specialist.topicId);
+  ResearchEngine.getInstance().runNow(specialist.topicId);
+  Evidence.record({ kind: "research", ref: `topic:${specialist.topicId}`, task: `investigation:${item.id}`, agent: "research-lead", title: `${specialist.name}: found too little, searching ${searches.length} new ways`, outcome: "re-planned", data: { searches } });
 };
 
 const findingsOf = (item: Investigation, limitEach = 30): Array<ResearchFinding & { area: string }> =>
@@ -302,6 +370,11 @@ ${code}`);
 };
 
 const designExperiments = async (item: Investigation) => {
+  // Numbers need evidence to come from; without it a simulation only dresses up a guess.
+  if (findingsOf(item).length < MIN_EXPERIMENT_EVIDENCE) {
+    patch(item.id, { phase: "Too little evidence to ground experiments in: skipping them" });
+    return;
+  }
   const answer = await ModelRouter.generate(`The investigation: ${item.objective}
 Hypotheses: ${(item.plan?.hypotheses ?? []).join("; ")}
 Measurable variables: ${(item.plan?.variables ?? []).map((v) => `${v.name} (${v.unit}, ${v.range})`).join("; ")}
@@ -348,6 +421,13 @@ Answer with JSON only:
       };
     })
     .filter((e) => e.title)
+    // A computed experiment must take its numbers from findings: one that cites none is refused, not run.
+    .map((e) => {
+      if (e.kind === "physical") return e;
+      const known = new Set(findingsOf(item).map((f) => f.id));
+      const cites = [...e.assumptions.join(" ").matchAll(/F(\d+)/g)].map((m) => Number(m[1])).filter((n) => known.has(n));
+      return cites.length ? e : { ...e, state: "failed" as const, error: "Not run: none of its assumptions cites a finding, so its numbers would be invented." };
+    })
     .slice(0, 6);
   patch(item.id, { experiments: [...item.experiments, ...experiments], phase: `Running ${experiments.filter((e) => e.kind !== "physical").length} experiments` });
 };
@@ -392,8 +472,90 @@ Answer with JSON only: {"contradictions":[{"about":"...","sideA":{"claim":"...",
     .slice(0, 15);
 };
 
+/** How much a finding counts, by what kind of source it comes from. */
+const weightOf = (finding: ResearchFinding) => {
+  const tier = classifySource(finding.sourceUrl, finding.sourceTitle).tier;
+  return tier === "academic" ? 3 : tier === "reference" ? 2 : tier === "news" || tier === "community" ? 1 : 0;
+};
+
+/** Each research question and hypothesis, answered from the findings, with a verdict counted from what is cited. */
+const answerQuestions = async (item: Investigation): Promise<Answer[]> => {
+  const findings = findingsOf(item, 60);
+  const byId = new Map(findings.map((f) => [f.id, f]));
+  const asked = [
+    ...item.specialists.flatMap((s) => s.questions.map((q) => ({ question: q, kind: "question" as const }))),
+    ...(item.plan?.hypotheses ?? []).map((h) => ({ question: h, kind: "hypothesis" as const }))
+  ].slice(0, 40);
+  const answers: Answer[] = [];
+  for (let start = 0; start < asked.length; start += 8) {
+    const batch = asked.slice(start, start + 8);
+    const reply = await ModelRouter.generate(`Answer each question, and judge each hypothesis, from these findings ONLY. Cite the finding numbers that support it and any that contradict it. If the findings do not answer it, say so and cite nothing: never answer from memory.
+
+${evidenceText(item)}
+
+${batch.map((q, i) => `${i + 1}. [${q.kind}] ${q.question}`).join("\n")}
+
+Answer with JSON only: {"answers":[{"n":1,"answer":"2-4 sentences, or 'The findings do not answer this.'","supporting":[123],"refuting":[456]}]}`).catch(() => "");
+    const parsed = extractJson(reply);
+    const rows = Array.isArray(parsed?.answers) ? parsed!.answers : [];
+    batch.forEach((asked, i) => {
+      const row = (rows.find((r) => r && typeof r === "object" && Number((r as Record<string, unknown>).n) === i + 1) ?? {}) as Record<string, unknown>;
+      const ids = (value: unknown) => (Array.isArray(value) ? [...new Set(value.map(Number))].filter((n) => byId.has(n)) : []);
+      const supporting = ids(row.supporting);
+      const refuting = ids(row.refuting).filter((n) => !supporting.includes(n));
+      const sum = (list: number[]) => list.reduce((total, n) => total + weightOf(byId.get(n)!), 0);
+      const strength = { supporting: sum(supporting), refuting: sum(refuting), peerReviewed: supporting.filter((n) => classifySource(byId.get(n)!.sourceUrl, byId.get(n)!.sourceTitle).tier === "academic").length };
+      const verdict: Answer["verdict"] = !supporting.length
+        ? refuting.length && asked.kind === "hypothesis" ? "refuted" : "not answered"
+        : strength.refuting > strength.supporting
+          ? asked.kind === "hypothesis" ? "refuted" : "contested"
+          : strength.refuting > 0
+            ? "contested"
+            : asked.kind === "hypothesis" ? "supported" : "answered";
+      const confidence: Answer["confidence"] = verdict === "not answered" ? "none" : strength.supporting >= 6 && strength.peerReviewed >= 2 && !refuting.length ? "high" : strength.supporting >= 3 ? "medium" : "low";
+      answers.push({ question: asked.question, kind: asked.kind, answer: String(row.answer ?? "The findings do not answer this.").slice(0, 1500), supporting, refuting, verdict, confidence, strength });
+    });
+  }
+  return answers;
+};
+
+/** With too little evidence, the report says so and nothing is concluded or learned. */
+const reportThinEvidence = (item: Investigation) => {
+  const sources = item.specialists.reduce((n, s) => n + (s.topicId ? ResearchStore.getTopicSummary(s.topicId)?.sourceCount ?? 0 : 0), 0);
+  const found = findingsOf(item).length;
+  const report: InvestigationReport = {
+    executiveSummary: `Not enough evidence was found to answer this: ${found} finding${found === 1 ? "" : "s"} from ${sources} sources read, after searching each part of it in several ways. Nothing is concluded from that little, and nothing was added to what the builder knows.`,
+    scope: item.plan?.scope ?? "",
+    methodology: `${item.specialists.length} specialists searched the reachable sources (the scholarly literature, reference works and the web) in up to ${MAX_ROUNDS} rounds, re-planning their searches when they found too little.`,
+    recommendations: [],
+    procedure: [],
+    confidenceNotes: "No conclusions: the evidence threshold was not reached.",
+    limitations: ["The sources reachable from here may not cover this subject.", "Try rewording the objective, or narrowing it to one part."],
+    unresolved: item.specialists.flatMap((s) => s.questions).slice(0, 20),
+    physicalTestsNeeded: [],
+    writtenAt: new Date().toISOString()
+  };
+  patch(item.id, { report, insufficient: true, state: "done", phase: "Finished: not enough evidence to conclude anything", finishedAt: new Date().toISOString() });
+  Evidence.record({ kind: "research", ref: `investigation:${item.id}`, task: `investigation:${item.id}`, agent: "research-lead", title: `Not enough evidence: ${item.objective.slice(0, 120)}`, outcome: "insufficient", data: { findings: found, sources } });
+};
+
 const synthesise = async (id: string) => {
   let item = get(id)!;
+  if (findingsOf(item).length < MIN_TOTAL_EVIDENCE) {
+    // One more round when there is one to have; otherwise say plainly that it could not be answered.
+    if (item.round < MAX_ROUNDS) {
+      const specialists = item.specialists.map((s) => ({ ...s, status: "researching" as const, doneWhy: null, replans: 0, since: new Date().toISOString() }));
+      for (const s of specialists) if (s.topicId) ResearchEngine.getInstance().resume(s.topicId);
+      patch(id, { specialists, round: item.round + 1, state: "researching", phase: `Round ${item.round + 1}: too little evidence so far, searching again` });
+      return;
+    }
+    reportThinEvidence(item);
+    return;
+  }
+  patch(id, { phase: "Answering each question from the evidence" });
+  const answers = await answerQuestions(item);
+  patch(id, { answers });
+  item = get(id)!;
   patch(id, { phase: "Looking for contradictions" });
   const contradictions = await findContradictions(item);
   patch(id, { contradictions, phase: "Writing the findings" });
@@ -406,6 +568,9 @@ const synthesise = async (id: string) => {
 
 Objective: ${item.objective}
 Success means: ${item.plan?.success}
+
+What the evidence answers (each answer cites its findings; build on these):
+${(item.answers ?? []).filter((a) => a.verdict !== "not answered").map((a) => `- [${a.verdict}, ${a.confidence}] ${a.question}: ${a.answer} (F${a.supporting.join(", F")})`).join("\n") || "(nothing answered)"}
 
 Findings:
 ${evidenceText(item)}
@@ -438,10 +603,13 @@ Answer with JSON only:
       };
     })
     .filter((r) => r.title)
+    // A recommendation with no evidence behind it is not a finding: it is left out.
+    .filter((r) => !r.uncited)
     // A claim of high confidence needs evidence behind it.
     .map((r) => (r.findings.length < 2 && r.confidence === "high" ? { ...r, confidence: "medium" as const } : r))
     .slice(0, 30);
-  const unresolved = list(parsed.unresolved).slice(0, 20);
+  // Still open: what the evidence did not answer, and what the model names as open.
+  const unresolved = [...new Set([...(item.answers ?? []).filter((a) => a.verdict === "not answered").map((a) => a.question), ...list(parsed.unresolved)])].slice(0, 20);
   const report: InvestigationReport = {
     executiveSummary: String(parsed.executiveSummary ?? "").slice(0, 3000),
     scope: String(parsed.scope ?? item.plan?.scope ?? "").slice(0, 1500),
