@@ -79,3 +79,9 @@ which LessonMemory then verifies by use. It is the first tab of each iteration i
 
 **A full disk** no longer takes the builder down: while less than 3 GB is free (`DISK_MIN_FREE_GB`), builds, installs
 and steps wait and say why, and the launcher starts the builder with node directly (npx itself needed disk space).
+
+**A slow disk** no longer restarts the builder: when it stops answering but is alive and hardly using the CPU, it is
+waiting on the disk (E: is a laptop hard drive shared with downloads and sync), and the launcher gives it up to 15
+minutes, logging "waiting on the PC". A restart there cost 5 to 20 minutes of boot on the same disk and interrupted every
+build. A builder spinning the CPU without answering is restarted after two minutes, as before. Moving the builder to an
+SSD (K: or H:) is what would make it fast.

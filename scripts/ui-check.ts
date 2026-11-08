@@ -123,6 +123,8 @@ const main = async () => {
       ["graph", "Knowledge Graph", /records connect/]
     ] as Array<[string, string, RegExp]>) {
       await visit(label, `/agent/?tab=${tab}`, 8000);
+      // Right after a restart the builder answers slowly; a tab still showing its skeleton is given longer.
+      for (let i = 0; i < 11 && !expect.test(await textOf()); i++) await sleep(2000);
       body = await textOf();
       check(`${label} tab`, expect.test(body), expect.test(body) ? "" : body.slice(0, 160).replace(/\n/g, " "));
       await shot(`agent-${tab}`);
