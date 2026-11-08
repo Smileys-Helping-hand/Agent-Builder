@@ -1241,6 +1241,7 @@ export interface IterationFile {
 
 export interface IterationDetail {
   entry: IterationEntry | null;
+  retro?: { at: string; did: string[]; changed: { files: number; added: number; removed: number; list: string[] }; outcome: string; learned: string; nextTime: string; lessonId: number | null } | null;
   objective: string;
   milestone: { title: string; detail: string; diagnosis?: string | null } | null;
   changes: {
@@ -1960,6 +1961,7 @@ export const api = {
     request<{ session: ImproveSession }>("/api/agent/continuous/start", { method: "POST", body: JSON.stringify(input) }, 120000),
   gameReleases: (sessionId: string, name?: string) =>
     request<{ releases: GameRelease[]; lastError: { at: string; title: string; error: string } | null }>(`/api/previews/demos/${encodeURIComponent(sessionId)}${name ? `?name=${encodeURIComponent(name)}` : ""}`),
+  gamePreview: (gameId: string) => request<PreviewInfo>(`/api/previews/game/${encodeURIComponent(gameId)}`),
   gameWindowsBuild: (sessionId: string, version: number, name: string) => request<{ build: unknown }>(`/api/previews/demos/${encodeURIComponent(sessionId)}/${version}/windows`, { method: "POST", body: JSON.stringify({ name }) }),
   continuousStop: (id: string) => request<{ session: ImproveSession }>(`/api/agent/continuous/${encodeURIComponent(id)}/stop`, { method: "POST" }),
   continuousRestart: (id: string) => request<{ session: ImproveSession }>(`/api/agent/continuous/${encodeURIComponent(id)}/restart`, { method: "POST" }),

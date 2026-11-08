@@ -107,6 +107,20 @@ export interface Step {
   buildId?: string | null;
   /** The checks as they stood when it ended. */
   check?: { at: string; passed: boolean; verified: boolean; failing: string[]; vmRun?: string | null } | null;
+  /** The step's own breakdown, written after it: what it did, what changed, what it learned, what to do next time. */
+  retro?: Retro | null;
+}
+
+export interface Retro {
+  at: string;
+  did: string[];
+  /** From git: files and lines, not the model's account. */
+  changed: { files: number; added: number; removed: number; list: string[] };
+  outcome: string;
+  learned: string;
+  /** One concrete thing to do differently, given to the next steps. */
+  nextTime: string;
+  lessonId: number | null;
 }
 
 export interface CheckRun {
@@ -800,7 +814,7 @@ ${approach.arm.instruction}${instruction}
 Context: this is one step of a long-running build of "${session.projectName}".
 ${ownerWords(session)}
 ${session.kind === "game" ? `${GameDirector.guide(dir)}\n` : ""}${await ProjectTwin.of(session).then(ProjectTwin.brief).catch(() => "")}${machine}
-Work in the existing code and keep everything that already works working.`;
+${lessonsFromLastRuns(session)}Work in the existing code and keep everything that already works working.`;
   // Only this session works in its workspace: a stray build there (one carried on by something else) is stopped first.
   const strays = () => BuildService.active().filter((b) => path.resolve(b.outputDir) === path.resolve(dir));
   for (const stray of strays()) BuildService.control(stray.buildId, "stop");
@@ -950,6 +964,70 @@ const applyPendingRevert = async (sessionId: string) => {
 const MAJOR_FILE = /(^|\/)(package\.json|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.(toml|lock)|go\.(mod|sum)|requirements\.txt|pyproject\.toml|Makefile|CMakeLists\.txt|Dockerfile|tsconfig\.json|[^/]*\.config\.[cm]?[jt]s|\.github\/.*|.*\.sql|migrations?\/.*)$/i;
 
 /** When the workspace is clean and has something new: one delivery waiting for the owner, replacing any older one. */
+/** What the last runs' breakdowns said to do differently, for the next step. */
+const lessonsFromLastRuns = (session: ImproveSession): string => {
+  const notes = session.journal
+    .filter((step) => step.retro?.nextTime)
+    .slice(-4)
+    .map((step) => `- After "${step.title}" (${step.outcome}): ${step.retro!.nextTime}`);
+  return notes.length ? `What the last runs taught (apply it):\n${notes.join("\n")}\n` : "";
+};
+
+/**
+ * After a step: its breakdown. What changed comes from git; what it did, what it learned and the one thing to do
+ * differently next time are written by the model from that and the checks. The "next time" goes to the following
+ * steps, and a concrete one becomes a lesson that is kept only if it helps (LessonMemory verifies by use).
+ */
+const retrospect = async (sessionId: string) => {
+  const session = getSession(sessionId);
+  if (!session?.workspace) return;
+  const index = session.journal.length - 1;
+  const step = session.journal[index];
+  if (!step || step.retro || step.stage === "planning" || /^Brought in your commits|^Roadmap:/.test(step.title)) return;
+  const dir = session.workspace.dir;
+  let list: string[] = [];
+  let added = 0;
+  let removed = 0;
+  if (step.commit && step.from && step.commit !== step.from) {
+    for (const line of (await git(dir, ["diff", "--numstat", step.from, step.commit]).catch(() => "")).split("\n").filter(Boolean)) {
+      const [a, r, ...file] = line.split("\t");
+      added += Number(a) || 0;
+      removed += Number(r) || 0;
+      list.push(file.join("\t"));
+    }
+  }
+  list = list.slice(0, 40);
+  const check = step.check;
+  const answer = await ModelRouter.generate(`You just finished one step of building "${session.projectName}". Write its breakdown, honestly, from these facts only.
+
+The step: ${step.title}
+Outcome: ${step.outcome}${step.note ? ` (${step.note})` : ""}
+Files changed (${list.length}, +${added} -${removed}): ${list.join(", ") || "none"}
+Checks after it: ${check ? (check.passed ? "all passed" : `failing: ${check.failing.join(", ")}`) : "not run"}
+${session.lastCheck && !session.lastCheck.passed ? `What the failing checks said:\n${session.lastCheck.output.slice(-1500)}` : ""}
+
+Answer with JSON only:
+{"did": ["what this step actually did, 1-4 short points"],
+ "learned": "what this taught about this project or this kind of work, one or two sentences",
+ "nextTime": "ONE concrete thing to do differently next time, specific enough to act on (a file, a check, an order of work); empty if nothing"}`).catch(() => "");
+  const parsed = extractJson(answer);
+  const did = Array.isArray(parsed?.did) ? (parsed!.did as unknown[]).map(String).filter(Boolean).slice(0, 6) : [];
+  const learned = String(parsed?.learned ?? "").slice(0, 600);
+  const nextTime = String(parsed?.nextTime ?? "").slice(0, 400);
+  let lessonId: number | null = null;
+  // A concrete correction is worth keeping; it stays a candidate until it proves itself in later steps.
+  if (nextTime.length > 25 && step.success !== true) {
+    lessonId = LessonMemory.recordTaught("build", `retro: ${session.projectName}: ${nextTime.slice(0, 80)}`, nextTime, `From step "${step.title}" of ${session.projectName}`).lesson.id;
+  }
+  update((s) => {
+    const target = s.sessions.find((x) => x.id === sessionId)?.journal[index];
+    if (target && target.at === step.at) target.retro = { at: new Date().toISOString(), did, changed: { files: list.length, added, removed, list }, outcome: step.outcome, learned, nextTime, lessonId };
+  });
+  if (step.n) {
+    Evidence.record({ kind: "step", ref: `retro:${sessionId}:${step.n}`, task: `session:${sessionId}`, agent: "continuous-builder", title: `Breakdown of "${step.title}": ${nextTime || learned || "no lesson"}`.slice(0, 300), outcome: step.outcome, data: { did, learned, nextTime }, links: [{ to: `step:${sessionId}:${step.n}`, relation: "breakdown-of" }, ...(lessonId ? [{ to: `lesson:${lessonId}`, relation: "taught" }] : [])] });
+  }
+};
+
 /** A game: what it has become is built and kept as the next playable version. */
 const releaseIfGame = async (sessionId: string, title: string) => {
   const session = getSession(sessionId);
@@ -1327,6 +1405,7 @@ async function loop(id: string) {
       }
       try {
         await cycle(id);
+        await retrospect(id).catch((error) => Logger.warn("Could not write a step's breakdown", { session: id, error: (error as Error).message }));
         failures = 0;
         patchSession(id, { cycles: (getSession(id)?.cycles ?? 0) + 1, lastError: null });
       } catch (error) {
@@ -1689,7 +1768,7 @@ export const ContinuousImprover = {
   },
 
   /** For tests: the steps the loop takes, one at a time. */
-  testHooks: { prepareWorkspace, syncOwnerCommits, deliverIfReady, applyPendingRevert, getSession, patchSession, runChecks, cycle, itemsFrom, releaseIfGame, journal }
+  testHooks: { prepareWorkspace, syncOwnerCommits, deliverIfReady, applyPendingRevert, getSession, patchSession, runChecks, cycle, itemsFrom, releaseIfGame, journal, retrospect }
 };
 
 /** The first version's single changes: applied whole, as before. */

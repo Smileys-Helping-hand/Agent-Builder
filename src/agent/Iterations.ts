@@ -248,6 +248,7 @@ export const Iterations = {
       build: buildOf(step.buildId ?? null),
       learning: { lessons: lessonsBetween(previous?.at ?? step.startedAt ?? null, step.at), evidence: previous ? Evidence.between(taskRef, previous.at, step.at) : ([] as EvidenceRecord[]) },
       testing: { check: step.check ?? null, vmRuns: vmRunsFor(sessionId, previous?.at ?? null, step.at) },
+      retro: step.retro ?? null,
       feedback
     };
   },

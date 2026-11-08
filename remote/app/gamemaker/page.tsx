@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   api,
+  onMachine,
   type GameVersionBranch,
   type GameCheckupScorecard
 } from "@/lib/api";
@@ -29,6 +30,22 @@ export default function GameMakerStudio() {
   const [gamemakerStatus, setGamemakerStatus] = useState<Awaited<ReturnType<typeof api.gamemakerStatus>> | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+
+  // The game being played, full window.
+  const [playing, setPlaying] = useState<{ name: string; url: string } | null>(null);
+
+  const handlePlay = async (game: GameVersionBranch) => {
+    setBusyAction(`play-${game.gameId}`);
+    try {
+      const info = await api.gamePreview(game.gameId);
+      if (info.url) setPlaying({ name: game.name, url: onMachine(info.url) });
+      else toast(info.reason || "It cannot be played here.", "error");
+    } catch (err: any) {
+      toast(err?.message || "Could not open the game", "error");
+    } finally {
+      setBusyAction(null);
+    }
+  };
 
   // Checkup Modal State
   const [activeCheckup, setActiveCheckup] = useState<{ gameId: string; scorecard: GameCheckupScorecard } | null>(null);
@@ -351,6 +368,11 @@ export default function GameMakerStudio() {
 
                 {/* Action Buttons */}
                 <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+                  {game.engine === "web" ? (
+                    <button className="btn small primary" disabled={busyAction === `play-${game.gameId}`} onClick={() => void handlePlay(game)}>
+                      {busyAction === `play-${game.gameId}` ? <Busy label="Opening..." /> : <>▶ Play</>}
+                    </button>
+                  ) : null}
                   <button
                     className="btn small"
                     disabled={busyAction === `checkup-${game.gameId}`}
@@ -374,6 +396,17 @@ export default function GameMakerStudio() {
             ))}
           </div>
         )}
+
+        {playing ? (
+          <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 1000, display: "flex", flexDirection: "column" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 12px", color: "#fff", fontSize: 13 }}>
+              <strong>{playing.name}</strong>
+              <a className="btn small ghost" href={playing.url} target="_blank" rel="noreferrer" style={{ marginLeft: "auto" }}>Open in a tab</a>
+              <button className="btn small ghost" onClick={() => setPlaying(null)}>Close</button>
+            </div>
+            <iframe title={playing.name} src={playing.url} allow="autoplay; fullscreen; gamepad; pointer-lock" sandbox="allow-scripts allow-pointer-lock allow-forms" style={{ flex: 1, border: 0, width: "100%" }} />
+          </div>
+        ) : null}
 
         {/* Checkup Scorecard Modal */}
         {activeCheckup && (

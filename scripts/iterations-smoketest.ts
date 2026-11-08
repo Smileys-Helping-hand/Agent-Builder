@@ -116,6 +116,19 @@ const main = async () => {
   const again = await Iterations.detail(session.id, 1);
   if (!again.feedback.some((r) => /Greet in Afrikaans too/.test(r.title))) fail("the feedback is not linked to the iteration");
   console.log("[PASS] feedback is kept, linked to the iteration and handed to the session as an instruction");
+  // 6. The step's breakdown: what changed from git, what it learned and what to do next time, kept.
+  const { ModelRouter } = await import("../src/tools/ModelRouter.js");
+  (ModelRouter as unknown as { generate: (p: string) => Promise<string> }).generate = async (prompt) =>
+    /Write its breakdown/.test(prompt) && /package\.json/.test(prompt) && /failing: test/.test(prompt)
+      ? JSON.stringify({ did: ["Added a package file"], learned: "The test check needs a test script.", nextTime: "Add a test script to package.json before adding the package file, so the test check has something to run." })
+      : "{}";
+  await hooks.retrospect(session.id);
+  const retro = hooks.getSession(session.id)!.journal.find((s) => s.n === 2)!.retro;
+  if (!retro || retro.changed.files !== 1 || retro.changed.list[0] !== "package.json" || !/test script/.test(retro.nextTime) || !retro.lessonId) fail(`breakdown: ${JSON.stringify(retro)}`);
+  if (!LessonMemory.list("build").some((l) => l.id === retro.lessonId && /retro: proj/.test(l.signature))) fail("the next-time note was not kept as a lesson");
+  const detail = await Iterations.detail(session.id, 2);
+  if (detail.retro?.nextTime !== retro.nextTime) fail("the breakdown is not in the iteration's detail");
+  console.log("[PASS] each step writes a breakdown: what changed (from git), what it learned, what to do next time, kept as a lesson");
   console.log("All Iteration Explorer checks passed.");
 };
 

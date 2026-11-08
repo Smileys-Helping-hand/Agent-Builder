@@ -42,6 +42,7 @@ import { Catalog } from "../orders/Catalog.js";
 import { EcosystemStore } from "../ecosystem/EcosystemStore.js";
 import { DesktopPackage, zipFile } from "../game/DesktopPackage.js";
 import { GameDirector } from "../game/GameDirector.js";
+import { GameEvolutionStudio } from "../orchestrator/GameEvolutionStudio.js";
 import { listProjectFiles } from "../ecosystem/ProjectBuilds.js";
 import { Logger } from "../utils/Logger.js";
 import { packageTool } from "../utils/packageTool.js";
@@ -73,8 +74,17 @@ const secret = (() => {
   return fresh;
 })();
 
-type Kind = "template" | "build" | "project" | "demo";
-const KINDS: Kind[] = ["template", "build", "project", "demo"];
+type Kind = "template" | "build" | "project" | "demo" | "game";
+const KINDS: Kind[] = ["template", "build", "project", "demo", "game"];
+
+/** A Game Studio game's folder, when it is a web game inside this builder's games or builds. */
+const gameFolder = (id: string): string | null => {
+  const game = GameEvolutionStudio.listAllGames().find((g) => g.gameId === id);
+  if (!game || game.engine !== "web") return null;
+  const folder = path.resolve(game.liveOutputDir);
+  const allowed = [path.resolve("games"), path.resolve("builds")].some((root) => folder.toLowerCase().startsWith((root + path.sep).toLowerCase()));
+  return allowed && fs.existsSync(folder) ? folder : null;
+};
 
 const tokenFor = (kind: Kind, id: string): string =>
   crypto.createHmac("sha256", secret).update(`${kind}:${id}`).digest("base64url").slice(0, 32);
@@ -414,6 +424,16 @@ export const registerPreviewRoutes = (app: Express) => {
     );
   });
 
+  /** A Game Studio game, to play: where it is, or why it cannot be played here. */
+  app.get("/api/previews/game/:id", authenticateAgent("read"), (req: Request, res: Response) => {
+    const game = GameEvolutionStudio.listAllGames().find((g) => g.gameId === req.params.id);
+    if (!game) return res.status(404).json({ error: "Unknown game." });
+    if (game.engine !== "web") return res.json(describe("game", game.gameId, null, "A Unity game: open it in Unity, or play its WebGL build if it has one."));
+    const folder = gameFolder(game.gameId);
+    const { root, reason } = folder ? servable(folder) : { root: null, reason: "Its folder is not there." };
+    res.json(describe("game", game.gameId, root, reason));
+  });
+
   /** A game's versions, newest first, each with its play link (versions whose files were let go have none). */
   app.get("/api/previews/demos/:sessionId", authenticateAgent("read"), (req: Request, res: Response) => {
     const sessionId = req.params.sessionId;
@@ -486,6 +506,10 @@ export const registerPreviewRoutes = (app: Express) => {
     let root: string | null;
     if (kind === "project") root = projectRoot(id).root;
     else if (kind === "demo") root = GameDirector.demoFolder(id);
+    else if (kind === "game") {
+      const folder = gameFolder(id);
+      root = folder ? servable(folder).root : null;
+    }
     else {
       const folder = kind === "template" ? templateFolder(id) : BuildService.view(id)?.outputDir ?? null;
       root = folder ? servable(folder).root : null;

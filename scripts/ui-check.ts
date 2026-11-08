@@ -132,7 +132,8 @@ const main = async () => {
     if (session) {
       await sleep(5000);
       const row = await evaluate<boolean>(`(() => { const el = [...document.querySelectorAll(".small")].find((e) => /^(#\\d+)/.test(e.textContent.trim()) || /#\\d+/.test(e.textContent)); if (!el) return false; el.click(); return true; })()`);
-      await sleep(5000);
+      // Its diff comes from git, which can take a while on a busy disk.
+      for (let i = 0; i < 12 && !/Changes ·/.test(await textOf()); i++) await sleep(5000);
       body = await textOf();
       check("An iteration opens", row && /Changes ·/.test(body), "");
       await shot("iteration-open");

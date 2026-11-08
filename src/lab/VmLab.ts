@@ -110,7 +110,9 @@ export const Backend = {
   run(script: string, timeoutMs = 120_000): Promise<{ ok: boolean; out: string }> {
     return new Promise((resolve) => {
       execFile("wsl.exe", ["-e", "bash", "-c", script], { timeout: timeoutMs, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+        // wsl.exe reports its own errors in UTF-16: as text they arrive with a NUL between every letter.
         const out = `${stdout}${stderr}`
+          .replace(/\u0000/g, "")
           .split(/\r?\n/)
           .filter((line) => !/systemd user session|journalctl for more/i.test(line))
           .join("\n")
@@ -122,7 +124,7 @@ export const Backend = {
 
   /** Whether VMs can run here, and how fast. Asked of WSL at most once a minute: the Lab page polls. */
   async available(): Promise<{ ok: boolean; detail: string; accel: "kvm" | "tcg" | null; qemu: string | null }> {
-    if (availableCache && Date.now() - availableCache.at < 60_000) return availableCache.value;
+    if (availableCache && Date.now() - availableCache.at < (availableCache.value.ok ? 60_000 : 15_000)) return availableCache.value;
     const value = await Backend.probe();
     availableCache = { at: Date.now(), value };
     return value;
@@ -132,6 +134,11 @@ export const Backend = {
     if (process.platform !== "win32") return { ok: false, detail: "This backend runs QEMU inside WSL on Windows.", accel: null, qemu: null };
     const probe = await Backend.run("command -v qemu-system-x86_64 >/dev/null && qemu-system-x86_64 --version | head -1; command -v qemu-img >/dev/null && echo IMG; test -e /dev/kvm && grep -qE 'svm|vmx' /proc/cpuinfo && echo KVM", 60_000);
     if (!probe.ok && !probe.out) return { ok: false, detail: "WSL does not answer (is virtualization on, and WSL installed?).", accel: null, qemu: null };
+    if (/Wsl\/|Insufficient system resources|ERROR_[A-Z_]+/.test(probe.out)) {
+      const memory = /NO_SYSTEM_RESOURCES|Insufficient system resources/.test(probe.out);
+      const hint = memory ? ": not enough free memory to start it. Cap it in .wslconfig in your user folder ([wsl2] memory=8GB), run wsl --shutdown, and try again" : "";
+      return { ok: false, detail: `WSL could not start${hint}. (${probe.out.split("\n")[0].slice(0, 160)})`, accel: null, qemu: null };
+    }
     const version = /QEMU emulator version [^\n]+/.exec(probe.out)?.[0] ?? null;
     if (!version || !/IMG/.test(probe.out)) return { ok: false, detail: `QEMU is not installed in WSL (apt-get install qemu-system-x86 qemu-utils): ${probe.out.slice(0, 200)}`, accel: null, qemu: null };
     const accel = /KVM/.test(probe.out) ? "kvm" : "tcg";
