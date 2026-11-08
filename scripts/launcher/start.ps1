@@ -309,6 +309,15 @@ function Start-Api {
     return $process.Id
 }
 
+# CPU seconds used so far by the builder's node processes (tsx runs the server in a child).
+function Get-ApiCpuSeconds {
+    $total = 0.0
+    Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like "*src/server/server.ts*" } |
+        ForEach-Object { $total += ([double]$_.KernelModeTime + [double]$_.UserModeTime) / 1e7 }
+    return $total
+}
+
 function Stop-ApiProcesses {
     if ($started.api) { Stop-Process -Id $started.api -Force -ErrorAction SilentlyContinue }
     Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
@@ -559,6 +568,9 @@ $apiEverUp = $false
 if (-not $apiStartedAt) { $apiStartedAt = Get-Date }
 $ollamaMisses = 0
 $jarvisMisses = 0
+$apiMissStart = $null
+$apiCpuAtMiss = 0.0
+$apiWaitingLogged = $false
 $healthySince = Get-Date
 Write-LauncherLog "Launcher watching the builder, the model server and Jarvis"
 Set-LauncherStep "Running"
@@ -575,11 +587,35 @@ try {
             # The builder: gone, or up but not answering for two minutes (a busy PC
             # slows it; restarting it then only adds a boot to the load).
             $apiAlive = $started.api -and (Get-Process -Id $started.api -ErrorAction SilentlyContinue)
-            $apiAnswers = Test-Endpoint "http://127.0.0.1:4000/api/update/check" 5
-            if ($apiAnswers) { $apiMisses = 0; $apiEverUp = $true } else { $apiMisses++ }
+            $apiAnswers = Test-Endpoint "http://127.0.0.1:4000/api/update/check" 10
+            if ($apiAnswers) {
+                if ($apiWaitingLogged) { Write-LauncherLog "Builder answering again after waiting on the PC" }
+                $apiMisses = 0; $apiEverUp = $true; $apiMissStart = $null; $apiWaitingLogged = $false
+            } else {
+                if ($apiMisses -eq 0) { $apiMissStart = Get-Date; $apiCpuAtMiss = Get-ApiCpuSeconds }
+                $apiMisses++
+            }
             $apiBooting = $apiAlive -and -not $apiEverUp -and ((Get-Date) - $apiStartedAt).TotalMinutes -lt 30
 
-            if (-not $apiAnswers -and -not $apiBooting -and (-not $apiAlive -or $apiMisses -ge 8)) {
+            # Alive, silent, and hardly using the CPU: it is waiting on the disk (this PC's E: is a laptop hard drive
+            # shared with downloads and sync), not hung. A restart then costs minutes of boot on that same disk and
+            # interrupts every build, so it gets up to 15 minutes. One spinning the CPU without answering is hung and
+            # restarts as before.
+            $apiWaitingOnPc = $false
+            if ($apiAlive -and -not $apiAnswers -and $apiMisses -ge 8 -and $apiMissStart) {
+                $silentSeconds = ((Get-Date) - $apiMissStart).TotalSeconds
+                $cpuUsed = (Get-ApiCpuSeconds) - $apiCpuAtMiss
+                if ($silentSeconds -lt 900 -and $cpuUsed -lt ($silentSeconds * 0.3)) {
+                    $apiWaitingOnPc = $true
+                    if (-not $apiWaitingLogged) {
+                        Write-LauncherLog ("Builder not answering for {0:N0}s but waiting on the PC ({1:N1}s CPU); not restarting yet" -f $silentSeconds, $cpuUsed)
+                        Set-LauncherStep "Running" "the builder is waiting on the disk"
+                        $apiWaitingLogged = $true
+                    }
+                }
+            }
+
+            if (-not $apiAnswers -and -not $apiBooting -and -not $apiWaitingOnPc -and (-not $apiAlive -or $apiMisses -ge 8)) {
                 $wait = $backoff[[Math]::Min($apiFailures, $backoff.Count - 1)]
                 $why = if ($apiAlive) { "stopped answering" } else { "exited" }
                 Write-LauncherLog "Builder $why; restarting in ${wait}s (restart $($apiFailures + 1))"
@@ -592,6 +628,8 @@ try {
                 $apiEverUp = $false
                 $apiFailures++
                 $apiMisses = 0
+                $apiMissStart = $null
+                $apiWaitingLogged = $false
                 $healthySince = Get-Date
                 if (Wait-For "http://127.0.0.1:4000/api/update/check" 90 "The builder") {
                     Write-LauncherLog "Builder back up"

@@ -146,6 +146,21 @@ const main = async () => {
     body = await textOf();
     check("Games shows keep building", /Keep building a game/i.test(body));
     await shot("games");
+    // A game on the shelf plays from its card: Play opens it in the app, and the game itself loads.
+    const played = await evaluate<boolean>(`(() => { const el = [...document.querySelectorAll("button")].find((b) => /▶ Play$/.test(b.textContent.trim())); if (!el) return false; el.click(); return true; })()`);
+    if (played) {
+      let src = "";
+      for (let i = 0; i < 20 && !src; i++) {
+        await sleep(1000);
+        src = await evaluate<string>(`(document.querySelector("iframe")?.src) || ""`);
+      }
+      const loaded = src ? await evaluate<string>(`fetch(document.querySelector("iframe").src).then(async (r) => r.status + " " + (/<(canvas|script|html)/i.test(await r.text()) ? "page" : "empty")).catch((e) => "error " + e.message)`) : "no frame";
+      check("A game plays from its card", /^200 page/.test(loaded), loaded);
+      await sleep(4000);
+      await shot("game-playing");
+    } else {
+      check("A game plays from its card", false, "no ▶ Play button on any game card");
+    }
 
     console.log(`\nScreenshots in ${OUT}`);
     const unique = [...new Set(problems)];
