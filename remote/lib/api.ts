@@ -1381,6 +1381,7 @@ export interface GameRelease {
   url: string | null;
   /** A zip that plays on its own. */
   download: string | null;
+  qa?: { passed: boolean; errors: string[]; drew: boolean; screenshot: string | null; at: string } | null;
   /** The Windows program, once built on request. */
   windows: { state: "building" | "done" | "failed"; at: string; error: string | null; sizeMb: number | null } | null;
   windowsDownload: string | null;

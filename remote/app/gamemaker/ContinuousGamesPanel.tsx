@@ -100,12 +100,18 @@ function GameSession({ session, onChange }: { session: ImproveSession; onChange:
               {latest.windows?.state === "failed" ? "Try the Windows app again" : "Make a Windows app"}
             </button>
           )}
+          {latest.qa ? <span className={`tag ${latest.qa.passed ? "ok" : "bad"}`} title={latest.qa.errors.join("\n")}>{latest.qa.passed ? "QA passed" : "QA failed"}</span> : null}
           <span style={{ fontSize: 12, color: "var(--muted)" }}>
             {latest.title} · {ago(latest.at)}
             {latest.multiplayer ? " · online multiplayer" : ""}
           </span>
         </div>
       ) : null}
+
+      {latest?.qa?.screenshot && latest.url ? (
+        <img alt={`${session.projectName} v${latest.version}`} src={onMachine(`${latest.url}${latest.qa.screenshot}`)} style={{ width: "100%", maxWidth: 420, borderRadius: 8, marginTop: 8, cursor: "pointer" }} onClick={() => setPlaying(latest)} />
+      ) : null}
+      {latest?.qa && !latest.qa.passed && latest.qa.errors.length ? <div style={{ fontSize: 12, color: "#fbbf24", marginTop: 4 }}>QA: {latest.qa.errors.slice(0, 2).join(" · ").slice(0, 300)}</div> : null}
 
       {releases.length > 1 ? (
         <details style={{ marginTop: 6 }}>

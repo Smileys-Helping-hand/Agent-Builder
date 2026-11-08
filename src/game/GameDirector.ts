@@ -26,9 +26,12 @@
  */
 import { execFile } from "child_process";
 import fs from "fs";
+import http from "http";
+import os from "os";
 import path from "path";
 import { promisify } from "util";
 
+import { findBrowser, renderPage } from "../orchestrator/SiteAudit.js";
 import { packageTool } from "../utils/packageTool.js";
 import { makeZip } from "../utils/Zip.js";
 import { NetKit } from "./NetKit.js";
@@ -72,6 +75,8 @@ export interface GameRelease {
   sizeKb: number;
   /** False once its files were let go to keep the newest versions. */
   kept: boolean;
+  /** QA: loaded in a real browser, with its errors and a screenshot. */
+  qa?: { passed: boolean; errors: string[]; drew: boolean; screenshot: string | null; at: string } | null;
 }
 
 interface ReleaseLog {
@@ -174,27 +179,35 @@ export const GameDirector = {
     const multiplayer = options.multiplayer ?? NetKit.wanted(prompt);
     return `${prompt.trim()}
 
-Make this a complete, original, polished game, built up milestone by milestone, every milestone leaving a version that
-plays from start to finish:
-1. Design (GAME_DESIGN.md): an original name, world, characters and story of its own — nothing taken from an existing
-   game, film or book — the core loop, controls (keyboard, mouse and touch), how it is won and lost, progression.
-2. The core loop, playable: the player, the main challenge, scoring or winning and losing, restart. Fun first.
-3. Content: levels or waves, enemies and items with distinct behaviour, rising difficulty, a reason to play again.
-4. Art: a consistent style; every character, object and background has real art (listed in art.json so the image
-   engine draws it, or drawn in code), never coloured boxes; parallax or lighting where it suits.
-5. Animation: idle, move, attack, hit and death states; tweened UI; particles for impacts and pickups; screen shake;
-   smooth 60 fps with delta time.
-6. Sound: effects for every action and music, synthesised with the Web Audio API (no sound files needed), with a mute
-   toggle.
-7. Menus and feel: title screen, pause, settings, game-over and win screens, saved progress and high scores.${
+Make this the way a game studio makes a game: in phases, each ending in a version that plays from start to finish and
+passes QA (it loads with no errors and draws), with design documents kept up to date as it goes.
+
+PRE-PRODUCTION
+1. Concept and pillars (GAME_DESIGN.md): an original name, world, characters and story of its own — nothing taken from an
+   existing game, film or book — the target player, three design pillars, the core loop, controls (keyboard, mouse,
+   touch), how it is won and lost, progression, and what makes it different.
+2. Art bible (ART_BIBLE.md): palette, shapes, lighting, UI style, animation rules; art.json lists the first pictures.
+
+PRODUCTION
+3. Vertical slice: one level or area at final quality — the player, the main challenge, real art, animation, sound,
+   scoring, winning and losing, restart. This proves the game is fun before more is built.
+4. Content: more levels or waves, enemies and items with distinct behaviour, rising difficulty, a reason to play again.
+5. Animation and feel: idle, move, attack, hit and death states; tweened UI; particles; screen shake; 60 fps with delta time.
+6. Sound: effects for every action and music, synthesised with the Web Audio API, with a mute toggle.
+7. Menus and saving: title screen, pause, settings, game-over and win screens, saved progress and high scores.${
       multiplayer
         ? `
 8. Multiplayer with src/lib/net (already in the project): a lobby to create or join a room by code, the shared game
    as one set of host-run rules, smooth remote players, reconnecting, and what happens when someone leaves.`
         : ""
     }
-${multiplayer ? 9 : 8}. Polish: tutorial or first-level teaching, juice, balance, performance on a phone, accessibility.
-Then keep upgrading: new content, mechanics and modes that make it better, one milestone at a time.
+
+ALPHA, BETA, RELEASE
+${multiplayer ? 9 : 8}. Alpha: every feature in, end to end; a CHANGELOG.md entry per version.
+${multiplayer ? 10 : 9}. Beta: content complete; balance, difficulty curve, tutorial or first-level teaching, accessibility (remappable
+   keys, readable text, colour-blind safe palette), performance on a phone.
+${multiplayer ? 11 : 10}. Release candidate: no known bugs, credits screen, a store page text (STORE.md).
+Then live updates: new content, mechanics and modes, one milestone at a time, each a new version.
 Every asset file is listed in ASSETS.md with its source; nothing is loaded from the internet.`;
   },
 
@@ -317,7 +330,9 @@ ${engineNote}- Several levels, scenes or areas in their own files; real game str
       const target = path.join(DEMOS_DIR(), sessionId, `v${version}`);
       fs.rmSync(target, { recursive: true, force: true });
       fs.cpSync(output, target, { recursive: true });
-      const release: GameRelease = { version, title: title.slice(0, 200), at, commit, multiplayer: NetKit.installed(dir), sizeKb: folderKb(target), kept: true };
+      // QA before it counts as shipped: it must load in a real browser with no errors, and draw.
+      const qa = await GameDirector.qa(target).catch((error: Error) => ({ passed: false, errors: [`QA could not run: ${error.message}`], drew: false, screenshot: null, at: new Date().toISOString() }));
+      const release: GameRelease = { version, title: title.slice(0, 200), at, commit, multiplayer: NetKit.installed(dir), sizeKb: folderKb(target), kept: true, qa };
       log.releases.push(release);
       log.lastError = null;
       for (const old of log.releases.filter((r) => r.kept).slice(0, -KEEP_VERSIONS)) {
@@ -325,8 +340,8 @@ ${engineNote}- Several levels, scenes or areas in their own files; real game str
         old.kept = false;
       }
       writeLog(sessionId, log);
-      // The newest version on the shelf, for SaveState's Mini Games.
-      if (name) {
+      // The newest version that passed QA on the shelf, for SaveState's Mini Games.
+      if (name && qa.passed) {
         const shelf = path.join(SHELF_DIR(), `made-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || sessionId}`);
         try {
           fs.rmSync(shelf, { recursive: true, force: true });
@@ -341,6 +356,41 @@ ${engineNote}- Several levels, scenes or areas in their own files; real game str
       log.lastError = { at, title: title.slice(0, 200), error: message };
       writeLog(sessionId, log);
       return { release: null, error: message };
+    }
+  },
+
+  /**
+   * QA for a version: served on 127.0.0.1, opened in headless Chrome/Edge, its script errors collected, whether it
+   * draws anything (a canvas or a page with content), and a screenshot kept with the version.
+   */
+  async qa(folder: string): Promise<{ passed: boolean; errors: string[]; drew: boolean; screenshot: string | null; at: string }> {
+    const at = new Date().toISOString();
+    const browser = findBrowser();
+    if (!browser) return { passed: true, errors: ["No browser here to check it in: not checked."], drew: false, screenshot: null, at };
+    const types: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml", ".webp": "image/webp", ".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".wav": "audio/wav" };
+    const server = http.createServer((req, res) => {
+      const wanted = decodeURIComponent((req.url ?? "/").split("?")[0]);
+      const file = path.normalize(path.join(folder, wanted === "/" ? "index.html" : wanted));
+      if (!file.startsWith(folder) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return res.writeHead(404).end();
+      res.writeHead(200, { "content-type": types[path.extname(file).toLowerCase()] ?? "application/octet-stream" }).end(fs.readFileSync(file));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/`;
+    try {
+      const page = await renderPage(browser, url);
+      const errors = (page?.errors ?? []).filter((e) => !/manifest\.json|favicon|404/.test(e));
+      const drew = Boolean(page && (/<canvas/i.test(page.dom) || page.dom.replace(/<[^>]+>/g, "").trim().length > 40));
+      const shot = path.join(folder, "qa-screenshot.png");
+      await new Promise<void>((resolve) => {
+        const profile = fs.mkdtempSync(path.join(os.tmpdir(), "game-qa-"));
+        execFile(browser, ["--headless=new", "--disable-gpu", "--hide-scrollbars", `--user-data-dir=${profile}`, "--window-size=1280,720", "--virtual-time-budget=8000", `--screenshot=${shot}`, url], { timeout: 60_000, windowsHide: true }, () => {
+          fs.rm(profile, { recursive: true, force: true }, () => undefined);
+          resolve();
+        });
+      });
+      return { passed: Boolean(page) && drew && errors.length === 0, errors: page ? errors : ["The browser could not open it."], drew, screenshot: fs.existsSync(shot) ? "qa-screenshot.png" : null, at };
+    } finally {
+      server.close();
     }
   },
 
