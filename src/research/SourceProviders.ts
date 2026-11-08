@@ -491,9 +491,13 @@ export const searchAll = async (
     // past the timeout is no healthier — arXiv, when throttling, takes ~15s just
     // to return its 429. A loop that never ends would otherwise hit it again every
     // cycle; back off, doubling on repeats.
-    if (/HTTP (429|403)\b|timed out after/.test(message)) {
+    // A timeout is usually this PC being busy, not the provider asking us to stop: a short pause, never hours.
+    const refused = /HTTP (429|403)\b/.test(message);
+    if (refused || /timed out after/.test(message)) {
       const previous = providerCooldownMs.get(name) ?? 0;
-      const next = Math.min(PROVIDER_MAX_COOLDOWN_MS, previous > 0 ? previous * 2 : PROVIDER_BASE_COOLDOWN_MS);
+      const base = refused ? PROVIDER_BASE_COOLDOWN_MS : 60_000;
+      const ceiling = refused ? PROVIDER_MAX_COOLDOWN_MS : 10 * 60_000;
+      const next = Math.min(ceiling, previous > 0 ? previous * 2 : base);
       providerCooldownMs.set(name, next);
       providerCooldownUntil.set(name, now + next);
     }

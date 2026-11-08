@@ -256,7 +256,7 @@ const startSpecialists = (item: Investigation) => {
     if (waiting && specialists.some((o) => o.status === "researching")) continue;
     // The title is what pages are checked against: the subject's words, not "Specialist" or "Research how to".
     const subject = specialist.name.replace(/\b(specialists?|experts?|analysts?|research(ers?)?|investigat\w*)\b/gi, "").replace(/\s+/g, " ").trim() || specialist.name;
-    const topic = engine.start(`${subject}: ${keywordQuery(item.objective) || item.objective.slice(0, 60)}`.slice(0, 120), `${specialist.objective}\nPart of the investigation: ${item.objective}\nEvidence needed: ${specialist.evidenceNeeded}`);
+    const topic = engine.start(`${subject}: ${keywordQuery(item.objective) || item.objective.slice(0, 60)}`.slice(0, 120), specialist.objective);
     for (const question of specialist.questions) ResearchStore.addPriorityQuestion(topic.id, question, 0);
     specialist.topicId = topic.id;
     specialist.status = "researching";
