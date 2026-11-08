@@ -49,6 +49,32 @@ function Report({ id }: { id: string }) {
         </details>
       ) : null}
 
+      {item.insufficient ? (
+        <Banner kind="error">Not enough evidence was found to answer this, so nothing is concluded. The questions it could not answer are listed below; try rewording or narrowing the objective.</Banner>
+      ) : null}
+
+      {item.answers?.length ? (
+        <>
+          <div className="section-title">What it figured out</div>
+          {item.answers.map((a, i) => (
+            <details key={i} open={a.verdict !== "not answered" && i < 3}>
+              <summary className="small" style={{ cursor: "pointer" }}>
+                <span className={`tag ${a.verdict === "supported" || a.verdict === "answered" ? "ok" : a.verdict === "not answered" ? "" : "warn"}`}>{a.verdict}</span>{" "}
+                {a.confidence !== "none" ? <span className={`tag ${a.confidence === "high" ? "ok" : a.confidence === "low" ? "bad" : "warn"}`}>{a.confidence}</span> : null} {a.kind === "hypothesis" ? "Hypothesis: " : ""}
+                {a.question}
+              </summary>
+              <div className="small" style={{ margin: "4px 0 6px 12px" }}>
+                <div>{a.answer}</div>
+                <div className="muted">
+                  {a.supporting.length ? `Supported by F${a.supporting.join(", F")}` : "No finding supports it"}
+                  {a.refuting.length ? ` · contradicted by F${a.refuting.join(", F")}` : ""} · {a.strength.peerReviewed} peer-reviewed
+                </div>
+              </div>
+            </details>
+          ))}
+        </>
+      ) : null}
+
       {report ? (
         <>
           <div className="section-title">Summary</div>

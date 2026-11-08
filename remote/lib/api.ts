@@ -1179,6 +1179,17 @@ export interface InvestigationFull {
     physicalTestsNeeded: string[];
   } | null;
   feedback: Array<{ at: string; text: string; kind: string; followUp: string | null }>;
+  answers?: Array<{
+    question: string;
+    kind: "question" | "hypothesis";
+    answer: string;
+    supporting: number[];
+    refuting: number[];
+    verdict: "answered" | "supported" | "refuted" | "contested" | "not answered";
+    confidence: "high" | "medium" | "low" | "none";
+    strength: { supporting: number; refuting: number; peerReviewed: number };
+  }>;
+  insufficient?: boolean;
   specialistsDetail: Array<{
     id: string;
     name: string;

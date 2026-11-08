@@ -102,6 +102,8 @@ export const toWsl = (windowsPath: string): string => {
   return `/mnt/${match[1].toLowerCase()}/${match[2].replace(/\\/g, "/")}`;
 };
 
+let availableCache: { at: number; value: { ok: boolean; detail: string; accel: "kvm" | "tcg" | null; qemu: string | null } } | null = null;
+
 export const Backend = {
   name: "qemu-wsl",
 
@@ -118,8 +120,15 @@ export const Backend = {
     });
   },
 
-  /** Whether VMs can run here, and how fast. */
+  /** Whether VMs can run here, and how fast. Asked of WSL at most once a minute: the Lab page polls. */
   async available(): Promise<{ ok: boolean; detail: string; accel: "kvm" | "tcg" | null; qemu: string | null }> {
+    if (availableCache && Date.now() - availableCache.at < 60_000) return availableCache.value;
+    const value = await Backend.probe();
+    availableCache = { at: Date.now(), value };
+    return value;
+  },
+
+  async probe(): Promise<{ ok: boolean; detail: string; accel: "kvm" | "tcg" | null; qemu: string | null }> {
     if (process.platform !== "win32") return { ok: false, detail: "This backend runs QEMU inside WSL on Windows.", accel: null, qemu: null };
     const probe = await Backend.run("command -v qemu-system-x86_64 >/dev/null && qemu-system-x86_64 --version | head -1; command -v qemu-img >/dev/null && echo IMG; test -e /dev/kvm && grep -qE 'svm|vmx' /proc/cpuinfo && echo KVM", 60_000);
     if (!probe.ok && !probe.out) return { ok: false, detail: "WSL does not answer (is virtualization on, and WSL installed?).", accel: null, qemu: null };

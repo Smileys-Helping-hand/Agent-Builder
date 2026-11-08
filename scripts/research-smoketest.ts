@@ -168,6 +168,17 @@ check(
   )
 );
 check(
+  "topic gate ignores words that only say what a title is (an investigation's specialist)",
+  ResearchEngine.mentionsTopic(
+    "Brewing Method Specialist (Research how to make the best-tasting coffee possi)",
+    "Coffee brewing guide: grind size, ratio, water temperature and brew time for pour-over coffee."
+  )
+);
+check(
+  "topic gate keeps a page that answers the question in its own words",
+  ResearchEngine.mentionsTopic("What are the optimal brewing parameters for different coffee brewing methods?", "Coffee brewing guide: grind size, ratio, water temperature and brew time for pour-over and other methods.")
+);
+check(
   "topic gate still skips a page that shares only one short title word",
   !ResearchEngine.mentionsTopic("Node.js backends as Tauri sidecars", "Tauri is a genus of moths found in Southeast Asia.")
 );

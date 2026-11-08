@@ -149,7 +149,7 @@ const MAX_REPLANS = 2;
 /** Fewer findings than this in all, and nothing is concluded. */
 const MIN_TOTAL_EVIDENCE = Number(process.env.INVESTIGATION_MIN_TOTAL) || 6;
 /** Experiments need at least this much evidence to ground their numbers in. */
-const MIN_EXPERIMENT_EVIDENCE = 10;
+const MIN_EXPERIMENT_EVIDENCE = Number(process.env.INVESTIGATION_MIN_EXPERIMENT_EVIDENCE) || 10;
 const MAX_SPECIALISTS = 10;
 const TICK_MS = Number(process.env.INVESTIGATION_TICK_MS) || 60_000;
 
@@ -271,6 +271,8 @@ const startSpecialists = (item: Investigation) => {
 const checkSpecialists = (item: Investigation) => {
   const engine = ResearchEngine.getInstance();
   const specialists = startSpecialists(item);
+  // Specialists at work go first in the research queue; done ones go back to the normal pace.
+  for (const s of specialists) if (s.topicId) engine.prioritise(s.topicId, s.status === "researching");
   let changed = false;
   for (const specialist of specialists) {
     if (specialist.status !== "researching" || !specialist.topicId) continue;
@@ -787,5 +789,5 @@ export const Investigations = {
     }, TICK_MS).unref();
   },
 
-  testHooks: { advance, findingsOf }
+  testHooks: { advance, findingsOf, patch }
 };

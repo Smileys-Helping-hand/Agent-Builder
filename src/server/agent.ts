@@ -438,6 +438,7 @@ export const registerAgentRoutes = (app: Express) => {
     const runs = VmTests.list(8);
     const investigations = Investigations.list();
     const evaluations = Evaluations.list();
+    const allLessons = LessonMemory.list(undefined, 2000);
     res.json({
       agents: running.map((s) => ({ id: s.id, project: s.projectName, stage: s.stage, phase: s.phase, kind: s.kind ?? "app", cycles: s.cycles, milestones: `${s.plan.filter((m) => m.status === "done").length}/${s.plan.length}`, buildId: s.currentBuildId, lastError: s.lastError })),
       iterations: running
@@ -448,7 +449,7 @@ export const registerAgentRoutes = (app: Express) => {
       tests: runs.map((r) => ({ id: r.id, vm: r.vmName, state: r.state, counts: r.counts, at: r.startedAt, iso: r.build.iso })),
       research: investigations.filter((i) => !["done", "failed", "stopped"].includes(i.state)).map((i) => ({ id: i.id, objective: i.objective, phase: i.phase })),
       discoveries: Evidence.recent({ kind: "knowledge", limit: 6 }).concat(Evidence.recent({ kind: "experiment", limit: 4 })).map((r) => ({ kind: r.kind, title: r.title, outcome: r.outcome, at: r.createdAt })),
-      lessons: { total: LessonMemory.list(undefined, 2000).length, recent: LessonMemory.list(undefined, 2000).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, 5).map((l) => ({ id: l.id, lesson: l.lesson.slice(0, 200), status: l.status, at: l.createdAt })) },
+      lessons: { total: allLessons.length, recent: [...allLessons].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, 5).map((l) => ({ id: l.id, lesson: l.lesson.slice(0, 200), status: l.status, at: l.createdAt })) },
       evaluation: evaluations[0] ? { id: evaluations[0].id, label: evaluations[0].label, state: evaluations[0].state, score: evaluations[0].score, at: evaluations[0].startedAt, withKnowledge: evaluations[0].withKnowledge } : null,
       failures: sessions.filter((s) => s.lastError).map((s) => ({ project: s.projectName, error: s.lastError })).slice(0, 6),
       approvals: { deliveries: deliveries.filter((d) => d.state === "awaiting").map((d) => ({ id: d.id, project: d.projectName, files: d.files.length, major: d.major })) },

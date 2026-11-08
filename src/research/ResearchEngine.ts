@@ -33,6 +33,7 @@ const envMs = (name: string, fallback: number): number => {
 };
 
 const BASE_DELAY_MS = envMs("RESEARCH_CYCLE_DELAY_MS", 60_000);
+const PRIORITY_MAX_DELAY_MS = 5 * 60_000;
 /** In titles, never on the pages: "Brewing Method Specialist", "Research how to…". */
 const ROLE_WORDS = new Set(["specialist", "specialists", "expert", "experts", "analysis", "analyst", "research", "researcher", "investigation", "study", "studies", "review", "overview", "possible", "best", "make", "making", "figure", "understand", "understanding", "evaluate", "evaluating", "explore", "exploring", "find", "finding", "out", "how", "what", "why", "optimal", "optimum", "different", "various", "parameters", "impact", "impacts", "effect", "effects", "role", "factors", "affect", "affects", "influence", "key", "main", "importance", "important"]);
 const MAX_BACKOFF_MS = envMs("RESEARCH_MAX_BACKOFF_MS", 30 * 60_000);
@@ -135,6 +136,14 @@ export class ResearchEngine {
     this.emit(topic.id, "started");
     this.schedule(topic.id, 0);
     return topic;
+  }
+
+  /** Topics someone is waiting on: they cycle sooner than the rest. */
+  private priority = new Set<string>();
+
+  prioritise(id: string, on = true): void {
+    if (on) this.priority.add(id);
+    else this.priority.delete(id);
   }
 
   pause(id: string): ResearchTopic | null {
@@ -439,8 +448,9 @@ Rules: no title heading; use ONLY the findings; keep citation numbers exactly as
         // Nothing new: back off exponentially so a saturated topic idles
         // politely instead of re-querying the same sources every minute —
         // but it never gives up.
-        const delay =
-          found > 0 ? BASE_DELAY_MS : Math.min(MAX_BACKOFF_MS, BASE_DELAY_MS * 2 ** Math.min(current.consecutiveEmptyCycles + 1, 10));
+        const normal = found > 0 ? BASE_DELAY_MS : Math.min(MAX_BACKOFF_MS, BASE_DELAY_MS * 2 ** Math.min(current.consecutiveEmptyCycles + 1, 10));
+        // A topic someone is waiting on (an investigation's specialist) goes round sooner and never idles long.
+        const delay = this.priority.has(id) ? Math.min(normal / 4, PRIORITY_MAX_DELAY_MS) : normal;
         ResearchStore.completeCycle(id, {
           cycle,
           newFindings: found,
@@ -523,8 +533,10 @@ Rules: no title heading; use ONLY the findings; keep citation numbers exactly as
     const present = (term: string) => haystack.includes(term.length > 5 ? term.slice(0, term.length - 2) : term);
     const hits = terms.filter(present).length;
     const coverage = hits / terms.length;
-    // Most of what it is about, or a good part of it when that is several words.
-    if (hits >= 2 && coverage >= 0.34) return true;
+    // A good part of what it is about, as long as that includes its most distinctive word:
+    // "components" and "models" alone do not make a page about the WebAssembly component model.
+    const longestTerm = Math.max(...terms.map((term) => term.length));
+    if (hits >= 2 && coverage >= 0.34 && terms.filter((term) => term.length === longestTerm).some(present)) return true;
     const distinctive = terms.filter((term) => term.length >= 8);
     if (distinctive.length === 0) return coverage >= 0.6;
     const longest = Math.max(...distinctive.map((term) => term.length));

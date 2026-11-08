@@ -9,6 +9,9 @@
  *   - contradictions need real findings on both sides; citations of nothing are removed
  *   - open questions go back for another round; then conclusions become candidate knowledge
  *   - the report's evidence parts come from the records; feedback becomes a question
+ *   - each question and hypothesis is answered with a verdict counted from its evidence
+ *   - an experiment whose numbers cite no finding is refused
+ *   - with too little evidence: searches are re-planned, and the report concludes nothing
  *
  *   npx tsx scripts/investigation-smoketest.ts
  */
@@ -25,6 +28,9 @@ process.env.LMSTUDIO_BASE_URL = "http://127.0.0.1:9";
 process.env.MODEL_WAIT_MS = "0";
 process.env.INVESTIGATION_NO_LOOP = "1";
 process.env.INVESTIGATION_MIN_FINDINGS = "2";
+process.env.INVESTIGATION_MIN_EVIDENCE = "2";
+process.env.INVESTIGATION_MIN_TOTAL = "4";
+process.env.INVESTIGATION_MIN_EXPERIMENT_EVIDENCE = "4";
 process.env.TOP_SECRET_FOR_TEST = "the-secret";
 
 const fail = (message: string): never => {
@@ -116,7 +122,8 @@ const main = async () => {
     if (/Design 2-5 experiments/.test(prompt)) {
       return JSON.stringify({
         experiments: [
-          { title: "Temperature and grind", hypothesis: "Hotter water extracts more", kind: "simulation", method: "Sweep", assumptions: ["Linear extraction, from the findings"], expected: "93-96", criteria: "Score", variables, baseline: { temperature: 85, grind: 40 }, objective: "score", direction: "max", code: "function simulate(p) { return { score: notDefinedAnywhere(p) }; }" },
+          { title: "Invented numbers", hypothesis: "x", kind: "simulation", method: "Sweep", assumptions: ["Numbers from nowhere"], expected: "", criteria: "", variables: { a: [1, 2] }, baseline: {}, objective: "score", direction: "max", code: "function simulate(p) { return { score: p.a }; }" },
+          { title: "Temperature and grind", hypothesis: "Hotter water extracts more", kind: "simulation", method: "Sweep", assumptions: [`Linear extraction, from F${/^\[F(\d+)\]/m.exec(prompt)?.[1]}`], expected: "93-96", criteria: "Score", variables, baseline: { temperature: 85, grind: 40 }, objective: "score", direction: "max", code: "function simulate(p) { return { score: notDefinedAnywhere(p) }; }" },
           { title: "A taste panel", hypothesis: "People prefer it", kind: "physical", method: "Blind tasting", physicalProtocol: "Brew both, have 5 people rank them blind" }
         ]
       });
@@ -131,6 +138,18 @@ const main = async () => {
         ]
       });
     }
+    if (/Answer each question, and judge each hypothesis/.test(prompt)) {
+      const ids = (pattern: RegExp) => [...prompt.matchAll(/\[F(\d+)\][^\n]*/g)].filter((m) => pattern.test(m[0])).map((m) => Number(m[1]));
+      const answers = [...prompt.matchAll(/^(\d+)\. \[(question|hypothesis)\] (.*)$/gm)].map((m) => {
+        const text = m[3];
+        if (/hardness/.test(text)) return { n: Number(m[1]), answer: "50-175 ppm.", supporting: ids(/hardness|soft water/), refuting: [] };
+        if (/temperature/.test(text)) return { n: Number(m[1]), answer: "About 93-96 C.", supporting: ids(/93 C|96 C/), refuting: [] };
+        if (/Hotter water/.test(text)) return { n: Number(m[1]), answer: "The findings support it.", supporting: ids(/96 C/), refuting: [999999] };
+        return { n: Number(m[1]), answer: "The findings do not answer this.", supporting: [], refuting: [] };
+      });
+      return JSON.stringify({ answers });
+    }
+    if (/found almost nothing with these searches/.test(prompt)) return JSON.stringify({ searches: ["plant volatile signalling", "jasmonate airborne priming"] });
     if (/Write the conclusions/.test(prompt)) {
       synthCalls += 1;
       const ids = started.flatMap((id) => ResearchStore.listFindings(id, 5, "strongest").map((f) => f.id));
@@ -178,7 +197,7 @@ const main = async () => {
 
   await advance(item.id);
   current = Investigations.get(item.id)!;
-  const sim = current.experiments.find((e) => e.kind === "simulation")!;
+  const sim = current.experiments.find((e) => e.title === "Temperature and grind")!;
   const physical = current.experiments.find((e) => e.kind === "physical")!;
   if (fixedAsked !== 1 || sim.state !== "done" || sim.result?.evaluated !== 12 || !sim.conclusion) fail(`simulation: ${JSON.stringify({ fixedAsked, state: sim?.state, error: sim?.error })}`);
   if (physical.state !== "needs-physical-test" || !physical.physicalProtocol) fail(`physical: ${physical?.state}`);
@@ -200,13 +219,21 @@ const main = async () => {
   await advance(item.id);
   current = Investigations.get(item.id)!;
   if (current.state !== "done" || !current.report) fail(`state: ${current.state} ${current.error}`);
-  const spoon = current.report.recommendations.find((r) => /magic spoon/.test(r.title))!;
-  if (!spoon.uncited || spoon.findings.length || spoon.confidence !== "medium") fail(`the invented citation: ${JSON.stringify(spoon)}`);
+  if (current.report.recommendations.some((r) => /magic spoon/.test(r.title) || r.uncited)) fail("a recommendation with no evidence was kept");
   const brew = current.report.recommendations.find((r) => /94 C/.test(r.title))!;
   if (brew.uncited || brew.findings.length !== 3 || brew.confidence !== "high") fail(`the real one: ${JSON.stringify(brew)}`);
   if (current.knowledge.length !== 1 || !LessonMemory.list("research").some((l) => /Brew at about 94 C/.test(l.lesson))) fail(`knowledge: ${JSON.stringify(current.knowledge)}`);
   if (LessonMemory.list("research").some((l) => /magic spoon/.test(l.lesson))) fail("an uncited claim became knowledge");
-  console.log("[PASS] citations of nothing are removed and flagged; only what the evidence supports becomes candidate knowledge");
+  console.log("[PASS] a recommendation citing nothing is left out; only what the evidence supports becomes candidate knowledge");
+
+  const answers = current.answers ?? [];
+  const hardness = answers.find((a) => /hardness/.test(a.question));
+  const hotter = answers.find((a) => /Hotter water/.test(a.question));
+  if (hardness?.verdict !== "answered" || hardness.supporting.length !== 2 || hardness.confidence === "none") fail(`answer: ${JSON.stringify(hardness)}`);
+  if (hotter?.verdict !== "supported" || hotter.refuting.length !== 0) fail(`a citation of a finding that does not exist counted: ${JSON.stringify(hotter)}`);
+  const invented = current.experiments.find((e) => e.title === "Invented numbers");
+  if (invented?.state !== "failed" || !/invented/.test(invented.error ?? "") || invented.result) fail(`an ungrounded experiment ran: ${JSON.stringify(invented)}`);
+  console.log("[PASS] each question and hypothesis is answered with a verdict counted from its evidence; an experiment citing no finding is refused");
 
   const full = Investigations.full(item.id)!;
   if (!full.evidenceMatrix[0].findings.length || full.counts.experimentsRun !== 1 || full.counts.physicalTests !== 1 || full.specialistsDetail[0].findings.length < 2) fail(`full: ${JSON.stringify(full.counts)}`);
@@ -214,6 +241,22 @@ const main = async () => {
   if (!noted.feedback[0].followUp || !ResearchStore.nextQuestions(started[0], 20).some((q) => /grinder/.test(q.text))) fail("the feedback did not become a question");
   if (!Evidence.trace(`investigation:${item.id}`).incoming.some((l) => l.relation === "feedback-on")) fail("the feedback is not linked");
   console.log("[PASS] the evidence matrix and counts come from the records; feedback becomes a question and is linked");
+  // With too little evidence: searches are re-planned, and nothing is concluded.
+  const thin = Investigations.start("Research how plants communicate with each other");
+  started.length = 0;
+  for (let i = 0; i < 60 && Investigations.get(thin.id)!.state !== "done"; i++) {
+    const now = Investigations.get(thin.id)!;
+    // Every specialist out of time at once, with nothing found.
+    Investigations.testHooks.patch(thin.id, { specialists: now.specialists.map((s) => ({ ...s, since: "2000-01-01T00:00:00.000Z" })) });
+    await advance(thin.id).catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 30));
+  }
+  const thinDone = Investigations.get(thin.id)!;
+  if (thinDone.state !== "done" || !thinDone.insufficient || thinDone.report?.recommendations.length || thinDone.knowledge.length || !/Not enough evidence/.test(thinDone.report?.executiveSummary ?? "")) fail(`thin evidence: ${JSON.stringify({ state: thinDone.state, insufficient: thinDone.insufficient, summary: thinDone.report?.executiveSummary })}`);
+  if (thinDone.round !== 3 || !thinDone.specialists.every((s) => (s.replans ?? 0) >= 1)) fail(`it did not search again: round ${thinDone.round}, replans ${thinDone.specialists.map((s) => s.replans)}`);
+  if (!started.some((id) => ResearchStore.listQuestions(id, 40).some((q) => /jasmonate airborne priming/.test(q.text)))) fail("the new searches did not reach the specialists");
+  if (thinDone.experiments.length) fail("experiments were designed on no evidence");
+  console.log("[PASS] with too little evidence it searches again, in new words and more rounds, then says so and concludes nothing");
   console.log("All investigation checks passed.");
 };
 
