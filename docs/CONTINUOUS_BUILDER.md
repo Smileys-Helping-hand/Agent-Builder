@@ -69,3 +69,13 @@ Settings: `CONTINUOUS_STEP_LIMIT_MS` (one build step, default 6 h),
 `CONTINUOUS_CHECK_LIMIT_MS` (the check command, default 60 min),
 `CONTINUOUS_MAX_FILES` / `CONTINUOUS_MAX_BYTES` (largest project it copies,
 default 250,000 files / 6 GB). Test: `npm run test:continuous`.
+
+## A breakdown after every step (8 November)
+
+After each step it writes a breakdown: what it did, what changed (files and lines, from git), the result, what it
+learned, and one concrete thing to do differently next time. The next steps are told the last four of those, so each
+run applies what the one before learned; a concrete correction from a step that did not succeed is kept as a lesson,
+which LessonMemory then verifies by use. It is the first tab of each iteration in the Iteration Explorer.
+
+**A full disk** no longer takes the builder down: while less than 3 GB is free (`DISK_MIN_FREE_GB`), builds, installs
+and steps wait and say why, and the launcher starts the builder with node directly (npx itself needed disk space).

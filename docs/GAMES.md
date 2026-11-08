@@ -75,3 +75,19 @@ message, 120 messages a second a player.
 
 Any build whose prompt asks for multiplayer gets the kit, not only
 continuous games. Tests: `npm run test:game-director`, `npm run test:net-kit`.
+
+## The studio process (8 November)
+
+A game is made in the phases a studio uses: pre-production (concept and pillars in GAME_DESIGN.md, an art bible in
+ART_BIBLE.md), production (a vertical slice at final quality first, then content, animation and feel, sound, menus and
+saving, multiplayer when asked for), then alpha (every feature, a CHANGELOG entry per version), beta (content complete,
+balance, teaching, accessibility, phone performance) and a release candidate (no known bugs, credits, store text), then
+live updates.
+
+**QA before a version counts:** each one is opened in a real browser; it must load with no script errors and draw. Its
+screenshot shows on the game's card with a QA badge, and only versions that pass go to SaveState's shelf.
+
+**Every game plays from its card** in Game Studio (the older games/ ones too): Play opens it full window in the app.
+
+Two are running: **Lanternfall** (a 2D action-platformer on Phaser) and **Driftworks** (a 3D hover-racer on three.js
+with online races).

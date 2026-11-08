@@ -48,3 +48,24 @@ open a socket. `Math.random` is seeded, so runs reproduce.
 
 A note on an investigation is kept, linked to it, and becomes a priority question for a
 specialist. Tests: `npm run test:investigation`.
+
+## What changed on 8 November, and why
+
+The first coffee investigation found nothing and still wrote a confident report. Its specialists' titles carried words
+no page uses ("Brewing Method Specialist (Research how to…"), and the relevance check threw every good page away. Then
+the report was written from no evidence. Fixed, and the researcher is built to crack questions now:
+
+- **Scholarly sources:** OpenAlex (about 250 million papers, every field) and Europe PMC (the life sciences), free and
+  keyless, ranked first for anything that is not code. Each paper comes with its year, journal and citations.
+- **Relevance** is checked against the question being researched as well as the topic, ignoring words that only say what
+  a title is ("specialist", "research", "optimal"), but still needing the subject's most distinctive word.
+- **A specialist that finds little re-plans:** new searches in the words papers use, narrower questions, twice before it
+  gives up. Investigation specialists go first in the research queue.
+- **Answers with verdicts:** every research question and hypothesis gets an answer citing findings, and a verdict
+  (answered, supported, refuted, contested, not answered) with a confidence counted from what those findings are
+  (peer-reviewed counts most), never asked of the model. Unanswered questions go back for up to three rounds.
+- **No conclusions on thin evidence:** with fewer than 6 findings in all, the report says plainly that it could not be
+  answered, lists what it could not find, and nothing is learned. Recommendations citing nothing are left out.
+  Experiments need 10 findings, and one whose assumptions cite no finding is refused, because its numbers would be invented.
+
+The old coffee report is marked superseded; a new one, and "How do plants communicate with each other?", are running.
