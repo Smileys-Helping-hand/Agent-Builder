@@ -42,7 +42,8 @@ export const tsFilesWithJsxErrors = (output: string): string[] => {
 /** Members reported missing from one module, by the symbol: "Property 'warn' does not exist on type 'typeof Logger'". */
 export const missingMembersBySymbol = (output: string): Map<string, number> => {
   const counts = new Map<string, number>();
-  for (const m of output.matchAll(/error TS2339: Property '[^']+' does not exist on type 'typeof (\w+)'/g)) counts.set(m[1], (counts.get(m[1]) ?? 0) + 1);
+  // A class or constant ("typeof Logger") or an interface or type ("EcosystemProject") that lost its members.
+  for (const m of output.matchAll(/error TS2339: Property '[^']+' does not exist on type '(?:typeof )?(\w+)'/g)) counts.set(m[1], (counts.get(m[1]) ?? 0) + 1);
   return counts;
 };
 
@@ -86,7 +87,7 @@ export const SourceDoctor = {
     for (const [symbol, count] of missingMembersBySymbol(output)) {
       if (count < (options.minErrors ?? 8)) continue;
       // Of the changed files that define the symbol now, the one that also defined it at the starting point.
-      const defines = (text: string) => new RegExp(`(class|const|function|interface)\\s+${symbol}\\b`).test(text);
+      const defines = (text: string) => new RegExp(`(class|const|function|interface|type)\\s+${symbol}\\b`).test(text);
       let definer: string | null = null;
       let original = "";
       for (const file of changedSince.filter((f) => /\.(ts|tsx|js)$/.test(f))) {
@@ -104,6 +105,12 @@ export const SourceDoctor = {
         }
       }
       if (!definer) continue;
+      // One file can define several of the symbols: restored once, naming them all.
+      const already = actions.findIndex((a) => a.startsWith(`restored ${definer} `));
+      if (already >= 0) {
+        actions[already] = actions[already].replace(/ were missing: it had been rewritten\)$/, `, and ${count} for ${symbol}, were missing: it had been rewritten)`);
+        continue;
+      }
       if (!options.dryRun) fs.writeFileSync(path.join(dir, definer), original);
       actions.push(`restored ${definer} from the starting point (${count} errors said members of ${symbol} were missing: it had been rewritten)`);
     }
