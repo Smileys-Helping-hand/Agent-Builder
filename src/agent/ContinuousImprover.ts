@@ -63,6 +63,11 @@ import { DiskGuard } from "../utils/DiskGuard.js";
 import { Scheduler } from "../system/Scheduler.js";
 import { GameMode } from "../utils/GameMode.js";
 import { Logger } from "../utils/Logger.js";
+import { createHash } from "crypto";
+import { InstallDoctor } from "../repair/InstallDoctor.js";
+import { SourceDoctor } from "../repair/SourceDoctor.js";
+import { errorCount, fingerprint } from "../repair/ErrorFingerprint.js";
+import { RepairLedger, resultOf } from "../repair/RepairLedger.js";
 
 const run = promisify(execFile);
 
@@ -179,6 +184,8 @@ export interface ImproveSession {
   plan: Milestone[];
   journal: Step[];
   lastCheck: CheckRun | null;
+  /** A step broke a healthy project and was kept for one more step to fix it: where it started, and the checks then. */
+  grace?: { from: string; check: CheckRun; step: string } | null;
   researchTopicId: string | null;
   improvementsSincePlan: number;
   needsReplan: boolean;
@@ -1124,6 +1131,53 @@ const ensureResearch = (sessionId: string) => {
 };
 
 /** One cycle of work, by stage. */
+/**
+ * Fixes that need no model, tried before a step when the last check failed:
+ * a broken install (InstallDoctor) and JSX in a .ts file (SourceDoctor). Each
+ * is committed, the checks are run again, and it is undone if that made things
+ * worse. True when one ran: that is this cycle's step.
+ */
+const preStepDoctors = async (sessionId: string, dir: string, check: CheckRun): Promise<boolean> => {
+  const session = getSession(sessionId);
+  if (!session) return false;
+  const actions: string[] = [];
+  if (check.failing.includes("install")) {
+    const fix = await InstallDoctor.repair(dir, check.output, session.workspace?.baseCommit ?? null);
+    if (fix.changed) actions.push(fix.summary);
+  }
+  if (check.failing.includes("typecheck")) {
+    const fix = SourceDoctor.fixJsxInTs(dir, check.output);
+    if (fix.changed) actions.push(fix.summary);
+  }
+  if (!actions.length) return false;
+  patchSession(sessionId, { phase: "Fixing what needs no model (install, file types)" });
+  const before = await head(dir);
+  const commit = await commitAll(dir, `Doctor: ${actions.join(" ").slice(0, 200)}`);
+  if (!commit) return false;
+  const after = await runChecks(session, dir);
+  const worse = after.failing.length > check.failing.length;
+  if (worse) await rollBack(dir, before);
+  patchSession(sessionId, { lastCheck: worse ? check : after });
+  journal(sessionId, {
+    at: new Date().toISOString(),
+    stage: session.stage,
+    title: "Fixed without a model",
+    outcome: worse ? "rolled-back" : "kept",
+    note: `${actions.join(" ")} ${worse ? `It made the checks worse (${after.failing.join(", ")}), so it was undone.` : after.passed ? "Every check passes now." : `Still failing: ${after.failing.join(", ") || "nothing"}.`}`,
+    commit: worse ? null : commit,
+    success: !worse && (after.passed || after.failing.length < check.failing.length)
+  });
+  return true;
+};
+
+/** A step left the checks worse than it found them: a check that passed now fails, or the same checks fail with more errors. */
+export const madeWorse = (before: Pick<CheckRun, "passed" | "failing" | "output"> | null | undefined, after: Pick<CheckRun, "passed" | "failing" | "output">): boolean => {
+  if (!before || after.passed) return false;
+  if (before.passed) return true;
+  if (after.failing.some((name) => !before.failing.includes(name))) return true;
+  return errorCount(after.output) > errorCount(before.output) + 2;
+};
+
 async function cycle(sessionId: string) {
   let session = getSession(sessionId)!;
   const project = EcosystemStore.getProject(session.projectId);
@@ -1136,6 +1190,9 @@ async function cycle(sessionId: string) {
   await syncOwnerCommits(sessionId);
   session = getSession(sessionId)!;
   const dir = session.workspace!.dir;
+
+  // A check that failed last time gets the model-free fixes first.
+  if (session.stage !== "planning" && !session.needsReplan && session.lastCheck && !session.lastCheck.passed && (await preStepDoctors(sessionId, dir, session.lastCheck))) return;
 
   if (session.stage === "planning" || session.needsReplan || session.plan.length === 0) {
     patchSession(sessionId, { phase: session.plan.length ? "Revising the roadmap with your notes" : "Reading the goal and planning the roadmap" });
@@ -1197,12 +1254,36 @@ ${roadmapText(session.plan, milestone)}${
       lastFailure?.environment
         ? `\n\nThis failure is the PC's, not the code's: ${lastFailure.environment}. Change the check or script so it does not need that here (see "This PC"); do not try it again.`
         : ""
-    }${stuck ? `\n\nThis has failed the same way ${milestone.repeats} times in a row; the earlier attempts did not work, so do it differently.${diagnosis ? `\nRoot cause, diagnosed: ${diagnosis}` : ""}` : ""}`;
+    }${stuck ? `\n\nThis has failed the same way ${milestone.repeats} times in a row; the earlier attempts did not work, so do it differently.${diagnosis ? `\nRoot cause, diagnosed: ${diagnosis}` : ""}` : ""}${lastFailure ? RepairLedger.brief(fingerprint(lastFailure.output), session.projectName) : ""}`;
     const step = await buildStep(session, `Building: ${milestone.title}`, instruction, stuck ? milestone.failedApproaches ?? [] : []);
     if (step.stopped && getSession(sessionId)?.state === "stopped") return;
     patchSession(sessionId, { phase: `Checking: ${milestone.title}` });
-    const check = await runChecks(session, dir);
-    const changed = step.after !== step.before;
+    const checked = await runChecks(session, dir);
+    // A step that leaves the project worse than it found it is undone, not kept:
+    // kept, each broken step became the next step's starting point.
+    // A step that breaks a healthy project gets one more step to fix what it broke (feature work often breaks
+    // something on the way); if the project is then still worse than before, both are undone. A step that makes
+    // an already broken project worse is undone at once: kept, each became the next step's broken start.
+    const grace = session.grace ?? null;
+    const worse = step.after !== step.before && madeWorse(session.lastCheck, checked);
+    const stillWorse = grace ? madeWorse(grace.check, checked) : false;
+    const giveGrace = worse && !grace && Boolean(session.lastCheck?.passed);
+    const regressed = (worse && !giveGrace) || stillWorse;
+    const rollTo = stillWorse && grace ? grace.from : step.before;
+    patchSession(sessionId, { grace: giveGrace ? { from: step.before, check: session.lastCheck!, step: milestone.title } : null });
+    // Each step that had failing checks to fix is remembered under those errors, for the next attempt and other projects.
+    if (session.lastCheck && !session.lastCheck.passed && step.after !== step.before) {
+      const diff = await git(dir, ["diff", step.before, step.after]).catch(() => "");
+      const files = (await git(dir, ["diff", "--name-only", step.before, step.after]).catch(() => "")).split("\n").filter(Boolean);
+      const fp = fingerprint(session.lastCheck.output);
+      const hash = createHash("sha1").update(diff).digest("hex").slice(0, 16);
+      const errorsBefore = Math.max(1, errorCount(session.lastCheck.output));
+      const errorsAfter = checked.passed ? 0 : Math.max(1, errorCount(checked.output));
+      RepairLedger.record({ project: session.projectName, fingerprint: fp, check: session.lastCheck.failing[0] ?? "checks", by: "continuous step", files, patchHash: hash, errorsBefore, errorsAfter, result: RepairLedger.repeated(fp, hash) ? "repeat" : resultOf(errorsBefore, errorsAfter, checked.passed), approach: milestone.title });
+    }
+    if (regressed) await rollBack(dir, rollTo);
+    const check = regressed ? (stillWorse && grace ? grace.check : session.lastCheck!) : checked;
+    const changed = !regressed && step.after !== step.before;
     const finished = changed && check.passed;
     update((s) => {
       const m = s.sessions.find((x) => x.id === sessionId)!.plan.find((x) => x.id === mid)!;
@@ -1245,8 +1326,18 @@ ${roadmapText(session.plan, milestone)}${
       at: new Date().toISOString(),
       stage: "building",
       title: milestone.title,
-      outcome: changed ? "kept" : "no-change",
-      note: finished ? "milestone done" : changed ? `checks failing: ${check.failing.join(", ")}` : "the build changed nothing",
+      outcome: regressed ? "rolled-back" : changed ? "kept" : "no-change",
+      note: regressed
+        ? stillWorse && grace
+          ? `undone together with the step before ("${grace.step}"): two steps did not get the checks back to where they were (${checked.failing.join(", ")} failing)`
+          : `undone: it made the checks worse (${checked.failing.join(", ")} failing, ${errorCount(checked.output)} errors; before: ${session.lastCheck?.failing.join(", ") || "all passing"})`
+        : giveGrace
+          ? `kept for one more step to fix what it broke: ${check.failing.join(", ")}`
+          : finished
+          ? "milestone done"
+          : changed
+            ? `checks failing: ${check.failing.join(", ")}`
+            : "the build changed nothing",
       commit: changed ? step.after : null,
       episodeId: changed ? step.episodeId : undefined,
       success: finished

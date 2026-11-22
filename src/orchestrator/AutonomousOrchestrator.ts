@@ -31,7 +31,7 @@ import { ProjectSnapshot } from "./ProjectSnapshot.js";
 import { ensureOllama } from "../utils/Ollama.js";
 import { StuckDoctor } from "../repair/StuckDoctor.js";
 import { FixPlaybook } from "../repair/FixPlaybook.js";
-import { fingerprint, groupErrors, parseErrors } from "../repair/ErrorFingerprint.js";
+import { errorCount, fingerprint, groupErrors, parseErrors } from "../repair/ErrorFingerprint.js";
 import { SuperModelSynthesizer } from "../agents/builder/SuperModelSynthesizer.js";
 import { EpisodicMemory } from "../learning/EpisodicMemory.js";
 import { SystemPromptPatcher } from "../repair/SystemPromptPatcher.js";
@@ -42,6 +42,9 @@ import { NetKit } from "../game/NetKit.js";
 import { SharedKnowledge } from "../knowledge/SharedKnowledge.js";
 import { Reinforcement } from "../learning/Reinforcement.js";
 import { SuperPrompter } from "../media/SuperPrompter.js";
+import { InstallDoctor, firstCommit } from "../repair/InstallDoctor.js";
+import { RepairLedger, patchHash, resultOf } from "../repair/RepairLedger.js";
+import { JarvisClient } from "../integrations/JarvisClient.js";
 
 export interface BuildIteration {
   iteration: number;
@@ -494,6 +497,7 @@ export class AutonomousOrchestrator extends EventEmitter {
       const profileSettings = this.resolveProfile();
       let repairAttempt = 0;
       let emptyRepairs = 0;
+      let installDoctored = false;
       let featureBase: { head: string; files: Record<string, string>; verification: VerificationReport; fixesLeft: number } | null = null;
 
       while (!verification.passed && repairAttempt < profileSettings.maxRepairAttempts) {
@@ -528,6 +532,29 @@ export class AutonomousOrchestrator extends EventEmitter {
           }
         }
 
+        // A failing install is fixed from npm's own error, never by a model adding
+        // packages (that took two games from 15 to 44 dependencies and broke every
+        // install after). The PC's own problems stop the repair: no code change helps.
+        if (failingBefore?.name === "install") {
+          if (!installDoctored) {
+            installDoctored = true;
+            const fix = await InstallDoctor.repair(this.workspace.root, failingBefore.output, await firstCommit(this.workspace.root));
+            this.think(iterationNum, "decision", fix.changed ? "Install Doctor fixed package.json" : "Install Doctor", fix.summary, fix.removed);
+            if (fix.diagnosis.problem === "environment") {
+              repairAttempt -= 1;
+              break;
+            }
+            if (fix.changed) {
+              await this.workspace.commitCurrentState(`Iteration ${iterationNum}: Install Doctor (${fix.removed.length} package(s) removed)`);
+              currentFiles = await this.reloadFiles(currentFiles);
+              verification = await this.verifyAndReport(iterationNum, "After the Install Doctor");
+              repairAttempt -= 1;
+              if (verification.passed) break;
+              continue;
+            }
+          }
+        }
+
         // Stuck on the same errors (or meeting ones it has a learned fix for):
         // find out why and fix it without the model rewriting the code again.
         const doctored = failingBefore ? await this.consultDoctor(iterationNum, repairAttempt, failingBefore, verification, profileSettings.reviewModel) : false;
@@ -538,10 +565,21 @@ export class AutonomousOrchestrator extends EventEmitter {
           continue;
         }
 
+        // What was already tried for these same errors (here and in other builds), and whether the budget is spent.
+        const project = this.config.projectName ?? "build";
+        const fp = failingBefore ? fingerprint(failingBefore.output) : "";
+        const spent = fp ? RepairLedger.stuck(fp, project) : null;
+        if (spent?.stuck) {
+          this.think(iterationNum, "decision", "Stopped repairing: stuck", `${spent.failed} attempts on these same errors did not help (the budget is ${spent.budget}). More of the same would only burn time; this needs a different approach or a person.`);
+          if (JarvisClient.isConfigured()) void JarvisClient.send({ type: "repair", severity: "warn", subject: `Stuck: ${project}`, body: `${spent.failed} repairs of the same ${failingBefore?.name ?? "check"} errors did not help. It has stopped trying; it needs a person or a different approach.\n\n${(failingBefore?.output ?? "").slice(0, 600)}`, project }).catch(() => undefined);
+          break;
+        }
+        const tried = fp ? RepairLedger.brief(fp, project) : "";
+
         const filesBeforeRepair = currentFiles;
         const verificationBeforeRepair = verification;
         const headBeforeRepair = await this.workspace.getHead();
-        const repaired = await this.repairFiles(currentFiles, verification, iterationNum, repairAttempt, critique, repairLessons);
+        const repaired = await this.repairFiles(currentFiles, verification, iterationNum, repairAttempt, critique, repairLessons, tried);
         if (!repaired) {
           LessonMemory.recordOutcome(repairLessonIds, false);
           // One empty answer is often just the model losing the format; two in
@@ -563,6 +601,23 @@ export class AutonomousOrchestrator extends EventEmitter {
         });
 
         verification = await this.verifyAndReport(iterationNum, `After repair ${repairAttempt}`);
+
+        // Recorded under the errors it was for; a patch identical to one that already failed is undone at once.
+        if (fp && failingBefore) {
+          const { hash, files } = patchHash(filesBeforeRepair, currentFiles);
+          const sameCheckAfter = verification.checks.find((check) => check.name === failingBefore.name);
+          const errorsBefore = Math.max(1, errorCount(failingBefore.output));
+          const errorsAfter = sameCheckAfter && !sameCheckAfter.passed ? Math.max(1, errorCount(sameCheckAfter.output ?? "")) : 0;
+          const repeat = RepairLedger.repeated(fp, hash);
+          RepairLedger.record({ project, fingerprint: fp, check: failingBefore.name, by: "build repair", files, patchHash: hash, errorsBefore, errorsAfter, result: repeat ? "repeat" : resultOf(errorsBefore, errorsAfter, Boolean(sameCheckAfter?.passed)) });
+          if (repeat && headBeforeRepair && !sameCheckAfter?.passed) {
+            await this.workspace.resetTo(headBeforeRepair);
+            this.think(iterationNum, "decision", `Undid repair ${repairAttempt}: a repeat`, `It was exactly the patch that already failed on ${repeat.at.slice(0, 10)} (${repeat.files.join(", ")}). The next attempt is told to try something else.`);
+            currentFiles = filesBeforeRepair;
+            verification = verificationBeforeRepair;
+            continue;
+          }
+        }
 
         // Building a missing feature nearly always breaks something on the way
         // (a type, an import). Undoing it at once threw away every new feature,
@@ -597,13 +652,18 @@ export class AutonomousOrchestrator extends EventEmitter {
 
         // A repair that made things worse is undone, so the next attempt starts
         // from the better version instead of digging deeper.
-        if (headBeforeRepair && verification.score < verificationBeforeRepair.score) {
+        // An install repair that leaves install failing is undone too, even at the same
+        // score: kept, each one added more packages and the next install failed worse.
+        const installStillFails = failingBefore?.name === "install" && verification.checks.some((check) => check.name === "install" && check.applicable && !check.passed);
+        if (headBeforeRepair && (verification.score < verificationBeforeRepair.score || installStillFails)) {
           await this.workspace.resetTo(headBeforeRepair);
           this.think(
             iterationNum,
             "decision",
             `Undid repair ${repairAttempt}`,
-            `It took the score from ${verificationBeforeRepair.score} to ${verification.score}; the next attempt starts from the better version.`
+            installStillFails && verification.score >= verificationBeforeRepair.score
+              ? "Install still failed after it, so its package changes were not kept; the next attempt starts from the version before."
+              : `It took the score from ${verificationBeforeRepair.score} to ${verification.score}; the next attempt starts from the better version.`
           );
           currentFiles = filesBeforeRepair;
           verification = verificationBeforeRepair;
@@ -946,7 +1006,8 @@ error) and the specific change needed to fix it. Do not write code.`;
     iterationNum: number,
     attempt: number,
     critique?: string | null,
-    lessons: Lesson[] = []
+    lessons: Lesson[] = [],
+    tried = ""
   ): Promise<Record<string, string> | null> {
     const failing = verification.blockingCheck;
     if (!failing) return null;
@@ -1039,7 +1100,7 @@ Description: ${description}
 Failing check: ${failing.name}
 Error output:
 ${errorOutput}
-${critique ? `\nA senior engineer's diagnosis of the root cause:\n${critique}\n` : ""}${builtInHint}${lessonsSection}
+${critique ? `\nA senior engineer's diagnosis of the root cause:\n${critique}\n` : ""}${builtInHint}${lessonsSection}${tried}
 ${this.guidanceBlock(this.currentIteration)}Current files:
 ${listing}
 

@@ -30,7 +30,7 @@ Status: **done** (tested), **in progress**, **next**, **blocked**, **later**.
 | S1.7 | P1 | Game detection (ask / auto / off, grace period, launchers and anti-cheat excluded) | S1.1, S1.5 | done | → 13:40 | `src/system/GameWatcher.ts` | test:system 2 checks | Watch it through one real game session |
 | S1.8 | P1 | Resource-aware scheduling: hold, and heavy work waits for sustained pressure (max 20 min) | S1.3 | done | → 13:45 | `src/system/Scheduler.ts`, 12 background loops (`GameMode.paused()`), `ContinuousImprover.ts` | test:system 2 checks | Apply to BuildService installs and the art queue |
 | S1.9 | P0 | Jarvis: status, why, modes, resume, hold, retry, detection, storage, audit, model unload, AI policy; events on every switch | S1.5 | done | → 13:50 | `src/server/jarvisActions.ts`, `src/server/system.ts` | typecheck; live via the bridge in S1.10 | — |
-| S1.10 | P0 | Control centre in the app (Gaming Mode / Resume All, measurements, findings, workloads, detection, storage, audit) and a live end-to-end run on this PC | S1.5–S1.9 | in progress | 13:55 → | `remote/app/control/system.tsx`, `remote/app/game-mode.tsx`, `remote/lib/api.ts`, `globals.css` | typecheck (app and server) | Build the app, restart, run Gaming Mode and Resume All for real |
+| S1.10 | P0 | Control centre in the app (Gaming Mode / Resume All, measurements, findings, workloads, detection, storage, audit) and a live end-to-end run on this PC | S1.5–S1.9 | in progress | 13:55 → | app built 14:20 | `remote/app/control/system.tsx`, `remote/app/game-mode.tsx`, `remote/lib/api.ts`, `globals.css` | typecheck (app and server) | Build the app, restart, run Gaming Mode and Resume All for real |
 | S1.11 | P2 | Archive manager (completed projects and old game versions to the NAS, verified copies, nothing deleted without approval) | S1.1 | later | | | | Needs the NAS mapping reconnected |
 | S1.12 | P2 | Duplicate detection and retention policies | S1.1 | later | | | | |
 
@@ -38,7 +38,8 @@ Status: **done** (tested), **in progress**, **next**, **blocked**, **later**.
 
 | ID | P | Task | Depends | Status | Next |
 |---|---|---|---|---|---|
-| I2.1 | P0 | Repair controller: every attempt recorded (error, hypothesis, files, patch strategy, test, result, did the error change); previous attempts retrieved first; a strategy that failed is not repeated without new evidence; attempt budget; strategy switching; escalation | — | next | Inspect `src/repair/*`, the build repair loop and `StuckDoctor` |
+| I2.0 | P0 | **Found:** every continuous session failed for two weeks (games 0/25, self-improvement 0/35, NexusOS 88/111 failed): repairs that added packages were kept, and broken steps were kept. See CONTINUOUS_BUILDER.md | — | done (22 Nov 14:30) | — |
+| I2.1 | P0 | Repair controller: InstallDoctor and SourceDoctor (model-free), no step kept that makes checks worse, install repairs undone when install still fails, repair ledger (attempts by error fingerprint, files, patch hash, errors before/after), history briefed to the model, identical failed patches undone, budget with escalation to Jarvis | I2.0 | done (22 Nov 15:10): test:repair-doctors 6/6 | Watch the four sessions' next steps live; add a hypothesis line per attempt |
 | I2.2 | P0 | Why knowledge makes evaluations worse (0.6 with vs 0.8 without): measure per lesson, retire lessons that hurt | — | next | Per-lesson ablation in Evaluations |
 | I2.3 | P1 | Selective retrieval: only lessons and findings relevant to the task, with provenance, confidence, verification | I2.2 | next | |
 | I2.4 | P1 | Memory kinds made explicit (episodic, semantic, procedural, project, meta) over the existing stores | I2.3 | later | |

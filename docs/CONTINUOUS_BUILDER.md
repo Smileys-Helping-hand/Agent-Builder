@@ -85,3 +85,43 @@ waiting on the disk (E: is a laptop hard drive shared with downloads and sync), 
 minutes, logging "waiting on the PC". A restart there cost 5 to 20 minutes of boot on the same disk and interrupted every
 build. A builder spinning the CPU without answering is restarted after two minutes, as before. Moving the builder to an
 SSD (K: or H:) is what would make it fast.
+
+## Why every session failed from 8 to 22 November, and what changed
+
+The record showed it plainly: Lanternfall 0 of 25 steps succeeded, Driftworks 0 of 25, self-improvement 0 of 35,
+NexusOS 88 of 111 failed. The milestone names moved on only because a milestone is parked after four failed tries.
+
+- **The games:** their first install failed on 8 November because the disk was full. The build's repair loop then asked
+  the model to fix the install, and the model added packages: Lanternfall went from 15 dependencies to 44 (a whole Vue
+  stack in a Phaser game), Driftworks from 16 to 30 (two do not exist on npm). Those repairs were kept because the score
+  was 0 before and after, and every install since failed on them. The original dependency lists resolve cleanly.
+- **NexusOS:** a step wrote React JSX into `src/app/ai-assistant/page.ts`, beside a `page.tsx` of the same page.
+  TypeScript reads JSX in a `.ts` file as broken syntax and never says "JSX", so every repair rewrote the code and the
+  same 17 errors stayed for days.
+- **In every case the breaking step was kept**: a building step kept its changes whatever the checks said, so each
+  broken step became the next one's starting point.
+
+What changed:
+
+- **No step leaves the project worse than it found it** (`madeWorse`: a check that passed now fails, a new check fails,
+  or the same checks fail with more errors). On a healthy project the breaking step is kept for one more step to fix
+  what it broke (feature work often breaks something on the way); if the project is still worse than before after
+  that, both steps are rolled back together. On a project that is already broken, a step that makes it worse is
+  rolled back at once. The journal says which.
+- **Fixes that need no model run first** when the last check failed (`preStepDoctors`):
+  - *InstallDoctor* (`src/repair/InstallDoctor.ts`) reads npm's own error. The PC's problems (disk, network, a locked
+    file) change nothing. A missing package, a missing version or a peer conflict: packages added since the session's
+    starting point that caused it, or that nothing in the project uses, are removed; what the code imports, its types
+    and the tools its scripts run are kept.
+  - *SourceDoctor* (`src/repair/SourceDoctor.ts`): a `.ts` file whose syntax errors come from JSX is renamed to `.tsx`,
+    or removed when a `.tsx` of the same name exists.
+  Each is committed, checked, and undone if it made things worse.
+- **The build's repair loop** runs the InstallDoctor before any model touches a failing install, stops at once when
+  the failure is the PC's, and undoes any install repair that leaves install failing.
+- **Repair memory** (`src/repair/RepairLedger.ts`, `data/repair-ledger.jsonl`): every repair attempt, in builds and
+  continuous steps, is recorded under the fingerprint of the errors it was for, with the files it changed, a hash of
+  exactly what it changed, and the error count before and after. The next attempt is told what was tried and how it
+  went; a patch identical to one that already failed is undone at once; after `REPAIR_BUDGET` (12) attempts that did
+  not help on the same errors in one project, repair stops and Jarvis is told it needs a person.
+
+Tests: `npm run test:repair-doctors` (6 checks, on throwaway projects shaped like the three real failures).
