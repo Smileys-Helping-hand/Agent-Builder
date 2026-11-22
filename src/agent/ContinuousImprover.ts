@@ -1155,7 +1155,7 @@ const preStepDoctors = async (sessionId: string, dir: string, check: CheckRun): 
   const commit = await commitAll(dir, `Doctor: ${actions.join(" ").slice(0, 200)}`);
   if (!commit) return false;
   const after = await runChecks(session, dir);
-  const worse = after.failing.length > check.failing.length;
+  const worse = madeWorse(check, after);
   if (worse) await rollBack(dir, before);
   patchSession(sessionId, { lastCheck: worse ? check : after });
   journal(sessionId, {
@@ -1165,15 +1165,33 @@ const preStepDoctors = async (sessionId: string, dir: string, check: CheckRun): 
     outcome: worse ? "rolled-back" : "kept",
     note: `${actions.join(" ")} ${worse ? `It made the checks worse (${after.failing.join(", ")}), so it was undone.` : after.passed ? "Every check passes now." : `Still failing: ${after.failing.join(", ") || "nothing"}.`}`,
     commit: worse ? null : commit,
-    success: !worse && (after.passed || after.failing.length < check.failing.length)
+    success: !worse && (after.passed || checkProgress(after) > checkProgress(check) || after.failing.length < check.failing.length)
   });
   return true;
 };
 
-/** A step left the checks worse than it found them: a check that passed now fails, or the same checks fail with more errors. */
+/**
+ * How far along the checks a project gets: install comes first, and while it fails nothing after it runs, so fixing
+ * it can show typecheck, build and test failing for the first time. That is progress, not a regression: comparing
+ * the number of failing checks called it worse and undid the fix (Lanternfall, Driftworks, 22 November).
+ */
+const CHECK_ORDER = ["install", "typecheck", "build", "test", "lint"];
+export const checkProgress = (check: Pick<CheckRun, "passed" | "failing">): number => {
+  if (check.passed) return CHECK_ORDER.length + 1;
+  const reached = check.failing.map((name) => {
+    const index = CHECK_ORDER.indexOf(name);
+    return index < 0 ? CHECK_ORDER.length : index;
+  });
+  return reached.length ? Math.min(...reached) : CHECK_ORDER.length;
+};
+
+/** A step left the checks worse than it found them: an earlier check now fails, a new check fails at the same stage, or the same checks fail with more errors. */
 export const madeWorse = (before: Pick<CheckRun, "passed" | "failing" | "output"> | null | undefined, after: Pick<CheckRun, "passed" | "failing" | "output">): boolean => {
   if (!before || after.passed) return false;
   if (before.passed) return true;
+  const was = checkProgress(before);
+  const now = checkProgress(after);
+  if (now !== was) return now < was;
   if (after.failing.some((name) => !before.failing.includes(name))) return true;
   return errorCount(after.output) > errorCount(before.output) + 2;
 };

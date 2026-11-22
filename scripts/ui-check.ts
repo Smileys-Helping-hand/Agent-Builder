@@ -140,6 +140,11 @@ const main = async () => {
       check("An iteration opens", row && /Changes ·/.test(body), "");
       await shot("iteration-open");
     }
+    await visit("Control", "/control/", 8000);
+    for (let i = 0; i < 15 && !/Resume All/.test(await textOf()); i++) await sleep(2000);
+    body = await textOf();
+    check("Control has Gaming Mode, Resume All and the PC's measurements", /Gaming Mode/.test(body) && /Resume All/.test(body) && /Right now/.test(body) && /What Gaming Mode manages/.test(body), body.slice(0, 160).replace(/\n/g, " "));
+    await shot("control");
     await visit("Research", "/research/", 8000);
     body = await textOf();
     check("Research shows the investigations", /Deep investigation/i.test(body));

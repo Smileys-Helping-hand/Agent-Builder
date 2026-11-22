@@ -119,6 +119,9 @@ await check("a step that leaves the checks worse is recognised: a new failing ch
   assert.equal(madeWorse(base, { passed: false, failing: ["typecheck"], output: "a.ts(1,1): error TS1: x\n" }), false, "the same failure is not worse");
   assert.equal(madeWorse(base, { passed: true, failing: [], output: "" }), false);
   assert.equal(madeWorse(null, { passed: false, failing: ["typecheck"], output: "" }), false, "with nothing to compare, it is not judged worse");
+  // Fixing install lets typecheck, build and test run for the first time: progress, not a regression.
+  assert.equal(madeWorse({ passed: false, failing: ["install"], output: "npm error" }, { passed: false, failing: ["typecheck", "build", "test"], output: "a.ts(1,1): error TS1: x" }), false);
+  assert.equal(madeWorse({ passed: false, failing: ["test"], output: "" }, { passed: false, failing: ["install"], output: "" }), true, "breaking install is worse than a failing test");
 });
 
 await check("the repair ledger: the history is briefed, an identical failed patch is a repeat, and the budget stops the loop", () => {

@@ -262,6 +262,9 @@ export default function Control() {
       />
 
       <div className="wrap">
+        {/* ---------- Gaming Mode, Resume All, and the PC as one system: first, where it is easy to reach ---------- */}
+        <SystemPanel />
+
         {status.error ? <Banner kind="error">{status.error}</Banner> : null}
 
         {/* ---------- power & master switch ---------- */}
@@ -907,7 +910,6 @@ export default function Control() {
 
         {/* ---------- power tools ---------- */}
         <div className="section-title">This PC</div>
-        <SystemPanel />
         <ThisPcCard />
 
         <div className="section-title">Power tools</div>
