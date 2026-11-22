@@ -199,12 +199,12 @@ function ScorecardCard() {
       <strong>Learning scorecard</strong>
       <p className="small" style={{ margin: "6px 0 10px" }}>{c.verdict}</p>
       <div className="stats">
-        <div className="stat"><span className="muted small">Without knowledge</span><strong>{pct(c.latest.without)}</strong></div>
-        <div className="stat"><span className="muted small">With knowledge</span><strong>{pct(c.latest.with)}</strong></div>
-        <div className="stat"><span className="muted small">Baseline (before benching)</span><strong>{pct(c.baselineWithout)}</strong></div>
-        <div className="stat"><span className="muted small">Retrieval precision</span><strong>{pct(c.retrievalPrecision)}</strong></div>
-        <div className="stat"><span className="muted small">Harmful items benched</span><strong>{c.harmfulExcluded.benched}</strong></div>
-        <div className="stat"><span className="muted small">Verified useful</span><strong>{c.verifiedUseful.length}</strong></div>
+        <div className="stat" style={{ display: "grid", gap: 4 }}><span className="muted small">Without knowledge</span><strong>{pct(c.latest.without)}</strong></div>
+        <div className="stat" style={{ display: "grid", gap: 4 }}><span className="muted small">With knowledge</span><strong>{pct(c.latest.with)}</strong></div>
+        <div className="stat" style={{ display: "grid", gap: 4 }}><span className="muted small">Baseline (before benching)</span><strong>{pct(c.baselineWithout)}</strong></div>
+        <div className="stat" style={{ display: "grid", gap: 4 }}><span className="muted small">Retrieval precision</span><strong>{pct(c.retrievalPrecision)}</strong></div>
+        <div className="stat" style={{ display: "grid", gap: 4 }}><span className="muted small">Harmful items benched</span><strong>{c.harmfulExcluded.benched}</strong></div>
+        <div className="stat" style={{ display: "grid", gap: 4 }}><span className="muted small">Verified useful</span><strong>{c.verifiedUseful.length}</strong></div>
       </div>
       <p className="small muted" style={{ marginTop: 8 }}>
         Model: {c.model ?? "—"}. Regressions with knowledge: {c.regressions.length ? c.regressions.join(", ") : "none"}.
