@@ -179,7 +179,7 @@ function simulate() {
   }
 };
 
-const grade = async (challenge: Challenge, answer: string): Promise<{ passed: boolean; detail: string }> => {
+export const grade = async (challenge: Challenge, answer: string): Promise<{ passed: boolean; detail: string }> => {
   const text = answer.replace(/<think>[\s\S]*?<\/think>/gi, "");
   if (challenge.grader.kind === "code") return gradeCode(text, challenge.grader);
   if (challenge.grader.kind === "contains") {

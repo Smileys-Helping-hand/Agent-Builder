@@ -24,7 +24,7 @@
 import fs from "fs";
 import path from "path";
 
-const EVALUATIONS = () => path.resolve(process.env.EVALUATIONS_PATH ?? "data/agent/evaluations.json");
+const EVALUATIONS = () => path.resolve(process.env.EVALUATIONS_PATH ?? process.env.EVALUATIONS_FILE ?? "data/agent/evaluations.json");
 const FILE = () => path.resolve(process.env.BENCHED_PATH ?? "data/learning/benched.json");
 const MIN_USES = 3;
 const BENCH_AT = -0.25;

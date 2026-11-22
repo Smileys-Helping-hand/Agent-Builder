@@ -129,7 +129,16 @@ const GENERIC_TOKENS = new Set([
 /** Light stemming so "functions" matches "function" and "imported" matches "import". */
 const stem = (token: string): string => (token.length > 4 ? token.replace(/(ing|ed|es|s)$/, "") : token);
 
-const specificTokens = (text: string): Set<string> =>
+/** How many specific terms a lesson or finding must share with the task to be handed out (KNOWLEDGE_MIN_SHARED_TERMS). */
+export const MIN_SHARED_TERMS = (): number => Number(process.env.KNOWLEDGE_MIN_SHARED_TERMS ?? 3);
+
+/** Specific terms two texts share. */
+export const sharedTerms = (a: string, b: string): number => {
+  const left = specificTokens(a);
+  return [...specificTokens(b)].filter((token) => left.has(token)).length;
+};
+
+export const specificTokens = (text: string): Set<string> =>
   new Set(contentTokens(text).filter((token) => !GENERIC_TOKENS.has(token)).map(stem));
 
 // Failures observed in this project's own live runs, seeded so a fresh install
@@ -308,6 +317,11 @@ export const LessonMemory = {
       query.replace(/[a-zA-Z]:[\\/][^\s'"`)]+/g, " ").replace(/(?:file:\/\/)?\/(?:[\w.@-]+\/)+[\w.@-]+/g, " ")
     );
     const sharedWith = (text: string): number => [...specificTokens(text)].filter((token) => queryTokens.has(token)).length;
+    const signatureMatches = (signature: string): boolean => {
+      const terms = specificTokens(signature.replace(/^[^:]+:/, ""));
+      const hits = [...terms].filter((token) => queryTokens.has(token)).length;
+      return hits >= 2 && hits / Math.max(1, terms.size) >= 0.5;
+    };
 
     return rows
       .map(mapLesson)
@@ -316,7 +330,11 @@ export const LessonMemory = {
       // Measured to make answers worse in evaluations (KnowledgeImpact): not given while benched.
       .filter((lesson) => !KnowledgeImpact.isBenched(`lesson:${lesson.id}`))
       .sort((a, b) => Number(b.status === "verified") - Number(a.status === "verified"))
-      .filter((lesson) => sharedWith(lesson.signature) >= 1 || sharedWith(lesson.lesson) >= 2)
+      // Measured (22 Nov, 65 task-item pairs with evidence): items sharing 1-2 specific terms with the task made
+      // evaluation answers worse on average (-0.12, -0.15) and were every harmful pairing. This rule keeps 8 pairs
+      // (mean -0.04, none harmful) and drops all 16 harmful ones. One shared word ("stale") is not relevance.
+      // A lesson for the same error (most of its signature's specific terms are in the task) is relevant on its own.
+      .filter((lesson) => signatureMatches(lesson.signature) || sharedWith(`${lesson.signature} ${lesson.lesson}`) >= MIN_SHARED_TERMS())
       .slice(0, limit);
   },
 

@@ -7,6 +7,7 @@
  * study documents generated from those findings.
  */
 import { KnowledgeImpact } from "../learning/KnowledgeImpact.js";
+import { MIN_SHARED_TERMS, sharedTerms } from "../learning/LessonMemory.js";
 import crypto from "crypto";
 import {
   contentTokens,
@@ -636,6 +637,8 @@ export const ResearchStore = {
       .filter((finding) => finding.status === "corroborated" || finding.confidence >= 0.6)
       // Measured to make answers worse (KnowledgeImpact): not handed out while benched.
       .filter((finding) => !KnowledgeImpact.isBenched(`finding:${finding.id}`))
+      // Relevance is several shared specific terms, not one keyword (see LessonMemory.MIN_SHARED_TERMS).
+      .filter((finding) => sharedTerms(text, finding.claim) >= MIN_SHARED_TERMS())
       .sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0))
       .slice(0, limit);
   },

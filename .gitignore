@@ -35,3 +35,6 @@ agents/projects/
 games/made-*/
 # The Virtual Test Lab: ISOs, logs, screenshots
 data/vmlab/
+
+# Graphify code graph (local, rebuilt by scripts/graphify-update)
+graphify-out/

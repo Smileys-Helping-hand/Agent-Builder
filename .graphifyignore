@@ -1,0 +1,8 @@
+builds/
+data/
+remote/out/
+remote/.next/
+dashboard/.next/
+games/
+templates/sites/
+graphify-out/

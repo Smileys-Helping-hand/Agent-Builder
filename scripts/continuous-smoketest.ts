@@ -313,6 +313,23 @@ const main = async () => {
   MachineProfile.setForTest(null);
   console.log(`[PASS] stuck on the machine: named as the PC's (bash broken), diagnosed once, ${ms.repeats} repeats, ${ms.failedApproaches!.length} approach(es) ruled out`);
 
+  // 13. Milestones parked while the install was broken go back in the queue once install works, in order, once.
+  const { reopenAfterInstallRecovery } = await import("../src/agent/ContinuousImprover.js");
+  const ms0 = (title: string, status: string, note: string | null) => ({ id: `ms_${title}`, title, detail: "", status, attempts: 4, note, doneAt: null });
+  const checkAt = (failing: string[]) => ({ at: new Date().toISOString(), passed: failing.length === 0, verified: true, failing, output: "", command: null });
+  hooks.patchSession(machineStuck.id, {
+    plan: [ms0("Design", "parked", "checks failing: install"), ms0("Slice", "parked", "no progress"), ms0("Sound", "doing", null), ms0("Menus", "todo", null), ms0("Later", "parked", "checks failing: typecheck")] as never,
+    lastCheck: checkAt(["install"]) as never,
+    reopenedAfterInstall: null
+  });
+  if (reopenAfterInstallRecovery(machineStuck.id) !== 0) fail("reopened while install was still failing");
+  hooks.patchSession(machineStuck.id, { lastCheck: checkAt(["typecheck", "build"]) as never });
+  if (reopenAfterInstallRecovery(machineStuck.id) !== 2) fail("should reopen the two milestones parked before the current one");
+  const plan = hooks.getSession(machineStuck.id)!.plan.map((m) => `${m.title}:${m.status}:${m.attempts}`).join(" ");
+  if (plan !== "Design:todo:0 Slice:todo:0 Sound:todo:4 Menus:todo:4 Later:parked:4") fail(`reopened plan: ${plan}`);
+  if (reopenAfterInstallRecovery(machineStuck.id) !== 0) fail("reopens only once");
+  console.log("[PASS] milestones parked while the install was broken are reopened once install works: in roadmap order, once, and not ones parked for other reasons");
+
   console.log("All continuous-builder checks passed.");
 };
 

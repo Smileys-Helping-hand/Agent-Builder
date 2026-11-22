@@ -101,9 +101,11 @@ function Detail({ sessionId, n, onChanged }: { sessionId: string; n: number | "c
         data.retro ? (
           <div className="small">
             <div><strong>What it did:</strong></div>
+            {data.retro.attempted ? <div><strong>What it attempted:</strong> {data.retro.attempted}</div> : null}
             <ul style={{ margin: "2px 0 6px", paddingLeft: 18 }}>{data.retro.did.map((d, i) => <li key={i}>{d}</li>)}</ul>
             <div><strong>What changed:</strong> {data.retro.changed.files} files, +{data.retro.changed.added} −{data.retro.changed.removed} lines{data.retro.changed.list.length ? ` (${data.retro.changed.list.slice(0, 8).join(", ")}${data.retro.changed.list.length > 8 ? "…" : ""})` : ""}</div>
-            <div><strong>Result:</strong> {data.retro.outcome}</div>
+            {data.retro.tests ? <div><strong>Tests run:</strong> {data.retro.tests}</div> : null}
+            <div><strong>Result:</strong> {data.retro.result ?? data.retro.outcome}</div>
             {data.retro.learned ? <div><strong>What it learned:</strong> {data.retro.learned}</div> : null}
             {data.retro.nextTime ? <div><strong>Next time it will:</strong> {data.retro.nextTime}{data.retro.lessonId ? <span className="muted"> (kept as a lesson, verified by use)</span> : null}</div> : null}
           </div>

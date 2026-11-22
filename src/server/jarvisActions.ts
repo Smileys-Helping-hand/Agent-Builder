@@ -522,6 +522,11 @@ export const BRIDGE_ACTIONS: BridgeAction[] = [
   // ── The model, and the machine ────────────────────────────────────────────
   { name: "model.status", area: "model", label: "The coding model: which, and how it is split between the GPU and RAM", scope: "read", params: {}, call: () => ["GET", "/api/power/model"] },
   { name: "model.load", area: "model", label: "Load the coding model now", scope: "execute", params: {}, call: () => ["POST", "/api/power/warm-model"] },
+  { name: "learning.scorecard", area: "agent", label: "Does what it learned help? Scores with and without knowledge on the same model, retrieval precision, benched (harmful) knowledge, verified useful knowledge, regressions and the trend", scope: "read", params: {}, call: () => ["GET", "/api/learning/scorecard"] },
+  { name: "models", area: "model", label: "The local models installed (size, quantisation, context, mixture-of-experts), the production model, and the latest lab recommendation", scope: "read", params: {}, call: () => ["GET", "/api/models"] },
+  { name: "models.lab", area: "model", label: "Model Laboratory results: each model's score per kind of challenge, tokens/s, first-token time, load time, GPU/RAM split, peak memory, and the recommendation", scope: "read", params: {}, call: () => ["GET", "/api/models/lab"] },
+  { name: "models.lab.run", area: "model", label: "Benchmark local models on the same graded challenges, one at a time (never changes the production model)", scope: "execute", params: { models: "[model names]", "only?": "[challenge ids]" }, call: (p) => ["POST", "/api/models/lab/run", pick(p, "models", "only")] },
+  { name: "models.lab.stop", area: "model", label: "Stop the model benchmark after the current answer", scope: "execute", params: {}, call: () => ["POST", "/api/models/lab/stop", {}] },
   { name: "model.unload", area: "model", label: "Unload the AI model from video memory now (it loads again when next asked)", scope: "execute", params: {}, call: () => ["POST", "/api/system/model/unload", {}] },
   { name: "model.restart", area: "model", label: "Restart the model server with its settings", scope: "execute", params: {}, call: () => ["POST", "/api/power/model/restart"] },
   { name: "settings", area: "model", label: "The builder's settings, with choices", scope: "read", params: {}, call: () => ["GET", "/api/settings/builder"] },

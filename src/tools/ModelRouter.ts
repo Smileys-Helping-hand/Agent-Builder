@@ -322,8 +322,13 @@ export class ModelRouter {
     // contend for it. OpenAI is a remote API with its own concurrency —
     // serializing those too would only add latency for no reason.
     const isLocalProvider = provider === "ollama" || provider === "lmstudio";
-    // Game mode: the GPU belongs to the person at the keyboard.
-    if (isLocalProvider && GameMode.isOn()) throw new GameModeOnError();
+    // Game mode: the GPU belongs to the person at the keyboard. A build's call waits until Resume
+    // (it is paused, not failed: on 22 November a build in progress burned its three passes on this
+    // error in the minute Gaming Mode was on and failed); anything asked directly is told at once.
+    if (isLocalProvider && GameMode.isOn()) {
+      if (!currentBuild()) throw new GameModeOnError();
+      while (GameMode.isOn()) await new Promise((resolve) => setTimeout(resolve, 10_000));
+    }
 
     // A paused build, or practice while someone's build runs, waits here (BuildGate).
     if (isLocalProvider) await BuildGate.wait(currentBuild()?.buildId);

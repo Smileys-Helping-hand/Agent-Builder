@@ -37,6 +37,9 @@ import { StorageInventory, recommend, rolesByLetter, tierLabel } from "../system
 import { Telemetry, explain } from "../system/Telemetry.js";
 import { WORKLOADS, PROTECTED, unloadModels } from "../system/Workloads.js";
 import { aiPolicy } from "../tools/LocalOnly.js";
+import { ModelLab, installedModels, labChallenges } from "../learning/ModelLab.js";
+import { scorecard } from "../learning/Scorecard.js";
+import { KnowledgeImpact } from "../learning/KnowledgeImpact.js";
 
 const actorOf = (req: Request): string => {
   const request = req as AgentRequest;
@@ -233,6 +236,48 @@ export const registerSystemRoutes = (app: Express) => {
     } catch (error) {
       fail(res, error);
     }
+  });
+
+  // ── The Model Laboratory ──────────────────────────────────────────────
+  app.get("/api/models", authenticateAgent("read"), async (_req: Request, res: Response) => {
+    try {
+      const latest = ModelLab.latest();
+      res.json({ production: process.env.OLLAMA_MODEL ?? "qwen2.5-coder:14b", installed: await installedModels(), latestLab: latest ? { id: latest.id, state: latest.state, finishedAt: latest.finishedAt, recommendation: latest.recommendation } : null });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.get("/api/models/lab", authenticateAgent("read"), (_req: Request, res: Response) => {
+    res.json({ running: ModelLab.isRunning(), runs: ModelLab.runs().slice(0, 10), challenges: labChallenges().map((c) => ({ id: c.id, category: c.category, title: c.title })) });
+  });
+
+  app.post("/api/models/lab/run", authenticateAgent("execute"), async (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as { models?: unknown; only?: unknown };
+    const models = Array.isArray(body.models) ? body.models.map(String).filter((m) => /^[\w.:/-]{1,80}$/.test(m)).slice(0, 8) : [];
+    if (!models.length) return res.status(400).json({ error: 'Say which models: { "models": ["qwen2.5-coder:14b", "qwen3-coder:30b"] }.' });
+    try {
+      const started = ModelLab.run({ models, only: Array.isArray(body.only) ? body.only.map(String) : undefined, isGameRunning: () => GameWatcher.state().running.length > 0 });
+      started.catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      audit({ actor: actorOf(req), action: "model lab run", detail: models.join(", "), ok: true });
+      res.status(202).json({ running: ModelLab.isRunning(), latest: ModelLab.latest() });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.get("/api/learning/scorecard", authenticateAgent("read"), (_req: Request, res: Response) => {
+    try {
+      res.json({ ...scorecard(), benched: KnowledgeImpact.benched() });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.post("/api/models/lab/stop", authenticateAgent("execute"), (_req: Request, res: Response) => {
+    ModelLab.stop();
+    res.json({ stopping: Boolean(ModelLab.isRunning()) });
   });
 
   app.get("/api/system/audit", authenticateAgent("read"), (req: Request, res: Response) => {

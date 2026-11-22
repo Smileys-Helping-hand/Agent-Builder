@@ -1335,7 +1335,7 @@ export interface IterationFile {
 
 export interface IterationDetail {
   entry: IterationEntry | null;
-  retro?: { at: string; did: string[]; changed: { files: number; added: number; removed: number; list: string[] }; outcome: string; learned: string; nextTime: string; lessonId: number | null } | null;
+  retro?: { at: string; attempted?: string; tests?: string; result?: string; did: string[]; changed: { files: number; added: number; removed: number; list: string[] }; outcome: string; learned: string; nextTime: string; lessonId: number | null } | null;
   objective: string;
   milestone: { title: string; detail: string; diagnosis?: string | null } | null;
   changes: {

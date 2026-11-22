@@ -115,11 +115,18 @@ export interface Step {
   check?: { at: string; passed: boolean; verified: boolean; failing: string[]; vmRun?: string | null } | null;
   /** The step's own breakdown, written after it: what it did, what changed, what it learned, what to do next time. */
   retro?: Retro | null;
+  /** A step that was rolled back: the commit that was undone, so its breakdown can still show what it changed. */
+  undone?: string | null;
 }
 
 export interface Retro {
   at: string;
+  /** What the step set out to do (its milestone or fix). */
+  attempted?: string;
   did: string[];
+  /** The checks run after it, and what they said. */
+  tests?: string;
+  result?: string;
   /** From git: files and lines, not the model's account. */
   changed: { files: number; added: number; removed: number; list: string[] };
   outcome: string;
@@ -186,6 +193,8 @@ export interface ImproveSession {
   lastCheck: CheckRun | null;
   /** A step broke a healthy project and was kept for one more step to fix it: where it started, and the checks then. */
   grace?: { from: string; check: CheckRun; step: string } | null;
+  /** When milestones parked while the install was broken were put back in the queue (once). */
+  reopenedAfterInstall?: string | null;
   researchTopicId: string | null;
   improvementsSincePlan: number;
   needsReplan: boolean;
@@ -991,13 +1000,14 @@ const retrospect = async (sessionId: string) => {
   if (!session?.workspace) return;
   const index = session.journal.length - 1;
   const step = session.journal[index];
-  if (!step || step.retro || step.stage === "planning" || /^Brought in your commits|^Roadmap:/.test(step.title)) return;
+  if (!step || step.retro || step.stage === "planning" || /^Brought in your commits|^Roadmap:|^Reopened /.test(step.title)) return;
   const dir = session.workspace.dir;
   let list: string[] = [];
   let added = 0;
   let removed = 0;
-  if (step.commit && step.from && step.commit !== step.from) {
-    for (const line of (await git(dir, ["diff", "--numstat", step.from, step.commit]).catch(() => "")).split("\n").filter(Boolean)) {
+  const to = step.commit ?? step.undone ?? null;
+  if (to && step.from && to !== step.from) {
+    for (const line of (await git(dir, ["diff", "--numstat", step.from, to]).catch(() => "")).split("\n").filter(Boolean)) {
       const [a, r, ...file] = line.split("\t");
       added += Number(a) || 0;
       removed += Number(r) || 0;
@@ -1019,7 +1029,12 @@ Answer with JSON only:
  "learned": "what this taught about this project or this kind of work, one or two sentences",
  "nextTime": "ONE concrete thing to do differently next time, specific enough to act on (a file, a check, an order of work); empty if nothing"}`).catch(() => "");
   const parsed = extractJson(answer);
-  const did = Array.isArray(parsed?.did) ? (parsed!.did as unknown[]).map(String).filter(Boolean).slice(0, 6) : [];
+  // The facts never depend on the model: when it does not answer usably, the breakdown says what is known.
+  const factual = `${step.title}: ${step.outcome}${step.note ? ` (${step.note.slice(0, 200)})` : ""}${list.length ? `; ${list.length} file(s) ${step.undone ? "changed, then undone" : "changed"}, +${added} -${removed}` : "; no files changed"}`;
+  const didModel = Array.isArray(parsed?.did) ? (parsed!.did as unknown[]).map(String).filter(Boolean).slice(0, 6) : [];
+  const did = didModel.length ? didModel : [factual];
+  const tests = check ? `${check.verified ? "checks run" : "nothing could be checked"}${check.failing.length ? `; failing: ${check.failing.join(", ")}` : check.passed ? "; all passed" : ""}` : "no checks run";
+  const result = `${step.outcome}${step.success ? " (succeeded)" : ""}${step.note ? `: ${step.note.slice(0, 300)}` : ""}`;
   const learned = String(parsed?.learned ?? "").slice(0, 600);
   const nextTime = String(parsed?.nextTime ?? "").slice(0, 400);
   let lessonId: number | null = null;
@@ -1029,7 +1044,7 @@ Answer with JSON only:
   }
   update((s) => {
     const target = s.sessions.find((x) => x.id === sessionId)?.journal[index];
-    if (target && target.at === step.at) target.retro = { at: new Date().toISOString(), did, changed: { files: list.length, added, removed, list }, outcome: step.outcome, learned, nextTime, lessonId };
+    if (target && target.at === step.at) target.retro = { at: new Date().toISOString(), attempted: step.title, did, tests, result, changed: { files: list.length, added, removed, list }, outcome: step.outcome, learned, nextTime, lessonId };
   });
   if (step.n) {
     Evidence.record({ kind: "step", ref: `retro:${sessionId}:${step.n}`, task: `session:${sessionId}`, agent: "continuous-builder", title: `Breakdown of "${step.title}": ${nextTime || learned || "no lesson"}`.slice(0, 300), outcome: step.outcome, data: { did, learned, nextTime }, links: [{ to: `step:${sessionId}:${step.n}`, relation: "breakdown-of" }, ...(lessonId ? [{ to: `lesson:${lessonId}`, relation: "taught" }] : [])] });
@@ -1165,6 +1180,8 @@ const preStepDoctors = async (sessionId: string, dir: string, check: CheckRun): 
     outcome: worse ? "rolled-back" : "kept",
     note: `${actions.join(" ")} ${worse ? `It made the checks worse (${after.failing.join(", ")}), so it was undone.` : after.passed ? "Every check passes now." : `Still failing: ${after.failing.join(", ") || "nothing"}.`}`,
     commit: worse ? null : commit,
+    undone: worse ? commit : null,
+    from: before,
     success: !worse && (after.passed || checkProgress(after) > checkProgress(check) || after.failing.length < check.failing.length)
   });
   return true;
@@ -1183,6 +1200,32 @@ export const checkProgress = (check: Pick<CheckRun, "passed" | "failing">): numb
     return index < 0 ? CHECK_ORDER.length : index;
   });
   return reached.length ? Math.min(...reached) : CHECK_ORDER.length;
+};
+
+/**
+ * Milestones parked while the install was broken never really ran: every
+ * attempt failed before a line of the game existed (Lanternfall and Driftworks
+ * parked their design, art bible and vertical slice that way, then moved on to
+ * sound with nothing to add it to). Once install works again, the ones parked
+ * before the current milestone go back in the queue, in roadmap order, once.
+ */
+export const reopenAfterInstallRecovery = (sessionId: string): number => {
+  const session = getSession(sessionId);
+  const check = session?.lastCheck;
+  if (!session || !check || !check.verified || check.failing.includes("install") || session.reopenedAfterInstall) return 0;
+  const current = session.plan.findIndex((m) => m.status === "doing" || m.status === "todo");
+  const parked = session.plan.filter((m, i) => m.status === "parked" && (current < 0 || i < current) && /install|no progress/i.test(m.note ?? ""));
+  if (!parked.length) return 0;
+  update((s) => {
+    const target = s.sessions.find((x) => x.id === sessionId)!;
+    for (const m of target.plan) {
+      if (parked.some((p) => p.id === m.id)) Object.assign(m, { status: "todo", attempts: 0, repeats: 0, note: null, lastSignature: null, failedApproaches: [], diagnosis: null });
+      else if (m.status === "doing") m.status = "todo";
+    }
+    target.reopenedAfterInstall = new Date().toISOString();
+  });
+  journal(sessionId, { at: new Date().toISOString(), stage: session.stage, title: `Reopened ${parked.length} milestone(s) parked while the install was broken`, outcome: "kept", note: parked.map((m) => m.title).join("; "), commit: null });
+  return parked.length;
 };
 
 /** A step left the checks worse than it found them: an earlier check now fails, a new check fails at the same stage, or the same checks fail with more errors. */
@@ -1208,6 +1251,9 @@ async function cycle(sessionId: string) {
   await syncOwnerCommits(sessionId);
   session = getSession(sessionId)!;
   const dir = session.workspace!.dir;
+
+  reopenAfterInstallRecovery(sessionId);
+  session = getSession(sessionId)!;
 
   // A check that failed last time gets the model-free fixes first.
   if (session.stage !== "planning" && !session.needsReplan && session.lastCheck && !session.lastCheck.passed && (await preStepDoctors(sessionId, dir, session.lastCheck))) return;
@@ -1357,6 +1403,8 @@ ${roadmapText(session.plan, milestone)}${
             ? `checks failing: ${check.failing.join(", ")}`
             : "the build changed nothing",
       commit: changed ? step.after : null,
+      undone: regressed ? step.after : null,
+      from: step.before,
       episodeId: changed ? step.episodeId : undefined,
       success: finished
     });
