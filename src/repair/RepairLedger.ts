@@ -118,6 +118,11 @@ export const RepairLedger = {
     return `\nAlready tried for these same errors (${history.length} attempt(s), ${failed} did not help):\n${lines.join("\n")}\n${failed ? "Do not repeat an approach that did not help: find a different cause or a different fix. If the same files were changed without effect, the problem is probably elsewhere (another file, a config, a dependency, the file's name or type).\n" : ""}`;
   },
 
+  /** The newest attempts, oldest first. */
+  recent(limit = 50): RepairAttempt[] {
+    return load().slice(-limit);
+  },
+
   /** For tests. */
   _reset(): void {
     cache = null;

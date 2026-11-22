@@ -39,6 +39,8 @@ import { WORKLOADS, PROTECTED, unloadModels } from "../system/Workloads.js";
 import { aiPolicy } from "../tools/LocalOnly.js";
 import { ModelLab, installedModels, labChallenges } from "../learning/ModelLab.js";
 import { scorecard } from "../learning/Scorecard.js";
+import { ContinuousImprover } from "../agent/ContinuousImprover.js";
+import { RepairLedger } from "../repair/RepairLedger.js";
 import { KnowledgeImpact } from "../learning/KnowledgeImpact.js";
 
 const actorOf = (req: Request): string => {
@@ -273,6 +275,49 @@ export const registerSystemRoutes = (app: Express) => {
     } catch (error) {
       fail(res, error);
     }
+  });
+
+  // ── What is stuck, across the system: one summary for Jarvis and the app, from the existing records ──
+  app.get("/api/system/blockers", authenticateAgent("read"), (_req: Request, res: Response) => {
+    try {
+      const sessions = ContinuousImprover.list().sessions.filter((s) => s.state !== "stopped").map((s) => {
+        const plan = s.plan ?? [];
+        const last = (s.journal ?? []).at(-1);
+        const recent = (s.journal ?? []).slice(-6);
+        return {
+          project: s.projectName,
+          phase: s.phase,
+          milestones: { done: plan.filter((m) => m.status === "done").length, parked: plan.filter((m) => m.status === "parked").length, todo: plan.filter((m) => m.status === "todo" || m.status === "doing").length, current: plan.find((m) => m.status === "doing")?.title ?? null },
+          checks: s.lastCheck ? { at: s.lastCheck.at, passed: s.lastCheck.passed, failing: s.lastCheck.failing } : null,
+          lastStep: last ? { n: last.n, at: last.at, title: last.title, outcome: last.outcome, success: last.success ?? false } : null,
+          recentSuccess: `${recent.filter((x) => x.success).length} of the last ${recent.length} steps succeeded`
+        };
+      });
+      const recentRepairs = RepairLedger.recent(200);
+      const byFingerprint = new Map<string, { project: string; check: string; failed: number; last: string }>();
+      for (const a of recentRepairs) {
+        if (a.result === "fixed" || a.result === "better") continue;
+        const key = `${a.project}|${a.fingerprint}`;
+        const entry = byFingerprint.get(key) ?? { project: a.project, check: a.check, failed: 0, last: a.at };
+        entry.failed += 1;
+        entry.last = a.at;
+        byFingerprint.set(key, entry);
+      }
+      const inventory = StorageInventory.cached();
+      res.json({
+        sessions,
+        stuckRepairs: [...byFingerprint.values()].filter((e) => e.failed >= 3).sort((a, b) => b.failed - a.failed),
+        storage: inventory ? recommend(inventory).filter((r) => r.severity === "high").map((r) => r.title) : [],
+        learning: scorecard().verdict,
+        mode: GameMode.read().profile ?? "normal"
+      });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.get("/api/system/repairs", authenticateAgent("read"), (req: Request, res: Response) => {
+    res.json({ attempts: RepairLedger.recent(Math.min(500, Number(req.query.limit ?? 50) || 50)).reverse() });
   });
 
   app.post("/api/models/lab/stop", authenticateAgent("execute"), (_req: Request, res: Response) => {

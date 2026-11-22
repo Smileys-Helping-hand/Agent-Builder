@@ -186,6 +186,46 @@ export function LearningCentre() {
   );
 }
 
+/** Does what it learned help? Measured on the same model, with the evidence, and the model lab's verdict. */
+function ScorecardCard() {
+  const card = useRemote(() => api.learningScorecard(), 60000, "learning-scorecard");
+  const lab = useRemote(() => api.modelLab(), 60000, "model-lab");
+  const c = card.data;
+  if (!c) return null;
+  const pct = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${Math.round(v * 100)}%`);
+  const latestLab = lab.data?.runs.find((r) => r.results.some((m) => m.state === "done"));
+  return (
+    <div className="card">
+      <strong>Learning scorecard</strong>
+      <p className="small" style={{ margin: "6px 0 10px" }}>{c.verdict}</p>
+      <div className="stats">
+        <div className="stat"><span className="muted small">Without knowledge</span><strong>{pct(c.latest.without)}</strong></div>
+        <div className="stat"><span className="muted small">With knowledge</span><strong>{pct(c.latest.with)}</strong></div>
+        <div className="stat"><span className="muted small">Baseline (before benching)</span><strong>{pct(c.baselineWithout)}</strong></div>
+        <div className="stat"><span className="muted small">Retrieval precision</span><strong>{pct(c.retrievalPrecision)}</strong></div>
+        <div className="stat"><span className="muted small">Harmful items benched</span><strong>{c.harmfulExcluded.benched}</strong></div>
+        <div className="stat"><span className="muted small">Verified useful</span><strong>{c.verifiedUseful.length}</strong></div>
+      </div>
+      <p className="small muted" style={{ marginTop: 8 }}>
+        Model: {c.model ?? "—"}. Regressions with knowledge: {c.regressions.length ? c.regressions.join(", ") : "none"}.
+        {c.harmfulExcluded.handedOutAfterBenching.length ? ` Benched items still handed out: ${c.harmfulExcluded.handedOutAfterBenching.join(", ")}.` : " No benched item has been handed out since."}
+        {c.sinceBenching ? ` Since benching: ${c.sinceBenching.withRuns} run(s) with, ${c.sinceBenching.withoutRuns} without.` : ""}
+      </p>
+      {latestLab ? (
+        <>
+          <strong style={{ display: "block", marginTop: 10 }}>Model Laboratory</strong>
+          {latestLab.results.filter((m) => m.state === "done").map((m) => (
+            <div key={m.model} className="small" style={{ padding: "3px 0" }}>
+              <strong>{m.model}</strong> {pct(m.score)} · {m.medianTokensPerSec ?? "—"} tokens/s · first token {m.medianTtftMs ?? "—"} ms · {m.gpuPercent ?? "—"}% on the GPU · load {m.loadMs ? Math.round(m.loadMs / 1000) : "—"} s
+            </div>
+          ))}
+          {latestLab.recommendation ? <p className="small muted">{latestLab.recommendation}</p> : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 export function EvaluationsPanel() {
   const toast = useToast();
   const data = useRemote(() => api.evaluations(), 15000, "agent-evaluations");
@@ -210,6 +250,7 @@ export function EvaluationsPanel() {
   };
   return (
     <>
+      <ScorecardCard />
       <p className="small">
         {challenges.length} fixed challenges with graders that are code, not opinion: hidden tests run what it writes, and answers must say what is true and not invent what is not. Run it without and with what it has learned to measure what the learning is worth on the same model, and compare any two runs for improvements and regressions.
       </p>

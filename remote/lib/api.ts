@@ -969,6 +969,29 @@ export interface SystemStatus {
   ai: { localOnly: boolean; researchOffline: boolean; inference: string[]; internet: string[]; cloudKeysPresent: string[]; note: string };
 }
 
+export interface LearningScorecard {
+  verdict: string;
+  model: string | null;
+  baselineWithout: number | null;
+  latest: { with: number | null; without: number | null; withRun: string | null; withoutRun: string | null; at: string | null };
+  sinceBenching: { from: string; withRuns: number; withoutRuns: number; withMean: number | null; withoutMean: number | null } | null;
+  retrievalPrecision: number | null;
+  harmfulExcluded: { benched: number; handedOutAfterBenching: string[] };
+  verifiedUseful: Array<{ ref: string; impact: number; uses: number }>;
+  regressionRate: number | null;
+  regressions: string[];
+  trend: Array<{ at: string; withKnowledge: boolean; score: number | null; model: string }>;
+}
+
+export interface ModelLabRun {
+  id: string;
+  state: string;
+  startedAt: string;
+  finishedAt: string | null;
+  recommendation: string | null;
+  results: Array<{ model: string; state: string; reason: string | null; score: number | null; medianTokensPerSec: number | null; medianTtftMs: number | null; loadMs: number | null; gpuPercent: number | null; peakVramMB: number | null; ramIncreaseMB: number | null; byCategory: Record<string, number> }>;
+}
+
 export interface StorageReport {
   inventory: {
     at: string;
@@ -2287,6 +2310,8 @@ export const api = {
   storageMeasure: (id: string) => request<unknown>("/api/system/storage/measure", { method: "POST", body: JSON.stringify({ id }) }),
   storageBenchmark: (letter: string) => request<{ writeMBps: number; syncLatencyMs: number; note: string }>("/api/system/storage/benchmark", { method: "POST", body: JSON.stringify({ letter }) }, 90000),
   systemAudit: () => request<{ entries: Array<{ at: string; actor: string; action: string; detail: string; ok: boolean }> }>("/api/system/audit?limit=15"),
+  learningScorecard: () => request<LearningScorecard>("/api/learning/scorecard", {}, 60000),
+  modelLab: () => request<{ running: string | null; runs: ModelLabRun[] }>("/api/models/lab", {}, 60000),
   modelUnload: () => request<{ unloaded: string[]; detail: string }>("/api/system/model/unload", { method: "POST", body: "{}" }, 120000),
   builderVersion: (refresh = false) => request<BuilderVersion>(`/api/power/version${refresh ? "?refresh=1" : ""}`, {}, 120000),
   updateStatus: () => request<{ job: UpdateJob | null }>("/api/power/update", {}, 10000),

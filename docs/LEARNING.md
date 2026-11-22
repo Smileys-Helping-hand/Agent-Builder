@@ -78,3 +78,21 @@ it (it stays searchable, and the reason is kept in `data/learning/benched.json`)
 and comes back for another trial after 14 days. This runs after every evaluation. Items always given together share
 the result, because the data cannot tell them apart; benching the group and measuring again is how that is found out.
 `npm run test:knowledge-impact`.
+
+## Selective retrieval and the scorecard (22 November, evening)
+
+Benching the 13 worst items left a pattern: every kind of knowledge still averaged slightly negative, because items
+were matched to tasks by single shared words. The race-condition ("stale closure") question was given a finding about
+stale-while-revalidate caching; the salon booking-app plan was given marketing advice about booking buttons. Over the
+65 measured task-item pairs, items sharing 1-2 specific terms with the task averaged -0.12 and -0.15 and made up all 16
+harmful pairings; items sharing 3 or more averaged 0.
+
+So a lesson or finding is now handed out only when it shares at least 3 specific terms with the task
+(`KNOWLEDGE_MIN_SHARED_TERMS`), or, for a lesson, when most of its error signature is in the task (the same error).
+On the measured pairs this keeps 8 (mean -0.04, none harmful) and drops all 16 harmful ones, and the repair lessons
+still match their errors. Fewer, more relevant items, not more.
+
+**The scorecard** (Agent → Evaluations, `GET /api/learning/scorecard`, Jarvis `learning.scorecard`) compares the
+latest runs with and without knowledge on the same model, the baseline before benching, retrieval precision (the
+share of evidenced items that did not hurt), benched items and whether any was handed out after benching, items
+verified useful, regressions, and every run over time. It says plainly when knowledge still hurts.
