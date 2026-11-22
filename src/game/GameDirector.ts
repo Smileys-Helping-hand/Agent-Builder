@@ -35,6 +35,7 @@ import { findBrowser, renderPage } from "../orchestrator/SiteAudit.js";
 import { packageTool } from "../utils/packageTool.js";
 import { makeZip } from "../utils/Zip.js";
 import { NetKit } from "./NetKit.js";
+import { Playtest } from "./Playtest.js";
 
 const run = promisify(execFile);
 
@@ -77,6 +78,13 @@ export interface GameRelease {
   kept: boolean;
   /** QA: loaded in a real browser, with its errors and a screenshot. */
   qa?: { passed: boolean; errors: string[]; drew: boolean; screenshot: string | null; at: string } | null;
+  /** Played through the game's own scenario (playtest.json) with real key presses; null when it has none. */
+  playtest?: { passed: boolean; steps: number; passedSteps: number; failed: string | null; errors: string[]; frozen: boolean; at: string } | null;
+  /**
+   * build: it did not pass QA. preview: it loads and draws, but no playtest has shown it plays.
+   * verified: its playtest passed: it starts, takes input, progresses and ends as designed.
+   */
+  stage?: "build" | "preview" | "verified";
 }
 
 interface ReleaseLog {
@@ -332,7 +340,16 @@ ${engineNote}- Several levels, scenes or areas in their own files; real game str
       fs.cpSync(output, target, { recursive: true });
       // QA before it counts as shipped: it must load in a real browser with no errors, and draw.
       const qa = await GameDirector.qa(target).catch((error: Error) => ({ passed: false, errors: [`QA could not run: ${error.message}`], drew: false, screenshot: null, at: new Date().toISOString() }));
-      const release: GameRelease = { version, title: title.slice(0, 200), at, commit, multiplayer: NetKit.installed(dir), sizeKb: folderKb(target), kept: true, qa };
+      // Played, not only loaded: the game's own scenario with real key presses (a screenshot of a canvas is not proof).
+      const scenario = Playtest.scenarioOf(dir);
+      let playtest: GameRelease["playtest"] = null;
+      if (qa.passed && scenario) {
+        const played = await Playtest.run(target, scenario, path.join(target, "playtest")).catch((error: Error) => ({ passed: false, steps: [], errors: [`the playtest could not run: ${error.message}`], frozen: false, screenshots: [], durationMs: 0 }));
+        const failed = played.steps.find((step) => !step.passed);
+        playtest = { passed: played.passed, steps: scenario.steps.length, passedSteps: played.steps.filter((step) => step.passed).length, failed: failed ? `${failed.label}: ${failed.detail}`.slice(0, 400) : null, errors: played.errors.slice(0, 5), frozen: played.frozen, at: new Date().toISOString() };
+      }
+      const stage: GameRelease["stage"] = !qa.passed ? "build" : playtest?.passed ? "verified" : "preview";
+      const release: GameRelease = { version, title: title.slice(0, 200), at, commit, multiplayer: NetKit.installed(dir), sizeKb: folderKb(target), kept: true, qa, playtest, stage };
       log.releases.push(release);
       log.lastError = null;
       for (const old of log.releases.filter((r) => r.kept).slice(0, -KEEP_VERSIONS)) {
@@ -341,7 +358,8 @@ ${engineNote}- Several levels, scenes or areas in their own files; real game str
       }
       writeLog(sessionId, log);
       // The newest version that passed QA on the shelf, for SaveState's Mini Games.
-      if (name && qa.passed) {
+      // A game with a playtest goes on the shelf only when it plays; one without, when it loads and draws.
+      if (name && qa.passed && (!scenario || playtest?.passed)) {
         const shelf = path.join(SHELF_DIR(), `made-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || sessionId}`);
         try {
           fs.rmSync(shelf, { recursive: true, force: true });

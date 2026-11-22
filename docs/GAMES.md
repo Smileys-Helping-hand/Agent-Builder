@@ -91,3 +91,22 @@ screenshot shows on the game's card with a QA badge, and only versions that pass
 
 Two are running: **Lanternfall** (a 2D action-platformer on Phaser) and **Driftworks** (a 3D hover-racer on three.js
 with online races).
+
+## Played, not only loaded (22 November)
+
+A screenshot of a canvas proves a game drew, not that it plays. A game can ship a **playtest**: `playtest.json` at its
+root, a scenario Agent Builder plays in a real browser with real key presses (`src/game/Playtest.ts`). The game
+exposes a read-only view of itself on `window` (Lanternfall: `window.__lanternfall`), and each step checks it: press,
+hold, hold until, wait for, expect, remember, screenshot. Script errors and a frozen game (its frame counter stops) fail
+it whatever the steps say. `npx tsx scripts/playtest.ts <game folder>`, `npm run test:playtest`.
+
+Every release now has a **stage**: *development build* (did not pass QA), *preview* (loads and draws, but no playtest
+has shown it plays), *verified* (its playtest passed). A game with a playtest goes on SaveState's shelf only when verified.
+
+**Lanternfall v1 is verified**: the North Light tower vertical slice. Its page had stopped running the platformer (App.tsx
+had become a turn-based RPG, and an unreachable second game failed the typecheck with 42 errors); it was recovered onto
+the Phaser engine as designed, with its rules and tower tested (17 tests, including a proof that every ledge is
+reachable with the engine's jump) and a 20-step playtest: title, start, run, jump and land, walk to the first lantern
+and relight it with a flare, the tide takes a life, losing every life ends the climb, a key starts again. Art is still
+placeholder shapes until the image engine draws `art.json`. The recovery was done by hand (Claude), not by the local
+model; the continuous session carries on from it.

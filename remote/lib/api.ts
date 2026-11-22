@@ -1499,6 +1499,8 @@ export interface GameRelease {
   /** A zip that plays on its own. */
   download: string | null;
   qa?: { passed: boolean; errors: string[]; drew: boolean; screenshot: string | null; at: string } | null;
+  playtest?: { passed: boolean; steps: number; passedSteps: number; failed: string | null; errors: string[]; frozen: boolean; at: string } | null;
+  stage?: "build" | "preview" | "verified";
   /** The Windows program, once built on request. */
   windows: { state: "building" | "done" | "failed"; at: string; error: string | null; sizeMb: number | null } | null;
   windowsDownload: string | null;

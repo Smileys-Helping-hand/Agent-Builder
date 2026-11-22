@@ -101,6 +101,11 @@ function GameSession({ session, onChange }: { session: ImproveSession; onChange:
             </button>
           )}
           {latest.qa ? <span className={`tag ${latest.qa.passed ? "ok" : "bad"}`} title={latest.qa.errors.join("\n")}>{latest.qa.passed ? "QA passed" : "QA failed"}</span> : null}
+          {latest.stage ? (
+            <span className={`tag ${latest.stage === "verified" ? "ok" : latest.stage === "preview" ? "warn" : "bad"}`} title={latest.playtest ? `Playtest: ${latest.playtest.passedSteps}/${latest.playtest.steps} steps${latest.playtest.failed ? ` — failed at: ${latest.playtest.failed}` : ""}` : "Not playtested: the game has no playtest.json"}>
+              {latest.stage === "verified" ? "Verified: plays" : latest.stage === "preview" ? "Preview: not shown to play" : "Development build"}
+            </span>
+          ) : null}
           <span style={{ fontSize: 12, color: "var(--muted)" }}>
             {latest.title} · {ago(latest.at)}
             {latest.multiplayer ? " · online multiplayer" : ""}
