@@ -3322,6 +3322,7 @@ Rules that keep this build passing its checks (install, typecheck, build, tests)
    */
   stop(): void {
     this.stoppedByUser = true;
+    this.workspace.freeze();
     this.isRunning = false;
     this.isPaused = false;
     Logger.log("Orchestrator stopped", { iteration: this.currentIteration });

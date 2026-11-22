@@ -39,13 +39,31 @@ export const tsFilesWithJsxErrors = (output: string): string[] => {
   return [...files];
 };
 
-/** Members reported missing from one module, by the symbol: "Property 'warn' does not exist on type 'typeof Logger'". */
+/** Members reported missing, by the symbol they are missing from: "Property 'warn' does not exist on type 'typeof Logger'". */
+export const missingMembers = (output: string): Map<string, Set<string>> => {
+  const found = new Map<string, Set<string>>();
+  // A class or constant ("typeof Logger") or an interface or type ("EcosystemProject") that lost its members.
+  for (const m of output.matchAll(/error TS2339: Property '([^']+)' does not exist on type '(?:typeof )?(\w+)'/g)) {
+    const set = found.get(m[2]) ?? new Set<string>();
+    set.add(m[1]);
+    found.set(m[2], set);
+  }
+  return found;
+};
+
+/** How many errors name each symbol (kept for callers that only need counts). */
 export const missingMembersBySymbol = (output: string): Map<string, number> => {
   const counts = new Map<string, number>();
-  // A class or constant ("typeof Logger") or an interface or type ("EcosystemProject") that lost its members.
   for (const m of output.matchAll(/error TS2339: Property '[^']+' does not exist on type '(?:typeof )?(\w+)'/g)) counts.set(m[1], (counts.get(m[1]) ?? 0) + 1);
   return counts;
 };
+
+/** A file declares the symbol itself (not `import { type X }`, which once restored the wrong file). */
+export const declares = (text: string, symbol: string): boolean =>
+  new RegExp(`^\\s*(export\\s+)?(default\\s+)?(declare\\s+)?(abstract\\s+)?(class|const|let|function|interface|type|enum)\\s+${symbol}\\b`, "m").test(text);
+
+/** Which of `members` a source text mentions as identifiers. */
+const mentions = (text: string, members: Set<string>) => [...members].filter((member) => new RegExp(`\\b${member.replace(/[^\w$]/g, "")}\\b`).test(text)).length;
 
 const git = (dir: string, args: string[]) => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8", windowsHide: true, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
 
@@ -70,49 +88,55 @@ export const SourceDoctor = {
   },
 
   /**
-   * A core module rewritten: many errors say members are missing from the same symbol (62 times "Property 'warn'
+   * A core module rewritten: many errors say members are missing from the same symbol (60 times "Property 'warn'
    * does not exist on type 'typeof Logger'" in the self-improvement copy, whose Logger a step had replaced with a
-   * generic class). When the file defining that symbol changed since the session's starting point, it is put back
-   * as it was there: the rest of the code was written against that version. The caller rechecks and undoes it if worse.
+   * generic class). The file that declares the symbol is put back as it was at `ref`, but only on evidence:
+   *  - `ref` is the last commit whose checks passed when there is one, else the session's starting point;
+   *  - the file declares the symbol now and did at `ref` (a real declaration, not an import);
+   *  - the version at `ref` mentions most of the members the errors say are missing, and the current one does not.
+   * Without that evidence it does nothing: on 22 November a looser version reverted a game's engine and rules to the
+   * empty template (the starting point of a game is a template, not a good version). The caller rechecks and undoes it if worse.
    */
-  restoreRewrittenModules(dir: string, output: string, baseRef: string | null, options: { minErrors?: number; dryRun?: boolean } = {}): SourceFix {
+  restoreRewrittenModules(dir: string, output: string, ref: string | null, options: { minErrors?: number; dryRun?: boolean; refLabel?: string } = {}): SourceFix {
     const actions: string[] = [];
-    if (!baseRef) return { changed: false, actions, summary: "No starting point to compare with." };
+    if (!ref) return { changed: false, actions, summary: "No good version to compare with." };
+    const label = options.refLabel ?? "the starting point";
     let changedSince: string[] = [];
     try {
-      changedSince = git(dir, ["diff", "--name-only", baseRef, "HEAD", "--", "src"]).split("\n").filter(Boolean);
+      changedSince = git(dir, ["diff", "--name-only", ref, "HEAD", "--", "src"]).split("\n").filter(Boolean);
     } catch {
-      return { changed: false, actions, summary: "Could not compare with the starting point." };
+      return { changed: false, actions, summary: `Could not compare with ${label}.` };
     }
-    for (const [symbol, count] of missingMembersBySymbol(output)) {
+    for (const [symbol, members] of missingMembers(output)) {
+      const count = [...output.matchAll(new RegExp(`does not exist on type '(?:typeof )?${symbol}'`, "g"))].length;
       if (count < (options.minErrors ?? 8)) continue;
-      // Of the changed files that define the symbol now, the one that also defined it at the starting point.
-      const defines = (text: string) => new RegExp(`(class|const|function|interface|type)\\s+${symbol}\\b`).test(text);
       let definer: string | null = null;
       let original = "";
       for (const file of changedSince.filter((f) => /\.(ts|tsx|js)$/.test(f))) {
         const now = path.join(dir, file);
-        if (!fs.existsSync(now) || !defines(fs.readFileSync(now, "utf8"))) continue;
+        if (!fs.existsSync(now)) continue;
+        const current = fs.readFileSync(now, "utf8");
+        if (!declares(current, symbol)) continue;
+        let before = "";
         try {
-          const before = git(dir, ["show", `${baseRef}:${file}`]);
-          if (defines(before)) {
-            definer = file;
-            original = before;
-            break;
-          }
+          before = git(dir, ["show", `${ref}:${file}`]);
         } catch {
-          // new since the starting point: not the module the code was written against
+          continue; // new since then: not the module the code was written against
         }
+        // Evidence: the old version has the members the code expects, and the current one has lost them.
+        if (!declares(before, symbol) || mentions(before, members) < members.size * 0.8 || mentions(current, members) >= members.size * 0.5) continue;
+        definer = file;
+        original = before;
+        break;
       }
       if (!definer) continue;
-      // One file can define several of the symbols: restored once, naming them all.
       const already = actions.findIndex((a) => a.startsWith(`restored ${definer} `));
       if (already >= 0) {
         actions[already] = actions[already].replace(/ were missing: it had been rewritten\)$/, `, and ${count} for ${symbol}, were missing: it had been rewritten)`);
         continue;
       }
       if (!options.dryRun) fs.writeFileSync(path.join(dir, definer), original);
-      actions.push(`restored ${definer} from the starting point (${count} errors said members of ${symbol} were missing: it had been rewritten)`);
+      actions.push(`restored ${definer} from ${label} (${count} errors said members of ${symbol} were missing: it had been rewritten)`);
     }
     return { changed: actions.length > 0, actions, summary: actions.length ? `A core module had been rewritten: ${actions.join("; ")}.` : "No rewritten module found." };
   },

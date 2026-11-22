@@ -16,7 +16,8 @@ process.env.REPAIR_LEDGER_PATH = path.join(dir, "ledger.jsonl");
 process.env.REPAIR_BUDGET = "3";
 
 const { diagnoseInstall, InstallDoctor } = await import("../src/repair/InstallDoctor.js");
-const { SourceDoctor, looksLikeJsx, tsFilesWithJsxErrors } = await import("../src/repair/SourceDoctor.js");
+const SourceDoctorModule = await import("../src/repair/SourceDoctor.js");
+const { SourceDoctor, looksLikeJsx, tsFilesWithJsxErrors } = SourceDoctorModule;
 const { RepairLedger, patchHash, resultOf } = await import("../src/repair/RepairLedger.js");
 const { madeWorse } = await import("../src/agent/ContinuousImprover.js");
 
@@ -138,6 +139,43 @@ await check("a tsconfig with paths but no baseUrl (TS5090) gets one; a rewritten
   assert.equal(restored.changed, true);
   assert.match(restored.summary, /src\/utils\/Logger\.ts/, "the file that defined it at the start, not a new one with the same name");
   assert.match(fs.readFileSync(path.join(root, "src/utils/Logger.ts"), "utf8"), /static warn/);
+});
+
+await check("no restore without evidence: an import is not a declaration, and the good version must have the missing members", () => {
+  const { declares } = SourceDoctorModule;
+  assert.equal(declares('import { addScore, type GameState } from "../game/rules";', "GameState"), false, "an import of a type is not its declaration");
+  assert.equal(declares("export interface GameState {\n  lives: number;\n}", "GameState"), true);
+  const root = path.join(dir, "game3");
+  const lines = (...parts: string[]) => parts.join("\n") + "\n";
+  fs.mkdirSync(path.join(root, "src", "game"), { recursive: true });
+  fs.mkdirSync(path.join(root, "src", "engine"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src/game/rules.ts"), lines("export interface GameState {", "  lit: string[];", "  tide: number;", "}"));
+  fs.writeFileSync(path.join(root, "src/engine/game.ts"), lines('import { type GameState } from "../game/rules";', "export const show = (s: GameState) => s.lit.length + s.tide;"));
+  git(root, "init", "-q");
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "a good version");
+  const good = git(root, "rev-parse", "HEAD").trim();
+  // A later step makes the engine expect members the rules never had (score, level): the rules were not rewritten.
+  fs.writeFileSync(path.join(root, "src/engine/game.ts"), lines('import { type GameState } from "../game/rules";', "export const show = (s: GameState) => s.score + s.level;"));
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "Iteration 1: repair attempt 1 (typecheck)");
+  const errors = Array.from({ length: 10 }, (_, i) => `src/engine/game.ts(${i + 2},5): error TS2339: Property '${i % 2 ? "score" : "level"}' does not exist on type 'GameState'.`).join("\n");
+  const result = SourceDoctor.restoreRewrittenModules(root, errors, good);
+  assert.equal(result.changed, false, "the good version of the rules never had score or level: nothing to restore");
+  assert.match(fs.readFileSync(path.join(root, "src/engine/game.ts"), "utf8"), /s\.score/, "and the engine is not reverted for importing the type");
+});
+
+await check("a stopped build writes nothing: an answer that arrives after the stop does not land", async () => {
+  const { Workspace } = await import("../src/orchestrator/Workspace.js");
+  const root = path.join(dir, "frozen");
+  fs.mkdirSync(root, { recursive: true });
+  const workspace = new Workspace(root);
+  await workspace.writeFiles({ "a.txt": "before" }, "first");
+  workspace.freeze();
+  const late = await workspace.writeFiles({ "a.txt": "after the stop" }, "Iteration 1: repair attempt 1");
+  assert.deepEqual(late.writtenPaths, []);
+  assert.equal(fs.readFileSync(path.join(root, "a.txt"), "utf8"), "before");
+  assert.equal(await workspace.commitCurrentState("late"), undefined);
 });
 
 await check("a step that leaves the checks worse is recognised: a new failing check, a newly broken project, or more errors", () => {

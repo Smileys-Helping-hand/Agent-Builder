@@ -1149,6 +1149,21 @@ const ensureResearch = (sessionId: string) => {
 };
 
 /** One cycle of work, by stage. */
+/** The last commit whose checks all passed: from the last check, or the journal. Null when none is known. */
+export const lastGoodCommit = (session: ImproveSession): string | null => {
+  if (session.lastCheck?.passed && session.lastCheck.head) return session.lastCheck.head;
+  const good = [...(session.journal ?? [])].reverse().find((step) => step.check?.passed && step.commit);
+  return good?.commit ?? null;
+};
+
+/** Restore a rewritten core module from the last good commit, or from the starting point when none is known. */
+const restoreFromGood = (session: ImproveSession, dir: string, output: string) => {
+  const good = lastGoodCommit(session);
+  // A game starts from an engine template, not from a good version of itself: without a passing commit, nothing to restore from.
+  const fallback = session.kind === "game" ? null : (session.workspace?.baseCommit ?? null);
+  return SourceDoctor.restoreRewrittenModules(dir, output, good ?? fallback, { refLabel: good ? `the last commit whose checks passed (${good.slice(0, 8)})` : "the starting point" });
+};
+
 /**
  * Fixes that need no model, tried before a step when the last check failed:
  * a broken install (InstallDoctor) and JSX in a .ts file (SourceDoctor). Each
@@ -1164,7 +1179,7 @@ const preStepDoctors = async (sessionId: string, dir: string, check: CheckRun): 
     if (fix.changed) actions.push(fix.summary);
   }
   if (check.failing.includes("typecheck")) {
-    for (const fix of [SourceDoctor.fixJsxInTs(dir, check.output), SourceDoctor.fixTsconfigBaseUrl(dir, check.output), SourceDoctor.restoreRewrittenModules(dir, check.output, session.workspace?.baseCommit ?? null)]) {
+    for (const fix of [SourceDoctor.fixJsxInTs(dir, check.output), SourceDoctor.fixTsconfigBaseUrl(dir, check.output), restoreFromGood(session, dir, check.output)]) {
       if (fix.changed) actions.push(fix.summary);
     }
   }

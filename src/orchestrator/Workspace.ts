@@ -72,7 +72,15 @@ export class Workspace {
   }
 
   /** Write a batch of relative-path -> content entries and commit them as one iteration. */
+  /** A stopped build's workspace: nothing more is written, committed or reset (a model answer that arrives after
+   * the stop must not land: on 22 November one committed a breaking "repair" eight minutes after its session stopped). */
+  private frozen = false;
+  freeze(): void {
+    this.frozen = true;
+  }
+
   async writeFiles(files: Record<string, string>, message: string): Promise<WriteFilesResult> {
+    if (this.frozen) return { writtenPaths: [], skippedPaths: Object.keys(files), committed: false };
     await this.init();
 
     const writtenPaths: string[] = [];
@@ -104,6 +112,7 @@ export class Workspace {
 
   /** Commit whatever is currently on disk (e.g. after out-of-band scaffolding writes). */
   async commitCurrentState(message: string): Promise<string | undefined> {
+    if (this.frozen) return undefined;
     await this.init();
     return this.commitAll(message);
   }
@@ -116,6 +125,7 @@ export class Workspace {
   /** Hard-reset this workspace to a prior commit, discarding anything after it. Scoped to this
    * generated project's own throwaway directory — never the parent Agent-Builder repo. */
   async resetTo(commitHash: string): Promise<void> {
+    if (this.frozen) return;
     await Executor.run("git", ["reset", "--hard", commitHash], { cwd: this.root });
     await Executor.run("git", ["clean", "-fd"], { cwd: this.root });
   }
