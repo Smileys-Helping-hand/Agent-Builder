@@ -11,6 +11,7 @@
  */
 import crypto from "crypto";
 import { contentTokens } from "../knowledge/KnowledgeDb.js";
+import { researchOffline } from "../tools/LocalOnly.js";
 
 export type ProviderName = "wikipedia" | "arxiv" | "hackernews" | "github" | "web" | "stackoverflow" | "issues" | "npm" | "openalex" | "europepmc";
 
@@ -450,6 +451,8 @@ export const searchAll = async (
   query: string,
   perProvider: number
 ): Promise<{ results: SearchResult[]; errors: Partial<Record<ProviderName, string>> }> => {
+  // Offline: nothing leaves the PC.
+  if (researchOffline()) return { results: [], errors: { web: "research is offline (RESEARCH_OFFLINE=true)" } };
   const keywords = keywordQuery(query);
   const providers: Array<[ProviderName, () => Promise<SearchResult[]>]> = [
     // Wikipedia's full-text search matches loosely on long natural-language
@@ -545,6 +548,7 @@ const fetchWebPage = async (url: string): Promise<FetchedDocument | null> => {
 };
 
 export const fetchDocument = async (result: SearchResult): Promise<FetchedDocument | null> => {
+  if (researchOffline()) return null;
   switch (result.provider) {
     case "wikipedia": {
       const api = `https://en.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=1&exsectionformat=plain&format=json&titles=${encodeURIComponent(result.title)}`;

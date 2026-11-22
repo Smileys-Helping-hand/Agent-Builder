@@ -117,7 +117,7 @@ export const SelfHeal = {
 
   /** One look: start a retry if the PC is free and something is worth one. */
   tick(): string | null {
-    if (!this.enabled() || healing || GameMode.isOn()) return null;
+    if (!this.enabled() || healing || GameMode.paused()) return null;
     if (BuildService.active().length > 0) return null;
     const version = builderVersion();
     const state = readState();

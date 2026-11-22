@@ -8,7 +8,7 @@ import { STAGE_LABEL } from "../build/parts";
 import { Banner, Busy, Header, Icon, NotConnected, Skeleton, ago, useConnected, useRemote, useToast } from "../ui";
 import { ModelCard } from "./model";
 import { PowerTools } from "./power";
-import { GameModeCard } from "../game-mode";
+import { SystemPanel } from "./system";
 import { ThisPcCard } from "./host";
 import { UpdateCard } from "./update";
 
@@ -907,7 +907,7 @@ export default function Control() {
 
         {/* ---------- power tools ---------- */}
         <div className="section-title">This PC</div>
-        <GameModeCard />
+        <SystemPanel />
         <ThisPcCard />
 
         <div className="section-title">Power tools</div>

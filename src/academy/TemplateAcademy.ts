@@ -481,7 +481,7 @@ Answer with JSON only: {"ideas": [{"name": "...", "category": "...", "brief": ".
 
   /** One step of practice, when the PC is idle. Run on a timer. */
   async tick(): Promise<string | null> {
-    if (!enabled() || GameMode.isOn()) return null;
+    if (!enabled() || GameMode.paused()) return null;
     if (BuildService.active().length > 0) return null;
     // Customers first: an order ready to build means not now. (One still waiting for you to
     // accept it does not hold the PC; when you accept it, the academy steps aside.)

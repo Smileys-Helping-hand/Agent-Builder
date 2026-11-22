@@ -1,6 +1,7 @@
 import { Agent, fetch as undiciFetch } from "undici";
 import { OpenAIClient } from "./OpenAIClient.js";
 import { AnthropicClient } from "./AnthropicClient.js";
+import { CloudInferenceRefused, isLocalProvider as isLocal, localOnly } from "./LocalOnly.js";
 import { GeminiClient, geminiConfigured } from "./GeminiClient.js";
 import { BuildGate } from "../utils/BuildGate.js";
 import { gpuLock, type GpuPriority } from "../utils/GpuLock.js";
@@ -33,8 +34,9 @@ const asProvider = (value: string | undefined): ModelProvider | null => {
  */
 export const getProviderFromEnv = (): ModelProvider => {
   const order = currentBuild()?.orderId ? asProvider(process.env.ORDER_MODEL_PROVIDER) : null;
-  if (order) return order;
-  return asProvider(process.env.MODEL_PROVIDER ?? process.env.AI_PROVIDER ?? process.env.LLM_PROVIDER) ?? "ollama";
+  const chosen = order ?? asProvider(process.env.MODEL_PROVIDER ?? process.env.AI_PROVIDER ?? process.env.LLM_PROVIDER) ?? "ollama";
+  // Local AI only: a cloud provider named anywhere in the settings is not used.
+  return localOnly() && !isLocal(chosen) ? "ollama" : chosen;
 };
 
 /** How much of the answer-in-progress to share, and how often. */
@@ -231,6 +233,12 @@ const dispatch = (provider: ModelProvider, prompt: string, model?: string, onTex
  * Settings chose (MODEL_PROVIDER), and a local build never bills a cloud API.
  */
 export const getProviderForRole = (role: ModelRole): { provider: ModelProvider; model?: string } => {
+  const chosen = providerForRole(role);
+  // Local AI only: a role that names a cloud provider gets the local model instead.
+  return localOnly() && !isLocal(chosen.provider) ? { provider: getProviderFromEnv() } : chosen;
+};
+
+const providerForRole = (role: ModelRole): { provider: ModelProvider; model?: string } => {
   const env = process.env;
   const cloudFallback = (env.ROLE_CLOUD_FALLBACK ?? "").toLowerCase() === "true";
   const cloud = (): { provider: ModelProvider; model?: string } | null => {
@@ -308,6 +316,8 @@ export class ModelRouter {
 
   static async generate(prompt: string, options: GenerateOptions = {}): Promise<string> {
     const provider = options.provider ?? getProviderFromEnv();
+    // Local AI only: an explicit cloud provider is refused, never silently swapped.
+    if (localOnly() && !isLocal(provider)) throw new CloudInferenceRefused(provider);
     // Ollama/LM Studio share one local GPU queue; concurrent calls just
     // contend for it. OpenAI is a remote API with its own concurrency —
     // serializing those too would only add latency for no reason.

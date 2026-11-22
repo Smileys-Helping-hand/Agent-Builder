@@ -784,7 +784,7 @@ export const Investigations = {
     if (ticking || process.env.INVESTIGATION_NO_LOOP === "1") return;
     ticking = true;
     setInterval(() => {
-      if (GameMode.isOn()) return;
+      if (GameMode.paused()) return;
       for (const item of read()) if (["planning", "researching", "experimenting", "synthesising"].includes(item.state)) void advance(item.id);
     }, TICK_MS).unref();
   },

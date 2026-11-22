@@ -438,7 +438,7 @@ async function drain(): Promise<void> {
     for (;;) {
       const next = read().find((r) => r.state === "queued");
       if (!next) return;
-      while (GameMode.isOn()) {
+      while (GameMode.paused()) {
         patch(next.id, { phase: "Waiting while everything is paused" });
         await sleep(60_000);
       }

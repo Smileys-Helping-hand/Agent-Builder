@@ -192,7 +192,7 @@ Answer with JSON only: [{"id": "<kebab-id>", "title": "<title>", "level": <4|5>,
   /** One practice when the PC is idle. */
   async tick(): Promise<void> {
     const state = read();
-    if (!state.enabled || !enabledByEnv() || GameMode.isOn()) return;
+    if (!state.enabled || !enabledByEnv() || GameMode.paused()) return;
     if (BuildService.active().length > 0) return;
     if (OrderStore.list({ status: "accepted" }).length > 0) return;
     if (state.runs.filter((r) => r.startedAt.startsWith(today())).length >= dailyLimit()) return;

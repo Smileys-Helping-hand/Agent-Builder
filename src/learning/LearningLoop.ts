@@ -137,7 +137,7 @@ export const LearningLoop = {
   start(): void {
     if (process.env.LEARNING_LOOP === "off") return;
     setInterval(() => {
-      if (GameMode.isOn()) return;
+      if (GameMode.paused()) return;
       void LearningLoop.tick().catch((error) => Logger.warn("The learning loop could not run", { error: (error as Error).message }));
     }, TICK_MS).unref();
   }

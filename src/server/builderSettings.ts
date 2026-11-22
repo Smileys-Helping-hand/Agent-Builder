@@ -19,6 +19,7 @@ import { checkOllama, restartOllama } from "../utils/Ollama.js";
 import { BuildService } from "../orchestrator/BuildService.js";
 import { Logger } from "../utils/Logger.js";
 import { OrderPipeline } from "../orders/OrderPipeline.js";
+import { localOnly } from "../tools/LocalOnly.js";
 
 type Kind = "model" | "bool" | "number" | "text" | "choice";
 
@@ -41,6 +42,9 @@ interface Setting {
 }
 
 const needsKey = (value: string): string | null => {
+  if ((value === "anthropic" || value === "openai") && localOnly()) {
+    return "Agent Builder runs AI locally only (LOCAL_AI_ONLY). To allow a cloud model, set LOCAL_AI_ONLY=false in the .env file on the PC first.";
+  }
   if (value === "anthropic" && !process.env.ANTHROPIC_API_KEY?.trim()) {
     return "Add ANTHROPIC_API_KEY=… to the .env file on the PC first (keys are never set from the app), then choose Claude.";
   }
@@ -142,6 +146,14 @@ const SETTINGS: Setting[] = [
     choices: ["q8_0", "f16", "q4_0"],
     fallback: "q8_0",
     server: true
+  },
+  {
+    name: "RESEARCH_OFFLINE",
+    group: "Models",
+    label: "Research offline",
+    help: "On: research searches and fetches nothing from the internet, so nothing leaves this PC. AI always runs locally (LOCAL_AI_ONLY, set only in .env on the PC).",
+    kind: "bool",
+    fallback: "false"
   },
   {
     name: "OLLAMA_FLASH_ATTENTION",

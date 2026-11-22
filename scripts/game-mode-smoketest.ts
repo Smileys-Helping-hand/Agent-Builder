@@ -22,6 +22,15 @@ process.env.MODEL_PROVIDER = "ollama";
 // A Host Manager that is not there: the pause must never stop the real Jarvis or SaveState from a test.
 process.env.HOST_MANAGER_URL = "http://127.0.0.1:9";
 process.env.HOST_MANAGER_KEY = "hm_test_key_for_the_game_mode_smoketest";
+// Keep the new workloads off the real PC: no real download programs, VMs, image engine, sampler or Jarvis.
+process.env.GAMING_LOWER_PROCESSES = "ab-test-no-such-process";
+process.env.VMLAB_DIR = path.join(dir, "vmlab");
+process.env.COMFY_URL = "http://127.0.0.1:9";
+process.env.TELEMETRY_SAMPLER = "off";
+process.env.JARVIS_HOST = "";
+process.env.JARVIS_WEBHOOK_URL_LOCAL = "";
+process.env.JARVIS_WEBHOOK_URL = "";
+process.env.JARVIS_API_KEY = "";
 
 const { ollamaBinary, checkOllama, ensureOllama } = await import("../src/utils/Ollama.js");
 const { GameMode } = await import("../src/utils/GameMode.js");
@@ -73,8 +82,8 @@ const fakeHost = http.createServer((req, res) => {
 await new Promise<void>((r) => fakeHost.listen(0, "127.0.0.1", () => r()));
 process.env.HOST_MANAGER_URL = `http://127.0.0.1:${(fakeHost.address() as { port: number }).port}`;
 const paused = await enterGameMode();
-assert.deepEqual(paused.stoppedServices, ["jarvis", "image-engine"], "only the services that were running are stopped");
-assert.deepEqual(calls, ["POST /api/services/jarvis/stop", "POST /api/services/image-engine/stop"], "Agent Builder and stopped services are left alone");
+assert.deepEqual(paused.stoppedServices, ["image-engine", "jarvis"], "only the services that were running are stopped");
+assert.deepEqual(calls, ["POST /api/services/image-engine/stop", "POST /api/services/jarvis/stop"], "Agent Builder, SaveState (kept by the balanced profile) and stopped services are left alone");
 const resumed = await exitGameMode();
 assert.deepEqual(resumed.startedServices, ["jarvis"], "resume starts Jarvis again; the image engine waits until it is needed");
 assert.equal(calls.at(-1), "POST /api/services/jarvis/start");

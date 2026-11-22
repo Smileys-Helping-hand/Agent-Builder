@@ -60,6 +60,7 @@ import { ResearchEngine } from "../research/ResearchEngine.js";
 import { ResearchStore } from "../research/ResearchStore.js";
 import { ModelRouter } from "../tools/ModelRouter.js";
 import { DiskGuard } from "../utils/DiskGuard.js";
+import { Scheduler } from "../system/Scheduler.js";
 import { GameMode } from "../utils/GameMode.js";
 import { Logger } from "../utils/Logger.js";
 
@@ -1393,14 +1394,21 @@ async function loop(id: string) {
     for (;;) {
       const session = getSession(id);
       if (!session || session.state === "stopped") return;
-      if (GameMode.isOn()) {
-        patchSession(id, { phase: "Paused while everything is paused (game mode)" });
+      if (GameMode.paused()) {
+        patchSession(id, { phase: GameMode.isOn() ? "Paused: Gaming Mode is on" : "Paused: new background work is on hold" });
         await sleep(60_000);
         continue;
       }
       if (DiskGuard.low()) {
         patchSession(id, { phase: `Waiting: ${DiskGuard.reason()}` });
         await sleep(5 * 60_000);
+        continue;
+      }
+      // The PC under sustained pressure (its disk saturated, memory gone): wait, at most 20 minutes.
+      const pressure = Scheduler.shouldWait(`continuous:${id}`);
+      if (pressure) {
+        patchSession(id, { phase: `Waiting: ${pressure}` });
+        await sleep(60_000);
         continue;
       }
       try {

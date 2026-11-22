@@ -166,7 +166,7 @@ export const SiteEdits = {
         continue;
       }
       // One thing at a time per site: a build working on it, or game mode, means later.
-      if ((order.buildId && BuildService.isRunning(order.buildId)) || GameMode.isOn()) continue;
+      if ((order.buildId && BuildService.isRunning(order.buildId)) || GameMode.paused()) continue;
       if ((edit.note || (edit.database && !DbKit.state(dir).installed)) && BuildService.active().length > 0) continue;
 
       inFlight.add(edit.editId);

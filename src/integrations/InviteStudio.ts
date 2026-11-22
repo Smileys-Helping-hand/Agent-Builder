@@ -347,7 +347,7 @@ async function run(job: Job) {
 async function tick() {
   if (busy || !configured()) return;
   // Game mode: the GPU belongs to whoever is playing. The job waits in the app's queue.
-  if (GameMode.isOn()) return;
+  if (GameMode.paused()) return;
   busy = true;
   try {
     // Wording only needs the language model; pictures need ComfyUI too, so take them when it can run.

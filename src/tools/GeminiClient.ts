@@ -12,6 +12,7 @@
  * GEMINI_MODEL when a build must not change under you.
  */
 import dotenv from "dotenv";
+import { CloudInferenceRefused, localOnly } from "./LocalOnly.js";
 dotenv.config();
 
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
@@ -66,6 +67,7 @@ export class GeminiClient {
   }
 
   static async generate(prompt: string, modelOrOptions?: string | GeminiOptions): Promise<string> {
+    if (localOnly()) throw new CloudInferenceRefused("Gemini");
     const apiKey = GeminiClient.getApiKey();
     if (!apiKey) {
       throw new Error("Gemini is selected but GEMINI_API_KEY (or GOOGLE_API_KEY) is not set in the .env file.");

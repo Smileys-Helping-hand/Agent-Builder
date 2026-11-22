@@ -10,12 +10,14 @@
  *   ANTHROPIC_MODEL     default claude-sonnet-5-5
  *   ANTHROPIC_MAX_TOKENS default 16000 (a whole small app in one answer)
  */
+import { CloudInferenceRefused, localOnly } from "./LocalOnly.js";
 const API = "https://api.anthropic.com/v1/messages";
 
 export const anthropicConfigured = (): boolean => Boolean(process.env.ANTHROPIC_API_KEY?.trim());
 
 export class AnthropicClient {
   static async generate(prompt: string, model?: string): Promise<string> {
+    if (localOnly()) throw new CloudInferenceRefused("Anthropic");
     const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
     if (!apiKey) {
       throw new Error("Claude is selected but ANTHROPIC_API_KEY is not set in the PC's .env file.");

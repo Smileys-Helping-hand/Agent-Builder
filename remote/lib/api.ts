@@ -891,6 +891,100 @@ export interface GameModeStatus {
   error?: string | null;
 }
 
+export interface WorkloadAction {
+  id: string;
+  label: string;
+  outcome: "paused" | "stopped" | "lowered" | "running" | "failed" | "not-running";
+  detail: string;
+}
+
+export interface ResourceSnapshot {
+  at: string;
+  cpuPercent: number | null;
+  ramAvailableMB: number | null;
+  vramUsedMB: number | null;
+  gpuPercent: number | null;
+  busiestDisk: { letter: string; idlePercent: number } | null;
+}
+
+export interface ModeState extends GameModeStatus {
+  hold?: boolean;
+  profile?: string;
+  activatedBy?: string | null;
+  game?: { name: string; exe: string; since: string } | null;
+  report?: { profile: string; startedAt: string; finishedAt: string | null; actions: WorkloadAction[]; before: ResourceSnapshot | null; after: ResourceSnapshot | null } | null;
+  resume?: { startedAt: string; finishedAt: string | null; steps: Array<{ id: string; label: string; state: "waiting" | "done" | "failed" | "skipped"; detail: string; at: string | null }> } | null;
+  freed?: string;
+}
+
+export interface Finding {
+  severity: "high" | "medium" | "info";
+  area: string;
+  text: string;
+  culprits: string[];
+}
+
+export interface TelemetrySample {
+  at: string;
+  cores: number;
+  cpuPercent: number | null;
+  ram: { totalMB: number; availableMB: number | null; commitPercent: number | null };
+  pagesPerSec: number | null;
+  disks: Array<{ disk: number; letters: string[]; idlePercent: number; queue: number; mbPerSec: number; latencyMs: number }>;
+  gpu: { name: string; utilPercent: number; vramUsedMB: number; vramTotalMB: number; tempC: number | null } | null;
+  topCpu: Array<{ name: string; cpuPercent?: number }>;
+  topMemory: Array<{ name: string; memMB?: number }>;
+  topIo: Array<{ name: string; ioMBps?: number }>;
+}
+
+export interface GamingSettings {
+  detect: "ask" | "auto" | "off";
+  profile: string;
+  autoResume: boolean;
+  graceMinutes: number;
+  extraGames: string[];
+  ignore: string[];
+  extraDirs: string[];
+}
+
+export interface WatcherState {
+  watching: boolean;
+  detail: string;
+  running: Array<{ name: string; exe: string; pid: number; since: string }>;
+  prompt: { kind: "activate" | "resume"; game: string; at: string } | null;
+  settings: GamingSettings;
+}
+
+export interface SystemStatus {
+  mode: ModeState;
+  switching: { to: string; since: string } | null;
+  error: string | null;
+  profiles: Array<{ id: string; label: string; about: string; gpuToUser?: boolean; hold?: boolean }>;
+  protected: string[];
+  workloads: Array<{ id: string; label: string; kind: string; running: boolean; detail: string }> | null;
+  watcher: WatcherState;
+  telemetry: TelemetrySample | null;
+  findings: Finding[];
+  modelServer: string;
+  ai: { localOnly: boolean; researchOffline: boolean; inference: string[]; internet: string[]; cloudKeysPresent: string[]; note: string };
+}
+
+export interface StorageReport {
+  inventory: {
+    at: string;
+    disks: Array<{ number: number; model: string; bus: string; tier: string; tierSource: string; rpm: number | null; sizeGB: number; letters: string[]; health: string }>;
+    volumes: Array<{ letter: string; label: string; sizeGB: number; freeGB: number; tier: string }>;
+    games: Array<{ kind: string; path: string; letter: string; games: number | null; sizeGB: number | null }>;
+    locations: Array<{ id: string; label: string; path: string; letter: string; kind: string; regenerable: boolean; sizeGB: number | null }>;
+    network: Array<{ letter: string | null; path: string; host: string; reachable: boolean | null; detail: string }>;
+    benchmarks: Record<string, { letter: string; at: string; writeMBps: number; syncLatencyMs: number; note: string }>;
+  } | null;
+  recommendations: Array<{ id: string; severity: "high" | "medium" | "info"; title: string; detail: string; needsApproval: boolean }>;
+  tiers: Record<string, string>;
+  job: { what: string; since: string } | null;
+  error: string | null;
+}
+
 export interface Topic {
   id: string;
   title: string;
@@ -2178,6 +2272,22 @@ export const api = {
     }, 60000),
   gameMode: () => request<GameModeStatus>("/api/game-mode"),
   setGameMode: (on: boolean) => request<GameModeStatus>("/api/game-mode", { method: "POST", body: JSON.stringify({ on }) }, 60000),
+  systemStatus: (workloads = true) => request<SystemStatus>(`/api/system/status${workloads ? "" : "?workloads=0"}`, {}, 60000),
+  systemWhy: () => request<{ answer: string; findings: Finding[]; measuredAt: string }>("/api/system/why", {}, 60000),
+  systemTelemetry: (fresh = false) => request<{ telemetry: TelemetrySample; findings: Finding[] }>(`/api/system/telemetry${fresh ? "?fresh=1" : ""}`, {}, 60000),
+  systemMode: (profile: string) => request<ModeState>("/api/system/mode", { method: "POST", body: JSON.stringify({ profile }) }, 60000),
+  systemResume: () => request<ModeState>("/api/system/resume", { method: "POST", body: "{}" }, 60000),
+  systemHold: (on: boolean) => request<ModeState>("/api/system/hold", { method: "POST", body: JSON.stringify({ on }) }),
+  systemRetry: (id: string) => request<{ ok: boolean; detail: string }>("/api/system/resume/retry", { method: "POST", body: JSON.stringify({ id }) }, 90000),
+  gamingSettings: (changes: Partial<GamingSettings>) => request<WatcherState>("/api/system/gaming", { method: "PUT", body: JSON.stringify(changes) }),
+  gamingAnswer: (yes: boolean) => request<unknown>("/api/system/gaming/answer", { method: "POST", body: JSON.stringify({ yes }) }, 60000),
+  gamingState: () => request<WatcherState>("/api/system/gaming"),
+  systemStorage: () => request<StorageReport>("/api/system/storage", {}, 60000),
+  storageRefresh: () => request<unknown>("/api/system/storage/refresh", { method: "POST", body: "{}" }),
+  storageMeasure: (id: string) => request<unknown>("/api/system/storage/measure", { method: "POST", body: JSON.stringify({ id }) }),
+  storageBenchmark: (letter: string) => request<{ writeMBps: number; syncLatencyMs: number; note: string }>("/api/system/storage/benchmark", { method: "POST", body: JSON.stringify({ letter }) }, 90000),
+  systemAudit: () => request<{ entries: Array<{ at: string; actor: string; action: string; detail: string; ok: boolean }> }>("/api/system/audit?limit=15"),
+  modelUnload: () => request<{ unloaded: string[]; detail: string }>("/api/system/model/unload", { method: "POST", body: "{}" }, 120000),
   builderVersion: (refresh = false) => request<BuilderVersion>(`/api/power/version${refresh ? "?refresh=1" : ""}`, {}, 120000),
   updateStatus: () => request<{ job: UpdateJob | null }>("/api/power/update", {}, 10000),
   updateBuilder: (force = false) =>

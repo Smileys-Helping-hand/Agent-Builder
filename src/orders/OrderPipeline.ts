@@ -407,7 +407,7 @@ export const OrderPipeline = {
   async startBuild(orderId: string, by = "pipeline"): Promise<{ order: Order; build: BuildRecord } | null> {
     const order = OrderStore.get(orderId);
     if (!order) return null;
-    if (GameMode.isOn()) return null;
+    if (GameMode.paused()) return null;
     if (order.buildId && BuildService.isRunning(order.buildId)) return null;
     if (order.status === "cancelled" || order.status === "delivered") return null;
 
@@ -529,7 +529,7 @@ export const OrderPipeline = {
 
     if (Date.now() < holdUntil) return { started: [] };
     // Game mode: orders wait, and start when it is switched off.
-    if (GameMode.isOn()) return { started: [] };
+    if (GameMode.paused()) return { started: [] };
 
     const busy = BuildService.active().filter((build) => build.orderId !== null).length;
     const room = Math.max(0, maxConcurrent() - busy);
@@ -556,7 +556,7 @@ export const OrderPipeline = {
    */
   async improve(): Promise<{ started: string[] }> {
     if (!autoImprove() || ordersMode() === "launching-soon") return { started: [] };
-    if (GameMode.isOn()) return { started: [] };
+    if (GameMode.paused()) return { started: [] };
 
     const busy = BuildService.active().length;
     if (busy >= maxConcurrent()) return { started: [] };
