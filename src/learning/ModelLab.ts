@@ -321,9 +321,17 @@ export const ModelLab = {
   async run(options: { models: string[]; only?: string[]; numCtx?: number; isGameRunning?: () => boolean }): Promise<LabRun> {
     if (running) throw Object.assign(new Error("A lab run is already going."), { status: 409 });
     if (GameMode.isOn()) throw Object.assign(new Error("Gaming Mode is on: the graphics card is yours. Resume first."), { status: 409 });
+    // Taken at once, so a second request (and the API's answer) sees the run before the first await.
+    running = "starting";
     const all = labChallenges();
     const challenges = options.only?.length ? all.filter((c) => options.only!.includes(c.id)) : all;
-    const installed = await installedModels();
+    let installed: InstalledModel[];
+    try {
+      installed = await installedModels();
+    } catch (error) {
+      running = null;
+      throw error;
+    }
     const numCtx = options.numCtx ?? Number(process.env.OLLAMA_NUM_CTX ?? 16384);
     const labRun: LabRun = { id: `lab_${Date.now().toString(36)}`, startedAt: new Date().toISOString(), finishedAt: null, state: "running", numCtx, challenges: challenges.map((c) => c.id), results: [], recommendation: null };
     running = labRun.id;

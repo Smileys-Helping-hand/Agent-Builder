@@ -36,7 +36,7 @@ import { DiskGuard } from "../utils/DiskGuard.js";
 import type { AuditFinding } from "./SiteAudit.js";
 import { isWebsiteRequest, prepareSite } from "./SiteStarters.js";
 import { BuildGate, buildGateEvents, type BuildLane } from "../utils/BuildGate.js";
-import { buildActivity, buildScope, type BuildScope } from "../utils/BuildContext.js";
+import { buildActivity, buildScope, type BuildScope, isBackgroundStart } from "../utils/BuildContext.js";
 
 export type BuildState = "running" | "paused" | "completed" | "stopped" | "error" | "interrupted";
 
@@ -579,7 +579,7 @@ export const BuildService = {
     // Carried through every await of this build, so the model router can say
     // which build its streaming answer belongs to; phase follows the stage.
     const model = MODEL_NAME.test(options.model ?? "") ? options.model : site && MODEL_NAME.test(process.env.SITE_BUILD_MODEL ?? "") ? process.env.SITE_BUILD_MODEL : undefined;
-    const scope: BuildScope = { buildId, phase: "Getting ready", orderId: options.orderId ?? null, ...(model ? { model } : {}) };
+    const scope: BuildScope = { buildId, phase: "Getting ready", orderId: options.orderId ?? null, background: isBackgroundStart(options.startedBy), ...(model ? { model } : {}) };
 
     orchestrators.set(buildId, orchestrator);
     const record: BuildRecord = {

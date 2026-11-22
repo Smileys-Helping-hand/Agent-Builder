@@ -109,5 +109,25 @@ await check("in Gaming Mode a build's model call waits until Resume; a direct qu
   void waiting;
 });
 
+await check("during a hold (Quiet) a background build's model call waits; it is not refused and does not run", async () => {
+  const { GameMode } = await import("../src/utils/GameMode.js");
+  const { ModelRouter } = await import("../src/tools/ModelRouter.js");
+  const { buildScope, isBackgroundStart } = await import("../src/utils/BuildContext.js");
+  assert.equal(isBackgroundStart("continuous:cont_1"), true);
+  assert.equal(isBackgroundStart("reconstruct:rec_1"), true);
+  assert.equal(isBackgroundStart("app"), false, "a build someone asked for is not background");
+  assert.equal(isBackgroundStart(undefined), false);
+  GameMode.patch({ on: false, hold: true, profile: "quiet" });
+  let settled = false;
+  const waiting = buildScope.run({ buildId: "bg1", background: true } as never, () => ModelRouter.generate("hi", { provider: "ollama" })).then(
+    () => (settled = true),
+    () => (settled = true)
+  );
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  assert.equal(settled, false, "the background build waits out the hold");
+  GameMode.off();
+  void waiting;
+});
+
 console.log(`\nAll ${passed} model-lab checks passed.`);
 process.exit(0);

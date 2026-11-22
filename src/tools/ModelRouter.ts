@@ -329,6 +329,12 @@ export class ModelRouter {
       if (!currentBuild()) throw new GameModeOnError();
       while (GameMode.isOn()) await new Promise((resolve) => setTimeout(resolve, 10_000));
     }
+    // A hold (the Quiet profile, "stop new background work") also holds background builds already under way: a
+    // continuous step that started its build just after the hold kept the model busy for 20-minute calls (22 Nov).
+    // Someone's own build, and anything asked directly, carries on.
+    if (isLocalProvider && currentBuild()?.background) {
+      while (GameMode.paused()) await new Promise((resolve) => setTimeout(resolve, 10_000));
+    }
 
     // A paused build, or practice while someone's build runs, waits here (BuildGate).
     if (isLocalProvider) await BuildGate.wait(currentBuild()?.buildId);

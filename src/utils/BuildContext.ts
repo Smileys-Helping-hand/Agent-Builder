@@ -19,7 +19,13 @@ export interface BuildScope {
   orderId?: string | null;
   /** The local model this build writes with, when it is not the builder's own (OLLAMA_MODEL). */
   model?: string;
+  /** Started by Agent Builder's own background work (a continuous step, a rebuild, practice, an order or edit
+   * it took in), not by someone asking: its model calls wait while new background work is on hold. */
+  background?: boolean;
 }
+
+/** Who started a build, by its startedBy prefix: background work, or someone asking. */
+export const isBackgroundStart = (startedBy: string | undefined): boolean => /^(continuous|reconstruct|academy|ground|order|edit|self|learning):/.test(startedBy ?? "");
 
 export const buildScope = new AsyncLocalStorage<BuildScope>();
 

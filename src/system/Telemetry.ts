@@ -268,7 +268,10 @@ export const explain = (t: Telemetry, context: ExplainContext = {}): Finding[] =
   }
   if (t.gpu) {
     const vramPercent = (t.gpu.vramUsedMB / t.gpu.vramTotalMB) * 100;
-    const users = t.gpuProcesses.map((p) => `${friendlyName(p.name)}${p.usedMB ? ` ${p.usedMB} MB` : ""}`);
+    // Windows (WDDM) lists every program with a window as a GPU user and rarely reports how much each uses:
+    // name only the ones with a known amount, and the local model, which is the usual large one.
+    const known = t.gpuProcesses.filter((p) => p.usedMB || /^(ollama|llama-server|ollama_llama_server|python)(\.exe)?$/i.test(p.name));
+    const users = known.length ? known.map((p) => `${friendlyName(p.name.replace(/\.exe$/i, ""))}${p.usedMB ? ` ${p.usedMB} MB` : ""}`) : ["Windows does not report video memory per program"];
     if (t.gpu.utilPercent > 85) findings.push({ severity: "medium", area: "gpu", text: `The GPU is at ${t.gpu.utilPercent}%.`, culprits: users });
     if (vramPercent > 90) findings.push({ severity: "medium", area: "gpu", text: `Video memory is ${Math.round(vramPercent)}% full (${t.gpu.vramUsedMB} of ${t.gpu.vramTotalMB} MB): a game or model loading now may stutter or spill into system RAM.`, culprits: users });
   }
