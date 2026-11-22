@@ -330,6 +330,29 @@ const main = async () => {
   if (reopenAfterInstallRecovery(machineStuck.id) !== 0) fail("reopens only once");
   console.log("[PASS] milestones parked while the install was broken are reopened once install works: in roadmap order, once, and not ones parked for other reasons");
 
+  // 14. Commits nobody checked: a build step that never finished is undone if it broke the checks; anyone else's is only checked.
+  const { recheckIfStale } = await import("../src/agent/ContinuousImprover.js");
+  const lifeDir = at().workspace!.dir;
+  fs.rmSync(path.join(lifeDir, "broken.flag"), { force: true });
+  execFileSync("git", ["add", "-A"], { cwd: lifeDir });
+  try { execFileSync("git", ["commit", "-q", "-m", "clean"], { cwd: lifeDir }); } catch { /* already clean */ }
+  hooks.patchSession(life.id, { lastCheck: await hooks.runChecks(at(), lifeDir) });
+  if (!at().lastCheck?.passed || !at().lastCheck?.head) fail("a passing check that records its commit");
+  if ((await recheckIfStale(life.id, lifeDir)) !== false) fail("nothing new: nothing to do");
+  fs.writeFileSync(path.join(lifeDir, "broken.flag"), "x");
+  execFileSync("git", ["add", "-A"], { cwd: lifeDir });
+  execFileSync("git", ["commit", "-q", "-m", "Iteration 1: generate (cut short by a restart)"], { cwd: lifeDir });
+  if ((await recheckIfStale(life.id, lifeDir)) !== true) fail("an unfinished build step that broke the checks is undone");
+  if (fs.existsSync(path.join(lifeDir, "broken.flag"))) fail("its change is rolled back");
+  if (!at().journal.at(-1)?.title.startsWith("Undid unchecked changes")) fail(`journal: ${at().journal.at(-1)?.title}`);
+  fs.writeFileSync(path.join(lifeDir, "broken.flag"), "x");
+  execFileSync("git", ["add", "-A"], { cwd: lifeDir });
+  execFileSync("git", ["commit", "-q", "-m", "the owner's own change"], { cwd: lifeDir });
+  if ((await recheckIfStale(life.id, lifeDir)) !== false) fail("someone else's commit is checked, not undone");
+  if (!fs.existsSync(path.join(lifeDir, "broken.flag"))) fail("the owner's change must stay");
+  if (at().lastCheck?.passed !== false) fail("the fresh check says it fails now");
+  console.log("[PASS] commits nobody checked are checked; a build step cut short that broke the checks is undone; anyone else's change is only checked, never undone");
+
   console.log("All continuous-builder checks passed.");
 };
 

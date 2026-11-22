@@ -111,6 +111,35 @@ await check("JSX in a .ts file: a stray duplicate is removed, a lone one renamed
   assert.ok(fs.existsSync(path.join(root, "src/lib/types.ts")), "a file without JSX is never touched");
 });
 
+await check("a tsconfig with paths but no baseUrl (TS5090) gets one; a rewritten core module is restored from the starting point", () => {
+  const root = path.join(dir, "nexus2");
+  const lines = (...parts: string[]) => parts.join("\n") + "\n";
+  fs.mkdirSync(path.join(root, "src", "utils"), { recursive: true });
+  fs.writeFileSync(path.join(root, "tsconfig.json"), lines("{", '  "compilerOptions": {', '    "strict": true,', '    "paths": { "@/*": ["src/*"] }', "  }", "}"));
+  const fixed = SourceDoctor.fixTsconfigBaseUrl(root, "tsconfig.json(4,16): error TS5090: Non-relative paths are not allowed when 'baseUrl' is not set.");
+  assert.equal(fixed.changed, true);
+  assert.match(fs.readFileSync(path.join(root, "tsconfig.json"), "utf8"), /"baseUrl": "\."/);
+  JSON.parse(fs.readFileSync(path.join(root, "tsconfig.json"), "utf8"));
+  assert.equal(SourceDoctor.fixTsconfigBaseUrl(root, "tsconfig.json(4,16): error TS5090: x").changed, false, "never twice");
+  fs.writeFileSync(path.join(root, "src/utils/Logger.ts"), lines("export class Logger {", "  static warn(...a: unknown[]) {}", "  static log(...a: unknown[]) {}", "}"));
+  fs.writeFileSync(path.join(root, "src/app.ts"), lines('import { Logger } from "./utils/Logger";', 'Logger.warn("x");'));
+  git(root, "init", "-q");
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "start");
+  const base = git(root, "rev-parse", "HEAD").trim();
+  fs.writeFileSync(path.join(root, "src/utils/Logger.ts"), lines("export class Logger {", "  constructor(private name: string) {}", "}"));
+  fs.mkdirSync(path.join(root, "src/build"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src/build/Logger.ts"), lines("export class Logger {}"));
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "a step rewrote the Logger");
+  const errors = Array.from({ length: 9 }, (_, i) => `src/app.ts(${i + 2},8): error TS2339: Property 'warn' does not exist on type 'typeof Logger'.`);
+  assert.equal(SourceDoctor.restoreRewrittenModules(root, errors.slice(0, 3).join("\n"), base).changed, false, "a few errors are not enough");
+  const restored = SourceDoctor.restoreRewrittenModules(root, errors.join("\n"), base);
+  assert.equal(restored.changed, true);
+  assert.match(restored.summary, /src\/utils\/Logger\.ts/, "the file that defined it at the start, not a new one with the same name");
+  assert.match(fs.readFileSync(path.join(root, "src/utils/Logger.ts"), "utf8"), /static warn/);
+});
+
 await check("a step that leaves the checks worse is recognised: a new failing check, a newly broken project, or more errors", () => {
   const base = { passed: false, failing: ["typecheck"], output: "a.ts(1,1): error TS1: x\n" };
   assert.equal(madeWorse({ passed: true, failing: [], output: "" }, { passed: false, failing: ["typecheck"], output: "x" }), true);

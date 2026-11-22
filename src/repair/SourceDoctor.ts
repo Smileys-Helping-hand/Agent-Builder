@@ -12,6 +12,7 @@
  * Only files the typecheck names, only when they really contain JSX, and only
  * in a working copy under git, so every change can be seen and undone.
  */
+import { execFileSync } from "child_process";
 import fs from "fs";
 import path from "path";
 
@@ -38,7 +39,77 @@ export const tsFilesWithJsxErrors = (output: string): string[] => {
   return [...files];
 };
 
+/** Members reported missing from one module, by the symbol: "Property 'warn' does not exist on type 'typeof Logger'". */
+export const missingMembersBySymbol = (output: string): Map<string, number> => {
+  const counts = new Map<string, number>();
+  for (const m of output.matchAll(/error TS2339: Property '[^']+' does not exist on type 'typeof (\w+)'/g)) counts.set(m[1], (counts.get(m[1]) ?? 0) + 1);
+  return counts;
+};
+
+const git = (dir: string, args: string[]) => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8", windowsHide: true, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+
 export const SourceDoctor = {
+  /**
+   * TS5090 "Non-relative paths are not allowed when 'baseUrl' is not set": a tsconfig `paths` entry without a
+   * baseUrl stops the whole typecheck (NexusOS, 22 November: one error, every step "changed nothing" because the
+   * model rewrote code, not the config). Adds `"baseUrl": "."` to compilerOptions.
+   */
+  fixTsconfigBaseUrl(dir: string, output: string, options: { dryRun?: boolean } = {}): SourceFix {
+    const none = (summary: string): SourceFix => ({ changed: false, actions: [], summary });
+    const hit = /([\w./-]*tsconfig[\w.-]*\.json)\(\d+,\d+\): error TS5090/.exec(output);
+    if (!hit) return none("No TS5090 error.");
+    const file = path.resolve(dir, hit[1]);
+    if (!file.startsWith(path.resolve(dir)) || !fs.existsSync(file)) return none("The tsconfig named is not in the project.");
+    const text = fs.readFileSync(file, "utf8");
+    if (/"baseUrl"\s*:/.test(text)) return none("baseUrl is already set.");
+    const fixed = text.replace(/("compilerOptions"\s*:\s*\{)/, '$1\n    "baseUrl": ".",');
+    if (fixed === text) return none("No compilerOptions block to add baseUrl to.");
+    if (!options.dryRun) fs.writeFileSync(file, fixed);
+    return { changed: true, actions: [`added "baseUrl": "." to ${hit[1]}`], summary: `${hit[1]} had "paths" without a "baseUrl" (TS5090), which stops the whole typecheck: added "baseUrl": ".".` };
+  },
+
+  /**
+   * A core module rewritten: many errors say members are missing from the same symbol (62 times "Property 'warn'
+   * does not exist on type 'typeof Logger'" in the self-improvement copy, whose Logger a step had replaced with a
+   * generic class). When the file defining that symbol changed since the session's starting point, it is put back
+   * as it was there: the rest of the code was written against that version. The caller rechecks and undoes it if worse.
+   */
+  restoreRewrittenModules(dir: string, output: string, baseRef: string | null, options: { minErrors?: number; dryRun?: boolean } = {}): SourceFix {
+    const actions: string[] = [];
+    if (!baseRef) return { changed: false, actions, summary: "No starting point to compare with." };
+    let changedSince: string[] = [];
+    try {
+      changedSince = git(dir, ["diff", "--name-only", baseRef, "HEAD", "--", "src"]).split("\n").filter(Boolean);
+    } catch {
+      return { changed: false, actions, summary: "Could not compare with the starting point." };
+    }
+    for (const [symbol, count] of missingMembersBySymbol(output)) {
+      if (count < (options.minErrors ?? 8)) continue;
+      // Of the changed files that define the symbol now, the one that also defined it at the starting point.
+      const defines = (text: string) => new RegExp(`(class|const|function|interface)\\s+${symbol}\\b`).test(text);
+      let definer: string | null = null;
+      let original = "";
+      for (const file of changedSince.filter((f) => /\.(ts|tsx|js)$/.test(f))) {
+        const now = path.join(dir, file);
+        if (!fs.existsSync(now) || !defines(fs.readFileSync(now, "utf8"))) continue;
+        try {
+          const before = git(dir, ["show", `${baseRef}:${file}`]);
+          if (defines(before)) {
+            definer = file;
+            original = before;
+            break;
+          }
+        } catch {
+          // new since the starting point: not the module the code was written against
+        }
+      }
+      if (!definer) continue;
+      if (!options.dryRun) fs.writeFileSync(path.join(dir, definer), original);
+      actions.push(`restored ${definer} from the starting point (${count} errors said members of ${symbol} were missing: it had been rewritten)`);
+    }
+    return { changed: actions.length > 0, actions, summary: actions.length ? `A core module had been rewritten: ${actions.join("; ")}.` : "No rewritten module found." };
+  },
+
   /** Fix JSX-in-.ts files named by a failing typecheck's output, inside `dir`. */
   fixJsxInTs(dir: string, output: string, options: { dryRun?: boolean } = {}): SourceFix {
     const actions: string[] = [];

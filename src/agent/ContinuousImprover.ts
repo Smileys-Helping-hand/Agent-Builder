@@ -150,6 +150,8 @@ export interface CheckRun {
   environment?: string | null;
   /** The VM test run behind this check, when the project's OS was booted and tested. */
   vmRun?: string | null;
+  /** The commit the checks ran on: anything after it has not been checked. */
+  head?: string | null;
 }
 
 export interface ImproveSession {
@@ -624,7 +626,8 @@ const runChecks = async (session: ImproveSession, dir: string): Promise<CheckRun
   const output = outputs.join("\n\n").slice(-8000);
   // A tool that is missing or broken here fails the check whatever the code says: name it, so no step retries it.
   const environment = failing.length ? await MachineProfile.environmentProblem(output).catch(() => null) : null;
-  return { at: new Date().toISOString(), passed: failing.length === 0, verified, failing, output, command, environment, vmRun };
+  const checkedHead = await head(dir).catch(() => null);
+  return { at: new Date().toISOString(), passed: failing.length === 0, verified, failing, output, command, environment, vmRun, head: checkedHead };
 };
 
 /* ─── the model ─── */
@@ -1000,7 +1003,7 @@ const retrospect = async (sessionId: string) => {
   if (!session?.workspace) return;
   const index = session.journal.length - 1;
   const step = session.journal[index];
-  if (!step || step.retro || step.stage === "planning" || /^Brought in your commits|^Roadmap:|^Reopened /.test(step.title)) return;
+  if (!step || step.retro || step.stage === "planning" || /^Brought in your commits|^Roadmap:|^Reopened |^Checked the code as it stands/.test(step.title)) return;
   const dir = session.workspace.dir;
   let list: string[] = [];
   let added = 0;
@@ -1161,8 +1164,9 @@ const preStepDoctors = async (sessionId: string, dir: string, check: CheckRun): 
     if (fix.changed) actions.push(fix.summary);
   }
   if (check.failing.includes("typecheck")) {
-    const fix = SourceDoctor.fixJsxInTs(dir, check.output);
-    if (fix.changed) actions.push(fix.summary);
+    for (const fix of [SourceDoctor.fixJsxInTs(dir, check.output), SourceDoctor.fixTsconfigBaseUrl(dir, check.output), SourceDoctor.restoreRewrittenModules(dir, check.output, session.workspace?.baseCommit ?? null)]) {
+      if (fix.changed) actions.push(fix.summary);
+    }
   }
   if (!actions.length) return false;
   patchSession(sessionId, { phase: "Fixing what needs no model (install, file types)" });
@@ -1200,6 +1204,49 @@ export const checkProgress = (check: Pick<CheckRun, "passed" | "failing">): numb
     return index < 0 ? CHECK_ORDER.length : index;
   });
   return reached.length ? Math.min(...reached) : CHECK_ORDER.length;
+};
+
+/**
+ * The last check is stale when the code has moved on since (commits it did not see) or it is older than a day.
+ * Run the checks again; when commits nobody judged made them worse, roll those back to the checked commit.
+ * True when it did something (that is this cycle's step).
+ */
+const STALE_CHECK_MS = 24 * 3600_000;
+export const recheckIfStale = async (sessionId: string, dir: string): Promise<boolean> => {
+  const session = getSession(sessionId);
+  const last = session?.lastCheck;
+  if (!session || !last) return false;
+  const now = await head(dir).catch(() => null);
+  const moved = Boolean(last.head && now && last.head !== now);
+  const old = !last.head && Date.now() - Date.parse(last.at) > STALE_CHECK_MS;
+  if (!moved && !old) return false;
+  patchSession(sessionId, { phase: "Checking the code as it stands now" });
+  const fresh = await runChecks(session, dir);
+  // Only Agent Builder's own commits from a step that never finished are undone (a build's "Iteration N: ..." and
+  // the doctors' commits); any other commit, the owner's above all, is only checked, never rolled back.
+  let ours = false;
+  if (moved && last.head && now) {
+    const subjects = (await git(dir, ["log", "--format=%s", `${last.head}..${now}`]).catch(() => "")).split("\n").filter(Boolean);
+    ours = subjects.length > 0 && subjects.every((subject) => /^(Iteration \d+: |Doctor: |Starting point)/.test(subject));
+  }
+  const undo = ours && madeWorse(last, fresh);
+  if (undo) await rollBack(dir, last.head!);
+  patchSession(sessionId, { lastCheck: undo ? last : fresh });
+  journal(sessionId, {
+    at: new Date().toISOString(),
+    stage: session.stage,
+    title: undo ? "Undid unchecked changes that broke the checks" : "Checked the code as it stands",
+    outcome: undo ? "rolled-back" : "kept",
+    note: undo
+      ? `Commits after the last check (${last.head!.slice(0, 8)}..${now!.slice(0, 8)}), left by a step that did not finish, made the checks worse (${fresh.failing.join(", ")}), so they were rolled back.`
+      : `The last check was ${old ? "more than a day old" : "of an earlier commit"}. Now: ${fresh.passed ? "every check passes" : `failing: ${fresh.failing.join(", ")}`}.`,
+    commit: null,
+    undone: undo ? now : null,
+    from: undo ? last.head : null,
+    success: !undo && fresh.passed
+  });
+  // Undoing is this cycle's step; a plain recheck lets the step go on with the fresh result.
+  return Boolean(undo);
 };
 
 /**
@@ -1252,6 +1299,10 @@ async function cycle(sessionId: string) {
   session = getSession(sessionId)!;
   const dir = session.workspace!.dir;
 
+  // Checks that are not about the code as it stands now are checked again first: a step cut off by a restart
+  // leaves commits nobody judged (the self-improvement copy kept a rewritten Logger that way), and a check a
+  // day old drives the next step with errors that may be gone (Driftworks was still "fixing" a fixed install).
+  if (session.stage !== "planning" && (await recheckIfStale(sessionId, dir))) return;
   reopenAfterInstallRecovery(sessionId);
   session = getSession(sessionId)!;
 
