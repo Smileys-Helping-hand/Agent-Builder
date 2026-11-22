@@ -8,6 +8,7 @@
  * out of retrieval; lessons that work rise. That feedback loop — not a
  * hardcoded list of hints — is what makes the builder improve over time.
  */
+import { KnowledgeImpact } from "./KnowledgeImpact.js";
 import {
   contentTokens,
   getKnowledgeDb,
@@ -312,6 +313,8 @@ export const LessonMemory = {
       .map(mapLesson)
       // What has stopped helping, or you turned down, stays searchable but is not given to builds; what is proven comes first.
       .filter((lesson) => lesson.status !== "deprecated" && lesson.status !== "rejected")
+      // Measured to make answers worse in evaluations (KnowledgeImpact): not given while benched.
+      .filter((lesson) => !KnowledgeImpact.isBenched(`lesson:${lesson.id}`))
       .sort((a, b) => Number(b.status === "verified") - Number(a.status === "verified"))
       .filter((lesson) => sharedWith(lesson.signature) >= 1 || sharedWith(lesson.lesson) >= 2)
       .slice(0, limit);

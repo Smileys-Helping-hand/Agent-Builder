@@ -6,6 +6,7 @@
  * than rereading), deduplicated findings with support counts, and versioned
  * study documents generated from those findings.
  */
+import { KnowledgeImpact } from "../learning/KnowledgeImpact.js";
 import crypto from "crypto";
 import {
   contentTokens,
@@ -633,6 +634,8 @@ export const ResearchStore = {
     return rows
       .map(mapFinding)
       .filter((finding) => finding.status === "corroborated" || finding.confidence >= 0.6)
+      // Measured to make answers worse (KnowledgeImpact): not handed out while benched.
+      .filter((finding) => !KnowledgeImpact.isBenched(`finding:${finding.id}`))
       .sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0))
       .slice(0, limit);
   },

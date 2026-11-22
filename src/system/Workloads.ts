@@ -199,7 +199,16 @@ const model: Workload = {
   kind: "gpu-ab",
   async detect() {
     const status = await checkOllama();
-    return { running: status.state !== "down", detail: status.state === "down" ? "the model server is off" : `server ${status.state}; loaded: ${status.models.join(", ") || "nothing"}` };
+    if (status.state === "down") return { running: false, detail: "the model server is off" };
+    // What is in memory now (/api/ps), not every model installed.
+    let loaded: string[] = [];
+    try {
+      const response = await fetch(`${OLLAMA_URL}/api/ps`, { signal: AbortSignal.timeout(4000) });
+      loaded = (((await response.json()) as { models?: Array<{ name: string; size_vram?: number; size?: number }> }).models ?? []).map((m) => `${m.name}${m.size && m.size_vram !== undefined ? ` (${Math.round((m.size_vram / m.size) * 100)}% on the GPU)` : ""}`);
+    } catch {
+      // the server answered /api/tags but not /api/ps: say what is known
+    }
+    return { running: true, detail: `server ${status.state}; in memory: ${loaded.join(", ") || "nothing"} (${status.models.length} installed)` };
   },
   async apply(level) {
     if (level === "keep") return action(this, "running", "kept loaded by this profile");

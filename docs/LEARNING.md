@@ -66,3 +66,15 @@ POST /api/research/topics/:id/chat              202 { question, pending }; poll 
 ```
 
 Tests: `npm run test:study` (offline), or `SMOKE_LIVE=1 npm run test:study` to plan and write a real lesson.
+
+## Knowledge is measured, and what hurts is benched (22 November)
+
+Evaluations run the same challenges with and without what was learned. With knowledge scored *lower* (0.6–0.7 against
+0.8): the same few lessons and findings were handed to every run of challenges they did not fit (a race-condition
+diagnosis passed every time without knowledge and half the time with it). `src/learning/KnowledgeImpact.ts` measures
+each lesson and finding by the pass rate of the challenges it was given on, against those challenges without any
+knowledge. One given at least three times that cost 0.25 or more is **benched**: builds and evaluations are not given
+it (it stays searchable, and the reason is kept in `data/learning/benched.json`). It is released when it stops hurting,
+and comes back for another trial after 14 days. This runs after every evaluation. Items always given together share
+the result, because the data cannot tell them apart; benching the group and measuring again is how that is found out.
+`npm run test:knowledge-impact`.

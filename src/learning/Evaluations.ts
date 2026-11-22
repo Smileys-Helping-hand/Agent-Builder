@@ -24,7 +24,8 @@ import path from "path";
 import { Evidence } from "../knowledge/Evidence.js";
 import { Experiments } from "../research/Experiments.js";
 import { ResearchStore } from "../research/ResearchStore.js";
-import { ModelRouter } from "../tools/ModelRouter.js";
+import { ModelRouter, getProviderFromEnv } from "../tools/ModelRouter.js";
+import { KnowledgeImpact } from "./KnowledgeImpact.js";
 import { Logger } from "../utils/Logger.js";
 import { LessonMemory } from "./LessonMemory.js";
 
@@ -236,6 +237,15 @@ const execute = async (run: EvaluationRun, challenges: Challenge[]) => {
     save(run);
     stopping.delete(run.id);
     running = null;
+    // What hurts is benched, what recovered is released, from every run so far.
+    if (run.state === "done") {
+      try {
+        const change = KnowledgeImpact.refresh();
+        if (change.benched.length || change.released.length) Logger.log("Knowledge measured against evaluations", change);
+      } catch (error) {
+        Logger.warn("Could not measure knowledge against evaluations", { error: (error as Error).message });
+      }
+    }
     Evidence.record({ kind: "evaluation", ref: `evaluation:${run.id}`, task: "evaluations", agent: "evaluator", title: `${run.label}: ${run.score === null ? run.state : `${Math.round(run.score * 100)}%`}${run.withKnowledge ? " with knowledge" : " without knowledge"}`, outcome: run.state, data: { score: run.score, byCategory: run.byCategory, failed: run.results.filter((r) => r.passRate < 1).map((r) => r.id) } });
   }
 };
@@ -261,7 +271,8 @@ export const Evaluations = {
       label: (options.label ?? "Manual run").slice(0, 80),
       withKnowledge: options.withKnowledge !== false,
       trials: Math.min(5, Math.max(1, Math.round(options.trials ?? 1))),
-      model: process.env.LMSTUDIO_MODEL ?? process.env.MODEL_NAME ?? null,
+      // The model that really answers: the router's provider, and its model setting.
+      model: ((provider) => (provider === "ollama" ? process.env.OLLAMA_MODEL ?? "qwen2.5-coder:7b" : provider === "lmstudio" ? process.env.LMSTUDIO_MODEL ?? "lmstudio" : provider))(getProviderFromEnv()),
       state: "running",
       startedAt: new Date().toISOString(),
       finishedAt: null,

@@ -34,6 +34,7 @@
     "test:research-edit": "tsx scripts/research-edit-smoketest.ts",
     "test:system": "tsx scripts/system-smoketest.ts",
     "test:repair-doctors": "tsx scripts/repair-doctors-smoketest.ts",
+    "test:knowledge-impact": "tsx scripts/knowledge-impact-smoketest.ts",
     "test:game-mode": "tsx scripts/game-mode-smoketest.ts",
     "test:builder-guards": "tsx scripts/builder-guards-smoketest.ts",
     "test:art": "tsx scripts/art-library-smoketest.ts",
