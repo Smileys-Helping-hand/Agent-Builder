@@ -79,6 +79,7 @@ await check("the scorecard compares the same model with and without knowledge, a
   assert.equal(card.model, "qwen2.5-coder:14b");
   assert.equal(card.latest.without, 0.8, "a run recorded under the old wrong name counts as the 14B");
   assert.match(card.verdict, /still makes answers worse: 0.5 with it against 0.8 without/);
+  // A gap under 10 points is called noise, not a result.
   assert.deepEqual(card.regressions, ["race"]);
   assert.equal(card.harmfulExcluded.benched, 1);
   assert.equal(card.retrievalPrecision, 0.5, "one of the two evidenced items did not hurt");

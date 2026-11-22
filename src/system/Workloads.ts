@@ -70,7 +70,10 @@ const builds: Workload = {
   async undo(done) {
     const ids = list(done.undo?.ids);
     const resumed = ids.filter((id) => BuildService.control(id, "resume"));
-    return { ok: resumed.length === ids.length, detail: `${resumed.length} of ${ids.length} resumed${resumed.length < ids.length ? " (the others had finished or were stopped meanwhile)" : ""}` };
+    // A build that ended meanwhile (finished, stopped, or cut short by a restart) has nothing to resume: not a failure.
+    const stillThere = ids.filter((id) => !resumed.includes(id) && BuildService.isRunning(id));
+    const ended = ids.length - resumed.length - stillThere.length;
+    return { ok: stillThere.length === 0, detail: `${resumed.length} of ${ids.length} resumed${ended ? `; ${ended} had ended meanwhile (finished, stopped, or a restart), nothing to resume` : ""}${stillThere.length ? `; ${stillThere.length} could not be resumed` : ""}` };
   }
 };
 

@@ -96,3 +96,12 @@ still match their errors. Fewer, more relevant items, not more.
 latest runs with and without knowledge on the same model, the baseline before benching, retrieval precision (the
 share of evidenced items that did not hurt), benched items and whether any was handed out after benching, items
 verified useful, regressions, and every run over time. It says plainly when knowledge still hurts.
+
+**Result (22 November, 21:30), same model (qwen2.5-coder:14b), same 10 challenges, 3 trials each, run back to back
+with background work held:** without knowledge 0.667, with knowledge 0.733. Coding improved (merge intervals 0.33 →
+1.0, grid path 0.67 → 1.0, parse 0 → 0.33); diag-race and plan-web dropped by a third although they were given no
+knowledge at all in the with-knowledge run, so their prompts were identical: one third per challenge is the noise
+between two runs of 3 trials. The gap (2 of 30 trials) is inside that noise. Knowledge no longer makes answers
+measurably worse, which it did on every earlier comparison (0.6–0.7 against 0.8); that it helps is not yet shown.
+The scorecard now says "within one run's noise" for gaps under 10 points. Repeating the pair, or 5 trials, would
+settle it.

@@ -66,7 +66,9 @@ export const scorecard = () => {
   const verdict =
     withScore === null || withoutScore === null
       ? "Not enough runs yet to compare with and without knowledge on the same model."
-      : withScore > withoutScore
+      : Math.abs(withScore - withoutScore) < 0.1
+        ? `Within one run's noise: ${withScore} with knowledge against ${withoutScore} without, on ${model}. A gap under 10 points is not evidence either way (challenges given no knowledge also move by a third between runs); repeat the pair.`
+        : withScore > withoutScore
         ? `Knowledge helps: ${withScore} with it against ${withoutScore} without, on ${model}.`
         : withScore === withoutScore
           ? `Knowledge makes no difference yet: ${withScore} either way, on ${model}.`
