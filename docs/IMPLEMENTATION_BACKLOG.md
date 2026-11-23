@@ -60,3 +60,17 @@ Status: **done** (tested), **in progress**, **next**, **blocked**, **later**.
 | J4.1 | P1 | Learning sync with Jarvis; task tracking from this backlog | later |
 | L5.1 | P2 | Training-data curation and LoRA experiments (small, measured, never promoted without approval) | later |
 | M6.1 | P3 | Story and media production pipeline | later |
+
+## Phase 3 (23 November): production reliability
+
+| ID | P | Task | Status | Evidence | Next |
+|---|---|---|---|---|---|
+| P3.1 | P0 | Diagnose the four sessions from their records | done | Each was acting on a check a day old; the self-improvement copy's Logger and EcosystemStore had been rewritten (60 + 42 errors); NexusOS's last error (TS5090) was already fixed but unchecked; Driftworks' install already worked | — |
+| P3.2 | P0 | Checks record their commit; stale or unchecked state is rechecked; unfinished build steps that broke checks are rolled back, anyone else's commits only checked | done | continuous suite (new check); live: Driftworks rechecked (install passes) and reopened 6 milestones; self-improvement rechecked and restored its Logger | — |
+| P3.3 | P0 | Model-free fixes: TS5090 baseUrl; rewritten core modules restored only with evidence (a real declaration, the missing members present in the good version, absent now) from the last commit whose checks passed; never from a game's template | done | repair-doctors 9/9 | — |
+| P3.4 | P0 | A stopped build writes nothing (workspace frozen) | done | repair-doctors (frozen workspace) | — |
+| P3.5 | P0 | Input-driven playtest (`src/game/Playtest.ts`, playtest.json), release stages build / preview / verified, shelf only for verified | done | playtest 4/4; Lanternfall v1 released verified (QA + playtest 20/20) | Playtests for Driftworks once it builds |
+| P3.6 | P0 | Lanternfall: playable vertical slice on the Phaser engine (recovered by hand: the page had become an RPG and an unreachable second game failed typecheck with 42 errors) | done | typecheck 0, 17 tests incl. every ledge reachable, build, playtest 20/20; undone overnight by P3.3/P3.4 bugs, restored (f88f788) | The session continues from it: art, content |
+| P3.7 | P1 | One reference application end to end | not started | — | Choose an app the templates support (e.g. a booking tool) and hold it to the same verified bar |
+| P3.8 | P1 | Specialist model routing by benchmark; task complexity assessment | not started | Model lab data exists (14B 81%, 7B/3B 56% but 10–18× faster, pass JSON/tool/long-context) | Route JSON/tool-routing calls to the 3B, measure on the lab set |
+| P3.9 | P1 | Visual Builder upgrade; NexusOS VM verification; research validation run | not started | — | — |
